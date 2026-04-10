@@ -1,0 +1,466 @@
+/* ========================================
+   Timeline Custom Styles
+   ======================================== */
+
+/* ---- 기본 설정 ---- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 0.875rem;
+    background-color: #f5f6fa;
+    color: #333;
+    overflow-x: hidden;
+}
+
+/* ---- 사이드바 ---- */
+#sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 250px;
+    background-color: #343a40;
+    color: #fff;
+    z-index: 1000;
+    overflow-y: auto;
+}
+
+.sidebar-header {
+    padding: 20px 20px 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-header h4 {
+    margin: 0;
+    font-weight: 600;
+    color: #fff;
+    font-size: 1.25rem;
+}
+
+.sidebar-header h4 i {
+    margin-right: 8px;
+}
+
+.sidebar-nav {
+    list-style: none;
+    padding: 10px 0;
+    margin: 0;
+}
+
+.sidebar-nav li {
+    margin: 2px 8px;
+}
+
+.sidebar-nav .nav-link {
+    display: block;
+    padding: 10px 15px;
+    color: #adb5bd;
+    text-decoration: none;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.sidebar-nav .nav-link i {
+    margin-right: 10px;
+    font-size: 1rem;
+    width: 20px;
+    text-align: center;
+}
+
+.sidebar-nav .nav-link:hover {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-nav .nav-link.active {
+    color: #fff;
+    background-color: rgba(78, 115, 223, 0.5);
+}
+
+/* ---- 메인 콘텐츠 ---- */
+#main-content {
+    margin-left: 250px;
+    padding: 20px 30px;
+    min-height: 100vh;
+}
+
+/* ---- 섹션 헤더 ---- */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #e3e6f0;
+}
+
+.section-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #333;
+}
+
+.section-header h2 i {
+    margin-right: 10px;
+    color: #4e73df;
+}
+
+/* ---- 카드 ---- */
+.card {
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    margin-bottom: 20px;
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid #e3e6f0;
+    padding: 12px 20px;
+}
+
+.card-header h5 i {
+    margin-right: 8px;
+    color: #4e73df;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+/* ---- 대시보드 통계 카드 ---- */
+.stat-card .card-body {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 20px;
+}
+
+.stat-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+    color: #fff;
+    flex-shrink: 0;
+}
+
+.stat-info h6 {
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+}
+
+.stat-info h3 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin: 0;
+    color: #333;
+}
+
+/* ---- 테이블 ---- */
+.table {
+    font-size: 0.875rem;
+}
+
+.table thead th {
+    background-color: #f8f9fc;
+    border-bottom: 2px solid #e3e6f0;
+    font-weight: 600;
+    color: #555;
+    padding: 10px 12px;
+    white-space: nowrap;
+}
+
+.table tbody td {
+    padding: 10px 12px;
+    vertical-align: middle;
+}
+
+.table-hover tbody tr:hover {
+    background-color: #f1f3ff;
+}
+
+/* ---- 상태 배지 ---- */
+.badge-status {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.badge-PLANNING { background-color: #e3f2fd; color: #1565c0; }
+.badge-IN_PROGRESS { background-color: #fff3e0; color: #e65100; }
+.badge-COMPLETED { background-color: #e8f5e9; color: #2e7d32; }
+.badge-ON_HOLD { background-color: #fce4ec; color: #c62828; }
+.badge-PENDING { background-color: #f3e5f5; color: #6a1b9a; }
+
+/* ---- 역할 배지 ---- */
+.badge-ENGINEER { background-color: #e3f2fd; color: #1565c0; }
+.badge-QA { background-color: #e8f5e9; color: #2e7d32; }
+.badge-PM { background-color: #fff3e0; color: #e65100; }
+
+/* ---- 프로젝트 유형 배지 ---- */
+.badge-SKU_SYSTEM { background-color: #ede7f6; color: #4527a0; }
+.badge-BUSINESS { background-color: #e0f2f1; color: #00695c; }
+.badge-MUKIE { background-color: #fce4ec; color: #ad1457; }
+
+/* ---- 색상 프리뷰 ---- */
+.color-preview {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+/* ---- 체크리스트 (모달 내 멤버/DS 선택) ---- */
+.checklist-container {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 8px 12px;
+}
+
+.checklist-container .form-check {
+    padding: 4px 0 4px 24px;
+}
+
+.checklist-container .form-check-label {
+    font-size: 0.85rem;
+}
+
+/* ---- 간트차트 ---- */
+
+/* 도메인 시스템 범례 */
+#gantt-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: #fff;
+    border-radius: 20px;
+    border: 1px solid #e3e6f0;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+/* 역할별 간트 바 색상 */
+.bar-engineer .bar-progress,
+.bar-engineer .bar {
+    fill: #4A90D9 !important;
+}
+
+.bar-qa .bar-progress,
+.bar-qa .bar {
+    fill: #27AE60 !important;
+}
+
+.bar-pm .bar-progress,
+.bar-pm .bar {
+    fill: #E67E22 !important;
+}
+
+/* 역할 범례 */
+.role-legend {
+    display: flex;
+    gap: 15px;
+    margin-top: 8px;
+}
+
+.role-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.role-legend-color {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+}
+
+/* 도메인 시스템 그룹 헤더 */
+.domain-group-header {
+    font-weight: bold;
+    background: #f8f9fa;
+    padding: 8px 12px;
+    border-left: 4px solid var(--domain-color, #4A90D9);
+    margin-top: 10px;
+    margin-bottom: 5px;
+    border-radius: 0 4px 4px 0;
+    font-size: 0.9rem;
+}
+
+/* frappe-gantt 커스텀 */
+#gantt-chart {
+    overflow-x: auto;
+}
+
+#gantt-chart .gantt .bar-label {
+    font-size: 11px !important;
+    fill: #fff !important;
+    font-weight: 500;
+}
+
+#gantt-chart .gantt .bar-label.big {
+    font-size: 11px !important;
+    fill: #333 !important;
+}
+
+#gantt-chart svg {
+    width: 100%;
+}
+
+/* ---- AI Parser ---- */
+#ai-text-input {
+    font-family: "Courier New", monospace;
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+.ai-result-domain {
+    margin-bottom: 15px;
+}
+
+.ai-result-domain h6 {
+    font-weight: 600;
+    padding: 6px 10px;
+    background: #f8f9fc;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+.ai-result-domain .table {
+    font-size: 0.8rem;
+}
+
+.matched-badge {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+}
+
+/* ---- Toast ---- */
+.toast-success {
+    background-color: #198754;
+    color: #fff;
+}
+
+.toast-error {
+    background-color: #dc3545;
+    color: #fff;
+}
+
+.toast-warning {
+    background-color: #ffc107;
+    color: #333;
+}
+
+/* ---- 모달 ---- */
+.modal-header {
+    background-color: #f8f9fc;
+    border-bottom: 1px solid #e3e6f0;
+}
+
+.modal-title {
+    font-weight: 600;
+}
+
+/* ---- 액션 버튼 그룹 ---- */
+.action-buttons {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+}
+
+.action-buttons .btn {
+    padding: 3px 8px;
+    font-size: 0.78rem;
+}
+
+/* ---- 로딩 스피너 ---- */
+.loading-spinner {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid rgba(0, 0, 0, 0.1);
+    border-left-color: #4e73df;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 8px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ---- 기타 유틸 ---- */
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.text-truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* 빈 상태 메시지 */
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: #adb5bd;
+}
+
+.empty-state i {
+    font-size: 3rem;
+    margin-bottom: 10px;
+    display: block;
+}
+
+/* ---- 반응형 ---- */
+@media (max-width: 768px) {
+    #sidebar {
+        width: 200px;
+    }
+
+    #main-content {
+        margin-left: 200px;
+        padding: 15px;
+    }
+
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+}

@@ -1,0 +1,33 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false
+    open-in-view: false
+
+  flyway:
+    enabled: false
+
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=100,expireAfterWrite=86400s
+
+# Anthropic AI (disabled in test)
+anthropic:
+  api-key:
+  model: claude-sonnet-4-5
+  max-tokens: 4096
+
+logging:
+  level:
+    com.timeline: DEBUG

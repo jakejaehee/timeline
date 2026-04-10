@@ -1,0 +1,104 @@
+package com.timeline.controller;
+
+import com.timeline.dto.TaskDto;
+import com.timeline.service.TaskService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
+
+/**
+ * 태스크 REST API 컨트롤러
+ */
+@Slf4j
+@RestController
+@RequiredArgsConstructor
+public class TaskController {
+
+    private final TaskService taskService;
+
+    /**
+     * 프로젝트의 전체 태스크 조회 (간트차트용)
+     */
+    @GetMapping("/api/v1/projects/{projectId}/tasks")
+    public ResponseEntity<?> getProjectTasks(@PathVariable Long projectId) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", taskService.getGanttData(projectId)
+        ));
+    }
+
+    /**
+     * 태스크 상세 조회
+     */
+    @GetMapping("/api/v1/tasks/{id}")
+    public ResponseEntity<?> getTask(@PathVariable Long id) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", taskService.getTask(id)
+        ));
+    }
+
+    /**
+     * 태스크 생성
+     */
+    @PostMapping("/api/v1/projects/{projectId}/tasks")
+    public ResponseEntity<?> createTask(@PathVariable Long projectId,
+                                        @RequestBody TaskDto.Request request) {
+        TaskDto.Response created = taskService.createTask(projectId, request);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", created
+        ));
+    }
+
+    /**
+     * 태스크 수정
+     */
+    @PutMapping("/api/v1/tasks/{id}")
+    public ResponseEntity<?> updateTask(@PathVariable Long id,
+                                        @RequestBody TaskDto.Request request) {
+        TaskDto.Response updated = taskService.updateTask(id, request);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", updated
+        ));
+    }
+
+    /**
+     * 태스크 삭제
+     */
+    @DeleteMapping("/api/v1/tasks/{id}")
+    public ResponseEntity<?> deleteTask(@PathVariable Long id) {
+        taskService.deleteTask(id);
+        return ResponseEntity.ok(Map.of(
+                "success", true
+        ));
+    }
+
+    /**
+     * 의존관계 추가
+     */
+    @PostMapping("/api/v1/tasks/{id}/dependencies")
+    public ResponseEntity<?> addDependency(@PathVariable Long id,
+                                           @RequestBody TaskDto.AddDependencyRequest request) {
+        taskService.addDependency(id, request.getDependsOnTaskId());
+        return ResponseEntity.ok(Map.of(
+                "success", true
+        ));
+    }
+
+    /**
+     * 의존관계 제거
+     */
+    @DeleteMapping("/api/v1/tasks/{id}/dependencies/{dependsOnTaskId}")
+    public ResponseEntity<?> removeDependency(@PathVariable Long id,
+                                              @PathVariable Long dependsOnTaskId) {
+        taskService.removeDependency(id, dependsOnTaskId);
+        return ResponseEntity.ok(Map.of(
+                "success", true
+        ));
+    }
+}

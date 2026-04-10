@@ -1,0 +1,55 @@
+server:
+  port: 2403
+
+spring:
+  application:
+    name: timeline
+
+  # JPA & Hibernate
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        use_sql_comments: true
+    show-sql: false
+    open-in-view: false
+
+  # PostgreSQL
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:timeline}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # Flyway
+  flyway:
+    enabled: false
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  # Cache
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=100,expireAfterWrite=86400s
+
+# Anthropic AI
+anthropic:
+  api-key: ${ANTHROPIC_API_KEY:}
+  model: claude-sonnet-4-5
+  max-tokens: 4096
+
+logging:
+  level:
+    com.timeline: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE

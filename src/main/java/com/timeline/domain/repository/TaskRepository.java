@@ -1,0 +1,74 @@
+package com.timeline.domain.repository;
+
+import com.timeline.domain.entity.Task;
+import com.timeline.domain.enums.TaskStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface TaskRepository extends JpaRepository<Task, Long> {
+
+    /**
+     * 프로젝트별 태스크 조회 (간트차트용)
+     * - assignee, domainSystem을 JOIN FETCH하여 N+1 방지
+     * - sortOrder 기준 정렬
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.assignee " +
+            "WHERE t.project.id = :projectId " +
+            "ORDER BY t.domainSystem.name ASC, t.sortOrder ASC, t.startDate ASC")
+    List<Task> findByProjectIdWithDetails(@Param("projectId") Long projectId);
+
+    /**
+     * 태스크 단건 조회 (연관 엔티티 포함)
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.assignee " +
+            "WHERE t.id = :taskId")
+    Optional<Task> findByIdWithDetails(@Param("taskId") Long taskId);
+
+    /**
+     * 담당자별 기간 중복 검사
+     * - 특정 담당자가 주어진 기간에 이미 다른 태스크를 수행 중인지 확인
+     * - 기간 겹침 조건: 기존태스크.startDate <= newEndDate AND 기존태스크.endDate >= newStartDate
+     * - 자기 자신은 제외 (수정 시)
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "JOIN FETCH t.domainSystem " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.startDate <= :endDate " +
+            "AND t.endDate >= :startDate " +
+            "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId)")
+    List<Task> findOverlappingTasks(
+            @Param("assigneeId") Long assigneeId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("excludeTaskId") Long excludeTaskId);
+
+    /**
+     * 담당자별 태스크 조회
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "JOIN FETCH t.domainSystem " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "ORDER BY t.startDate ASC")
+    List<Task> findByAssigneeIdWithDetails(@Param("assigneeId") Long assigneeId);
+
+    List<Task> findByProjectId(Long projectId);
+
+    List<Task> findByProjectIdAndStatus(Long projectId, TaskStatus status);
+
+    void deleteByProjectId(Long projectId);
+}

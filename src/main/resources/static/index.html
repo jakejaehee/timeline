@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timeline - 프로젝트 관리</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/frappe-gantt/dist/frappe-gantt.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/css/styles.css?v=20260410b">
+</head>
+<body>
+    <!-- 좌측 사이드바 -->
+    <nav id="sidebar">
+        <div class="sidebar-header">
+            <h4><i class="bi bi-calendar3"></i> Timeline</h4>
+        </div>
+        <ul class="sidebar-nav">
+            <li>
+                <a href="#" class="nav-link active" data-section="dashboard" onclick="showSection('dashboard', this)">
+                    <i class="bi bi-speedometer2"></i> Dashboard
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-section="projects" onclick="showSection('projects', this)">
+                    <i class="bi bi-folder"></i> Projects
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-section="members" onclick="showSection('members', this)">
+                    <i class="bi bi-people"></i> Members
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-section="domain-systems" onclick="showSection('domain-systems', this)">
+                    <i class="bi bi-diagram-3"></i> Domain Systems
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-section="ai-parser" onclick="showSection('ai-parser', this)">
+                    <i class="bi bi-robot"></i> AI Parser
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- 우측 작업 영역 -->
+    <main id="main-content">
+
+        <!-- ==================== Dashboard 섹션 ==================== -->
+        <div id="dashboard-section" class="section">
+            <div class="section-header">
+                <h2><i class="bi bi-speedometer2"></i> Dashboard</h2>
+            </div>
+            <div class="row mb-4" id="dashboard-cards">
+                <div class="col-md-4">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="stat-icon bg-primary"><i class="bi bi-folder"></i></div>
+                            <div class="stat-info">
+                                <h6 class="text-muted">진행 중 프로젝트</h6>
+                                <h3 id="stat-projects">0</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="stat-icon bg-success"><i class="bi bi-people"></i></div>
+                            <div class="stat-info">
+                                <h6 class="text-muted">전체 멤버</h6>
+                                <h3 id="stat-members">0</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="stat-icon bg-warning"><i class="bi bi-list-task"></i></div>
+                            <div class="stat-info">
+                                <h6 class="text-muted">전체 태스크</h6>
+                                <h3 id="stat-tasks">0</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-clock-history"></i> 최근 프로젝트</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>프로젝트명</th>
+                                    <th>유형</th>
+                                    <th>상태</th>
+                                    <th>기간</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboard-projects-table">
+                                <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== Projects 섹션 ==================== -->
+        <div id="projects-section" class="section" style="display:none;">
+            <div class="section-header">
+                <h2><i class="bi bi-folder"></i> Projects</h2>
+                <button class="btn btn-primary" onclick="showProjectModal()">
+                    <i class="bi bi-plus-lg"></i> 프로젝트 추가
+                </button>
+            </div>
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>프로젝트명</th>
+                                    <th>유형</th>
+                                    <th>상태</th>
+                                    <th>시작일</th>
+                                    <th>종료일</th>
+                                    <th>멤버</th>
+                                    <th class="text-center">액션</th>
+                                </tr>
+                            </thead>
+                            <tbody id="projects-table">
+                                <tr><td colspan="7" class="text-center text-muted">로딩 중...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 간트차트 뷰 ==================== -->
+        <div id="gantt-section" class="section" style="display:none;">
+            <div class="section-header">
+                <div class="d-flex align-items-center gap-3">
+                    <button class="btn btn-outline-secondary btn-sm" onclick="showSection('projects')">
+                        <i class="bi bi-arrow-left"></i> 프로젝트 목록
+                    </button>
+                    <h2 id="gantt-project-title" class="mb-0"></h2>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="btn-group" role="group">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="changeGanttViewMode('Day')">Day</button>
+                        <button class="btn btn-outline-secondary btn-sm active" onclick="changeGanttViewMode('Week')">Week</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="changeGanttViewMode('Month')">Month</button>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="showTaskModal()">
+                        <i class="bi bi-plus-lg"></i> 태스크 추가
+                    </button>
+                </div>
+            </div>
+
+            <!-- 도메인 시스템별 범례 -->
+            <div id="gantt-legend" class="mb-3"></div>
+
+            <!-- 간트차트 컨테이너 -->
+            <div id="gantt-container" class="card">
+                <div class="card-body p-0">
+                    <div id="gantt-chart"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== Members 섹션 ==================== -->
+        <div id="members-section" class="section" style="display:none;">
+            <div class="section-header">
+                <h2><i class="bi bi-people"></i> Members</h2>
+                <button class="btn btn-primary" onclick="showMemberModal()">
+                    <i class="bi bi-plus-lg"></i> 멤버 추가
+                </button>
+            </div>
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>이름</th>
+                                    <th>역할</th>
+                                    <th>이메일</th>
+                                    <th class="text-center">액션</th>
+                                </tr>
+                            </thead>
+                            <tbody id="members-table">
+                                <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== Domain Systems 섹션 ==================== -->
+        <div id="domain-systems-section" class="section" style="display:none;">
+            <div class="section-header">
+                <h2><i class="bi bi-diagram-3"></i> Domain Systems</h2>
+                <button class="btn btn-primary" onclick="showDomainSystemModal()">
+                    <i class="bi bi-plus-lg"></i> 도메인 시스템 추가
+                </button>
+            </div>
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>이름</th>
+                                    <th>설명</th>
+                                    <th>색상</th>
+                                    <th class="text-center">액션</th>
+                                </tr>
+                            </thead>
+                            <tbody id="domain-systems-table">
+                                <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== AI Parser 섹션 ==================== -->
+        <div id="ai-parser-section" class="section" style="display:none;">
+            <div class="section-header">
+                <h2><i class="bi bi-robot"></i> AI Parser</h2>
+            </div>
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="ai-project-select" class="form-label fw-bold">프로젝트 선택</label>
+                        <select id="ai-project-select" class="form-select">
+                            <option value="">프로젝트를 선택하세요</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ai-text-input" class="form-label fw-bold">태스크 텍스트 입력</label>
+                        <textarea id="ai-text-input" class="form-control" rows="8"
+                                  placeholder="예시:&#10;scm-hub: API 개발 김엔지 5md, DB 설계 박디비 3md&#10;scm-portal: 화면개발 최프론 8md → QA 테스트 이큐에이 3md"></textarea>
+                        <div class="form-text">
+                            자유 형식으로 태스크를 입력하세요. AI가 자동으로 도메인 시스템, 태스크명, 담당자, 공수를 추출합니다.
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="parseFreeText()" id="ai-parse-btn">
+                        <i class="bi bi-cpu"></i> AI 분석
+                    </button>
+                </div>
+            </div>
+
+            <!-- AI 파싱 결과 -->
+            <div id="ai-result" class="card" style="display:none;">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-check2-circle"></i> 분석 결과</h5>
+                    <button class="btn btn-success btn-sm" onclick="saveParsedTasks()" id="ai-save-btn">
+                        <i class="bi bi-save"></i> 저장
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="ai-result-content"></div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ==================== 멤버 모달 ==================== -->
+    <div class="modal fade" id="memberModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="memberModalTitle">멤버 추가</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="member-id">
+                    <div class="mb-3">
+                        <label for="member-name" class="form-label">이름 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="member-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="member-role" class="form-label">역할 <span class="text-danger">*</span></label>
+                        <select class="form-select" id="member-role">
+                            <option value="ENGINEER">ENGINEER</option>
+                            <option value="QA">QA</option>
+                            <option value="PM">PM</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="member-email" class="form-label">이메일</label>
+                        <input type="email" class="form-control" id="member-email">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveMember()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 도메인 시스템 모달 ==================== -->
+    <div class="modal fade" id="domainSystemModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="domainSystemModalTitle">도메인 시스템 추가</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="ds-id">
+                    <div class="mb-3">
+                        <label for="ds-name" class="form-label">이름 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="ds-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ds-description" class="form-label">설명</label>
+                        <textarea class="form-control" id="ds-description" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ds-color" class="form-label">색상</label>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="color" class="form-control form-control-color" id="ds-color" value="#4A90D9">
+                            <span id="ds-color-label" class="text-muted">#4A90D9</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveDomainSystem()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 프로젝트 모달 ==================== -->
+    <div class="modal fade" id="projectModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="projectModalTitle">프로젝트 추가</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="project-id">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="project-name" class="form-label">프로젝트명 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="project-name" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="project-type" class="form-label">유형 <span class="text-danger">*</span></label>
+                            <select class="form-select" id="project-type">
+                                <option value="SKU_SYSTEM">SKU_SYSTEM</option>
+                                <option value="BUSINESS">BUSINESS</option>
+                                <option value="MUKIE">MUKIE</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="project-description" class="form-label">설명</label>
+                        <textarea class="form-control" id="project-description" rows="2"></textarea>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="project-start-date" class="form-label">시작일 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="project-start-date" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="project-end-date" class="form-label">종료일 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="project-end-date" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="project-status" class="form-label">상태</label>
+                            <select class="form-select" id="project-status">
+                                <option value="PLANNING">PLANNING</option>
+                                <option value="IN_PROGRESS">IN_PROGRESS</option>
+                                <option value="COMPLETED">COMPLETED</option>
+                                <option value="ON_HOLD">ON_HOLD</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- 멤버 선택 -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">멤버 선택</label>
+                        <div id="project-members-checklist" class="checklist-container"></div>
+                    </div>
+                    <!-- 도메인 시스템 선택 -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">도메인 시스템 선택</label>
+                        <div id="project-ds-checklist" class="checklist-container"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveProject()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 태스크 모달 ==================== -->
+    <div class="modal fade" id="taskModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskModalTitle">태스크 추가</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="task-id">
+                    <div class="mb-3">
+                        <label for="task-name" class="form-label">태스크명 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="task-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="task-domain-system" class="form-label">도메인 시스템 <span class="text-danger">*</span></label>
+                        <select class="form-select" id="task-domain-system">
+                            <option value="">선택하세요</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="task-assignee" class="form-label">담당자 <span class="text-danger">*</span></label>
+                        <select class="form-select" id="task-assignee">
+                            <option value="">선택하세요</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="task-start-date" class="form-label">시작일 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="task-start-date" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="task-end-date" class="form-label">종료일 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="task-end-date" required>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="task-man-days" class="form-label">공수 (MD) <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="task-man-days" step="0.5" min="0.5" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="task-status" class="form-label">상태</label>
+                            <select class="form-select" id="task-status">
+                                <option value="PENDING">PENDING</option>
+                                <option value="IN_PROGRESS">IN_PROGRESS</option>
+                                <option value="COMPLETED">COMPLETED</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="task-sort-order" class="form-label">정렬 순서</label>
+                        <input type="number" class="form-control" id="task-sort-order" min="0" value="0">
+                    </div>
+                    <div class="mb-3">
+                        <label for="task-description" class="form-label">설명</label>
+                        <textarea class="form-control" id="task-description" rows="2"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">선행 태스크 (의존관계)</label>
+                        <div id="task-dependencies-checklist" class="checklist-container"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveTask()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 태스크 상세 팝업 모달 ==================== -->
+    <div class="modal fade" id="taskDetailModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">태스크 상세</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="task-detail-content">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger btn-sm" id="task-detail-delete-btn">
+                        <i class="bi bi-trash"></i> 삭제
+                    </button>
+                    <button type="button" class="btn btn-warning btn-sm" id="task-detail-edit-btn">
+                        <i class="bi bi-pencil"></i> 수정
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">닫기</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 알림 Toast ==================== -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container">
+        <div id="app-toast" class="toast align-items-center border-0" role="alert">
+            <div class="d-flex">
+                <div class="toast-body" id="toast-message"></div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/frappe-gantt/dist/frappe-gantt.min.js"></script>
+    <script src="/js/app.js?v=20260410b"></script>
+</body>
+</html>

@@ -12,15 +12,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 태스크 CRUD + 의존관계 + 간트차트 데이터 + 담당자 충돌 검증 + 링크 관리 서비스
+ * 태스크 CRUD + 의존관계 + 간트차트 데이터 + 담당자 충돌 검증 + 링크 관리 + 자동 날짜 계산 서비스
  */
 @Slf4j
 @Service
@@ -34,6 +32,7 @@ public class TaskService {
     private final ProjectRepository projectRepository;
     private final DomainSystemRepository domainSystemRepository;
     private final MemberRepository memberRepository;
+    private final BusinessDayCalculator businessDayCalculator;
 
     /**
      * 간트차트용 프로젝트 태스크 조회 (도메인 시스템별 그룹핑)
@@ -128,6 +127,8 @@ public class TaskService {
 
     /**
      * 태스크 생성
+     * - SEQUENTIAL 모드: 자동 날짜 계산 (startDate null이면 자동 계산, endDate 항상 자동 계산)
+     * - PARALLEL 모드: 기존 방식 (startDate, endDate 직접 입력)
      */
     @Transactional
     public TaskDto.Response createTask(Long projectId, TaskDto.Request request) {
@@ -140,16 +141,46 @@ public class TaskService {
         if (request.getDomainSystemId() == null) {
             throw new IllegalArgumentException("도메인 시스템은 필수입니다.");
         }
-        if (request.getStartDate() == null || request.getEndDate() == null) {
-            throw new IllegalArgumentException("시작일과 종료일은 필수입니다.");
-        }
-        if (request.getStartDate().isAfter(request.getEndDate())) {
-            throw new IllegalArgumentException("시작일은 종료일보다 이후일 수 없습니다.");
-        }
 
         // 실행 모드 결정 (null이면 SEQUENTIAL 기본값)
         TaskExecutionMode executionMode = request.getExecutionMode() != null
                 ? request.getExecutionMode() : TaskExecutionMode.SEQUENTIAL;
+
+        LocalDate startDate = request.getStartDate();
+        LocalDate endDate = request.getEndDate();
+
+        if (executionMode == TaskExecutionMode.SEQUENTIAL) {
+            // SEQUENTIAL 모드: 자동 날짜 계산
+            if (request.getManDays() == null) {
+                throw new IllegalArgumentException("SEQUENTIAL 모드에서는 공수(MD)가 필수입니다.");
+            }
+            if (request.getManDays().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("공수(MD)는 0보다 커야 합니다.");
+            }
+            if (request.getAssigneeId() == null && startDate == null) {
+                throw new IllegalArgumentException("SEQUENTIAL 모드에서 담당자가 없으면 시작일을 직접 입력해야 합니다.");
+            }
+
+            if (startDate == null) {
+                // 후속 태스크: 시작일 자동 계산
+                startDate = calculateAutoStartDate(projectId, request.getAssigneeId(),
+                        List.of(), null);
+            } else {
+                // 첫 번째 태스크: 시작일이 영업일인지 보정
+                startDate = businessDayCalculator.ensureBusinessDay(startDate);
+            }
+
+            // 종료일 항상 자동 계산
+            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays());
+        } else {
+            // PARALLEL 모드: 기존 방식
+            if (startDate == null || endDate == null) {
+                throw new IllegalArgumentException("PARALLEL 모드에서는 시작일과 종료일은 필수입니다.");
+            }
+            if (startDate.isAfter(endDate)) {
+                throw new IllegalArgumentException("시작일은 종료일보다 이후일 수 없습니다.");
+            }
+        }
 
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다. id=" + projectId));
@@ -164,9 +195,10 @@ public class TaskService {
                     .orElseThrow(() -> new EntityNotFoundException(
                             "멤버를 찾을 수 없습니다. id=" + request.getAssigneeId()));
 
-            // SEQUENTIAL 모드인 경우에만 담당자 일정 충돌 검증
-            if (executionMode == TaskExecutionMode.SEQUENTIAL) {
-                validateAssigneeConflict(assignee, request.getStartDate(), request.getEndDate(), null);
+            // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증
+            // SEQUENTIAL 자동 계산 모드에서는 날짜가 자동으로 비겹치게 계산되므로 검증 스킵
+            if (executionMode == TaskExecutionMode.PARALLEL) {
+                validateAssigneeConflict(assignee, startDate, endDate, null);
             }
         }
 
@@ -176,8 +208,8 @@ public class TaskService {
                 .assignee(assignee)
                 .name(request.getName())
                 .description(request.getDescription())
-                .startDate(request.getStartDate())
-                .endDate(request.getEndDate())
+                .startDate(startDate)
+                .endDate(endDate)
                 .manDays(request.getManDays())
                 .sortOrder(request.getSortOrder())
                 .executionMode(executionMode);
@@ -193,13 +225,15 @@ public class TaskService {
         // 링크 저장
         List<TaskLink> savedLinks = saveTaskLinks(saved, request.getLinks());
 
-        log.info("태스크 생성 완료: id={}, name={}, projectId={}, executionMode={}",
-                saved.getId(), saved.getName(), projectId, executionMode);
+        log.info("태스크 생성 완료: id={}, name={}, projectId={}, executionMode={}, startDate={}, endDate={}",
+                saved.getId(), saved.getName(), projectId, executionMode, startDate, endDate);
         return TaskDto.Response.from(saved, List.of(), savedLinks);
     }
 
     /**
      * 태스크 수정
+     * - SEQUENTIAL 모드: 자동 날짜 계산 + 후속 태스크 연쇄 재계산
+     * - PARALLEL 모드: 기존 방식 (startDate, endDate 직접 입력)
      */
     @Transactional
     public TaskDto.Response updateTask(Long taskId, TaskDto.Request request) {
@@ -212,12 +246,6 @@ public class TaskService {
         if (request.getDomainSystemId() == null) {
             throw new IllegalArgumentException("도메인 시스템은 필수입니다.");
         }
-        if (request.getStartDate() == null || request.getEndDate() == null) {
-            throw new IllegalArgumentException("시작일과 종료일은 필수입니다.");
-        }
-        if (request.getStartDate().isAfter(request.getEndDate())) {
-            throw new IllegalArgumentException("시작일은 종료일보다 이후일 수 없습니다.");
-        }
 
         // 실행 모드 결정
         TaskExecutionMode executionMode = request.getExecutionMode() != null
@@ -225,6 +253,46 @@ public class TaskService {
 
         Task task = taskRepository.findByIdWithDetails(taskId)
                 .orElseThrow(() -> new EntityNotFoundException("태스크를 찾을 수 없습니다. id=" + taskId));
+
+        Long projectId = task.getProject().getId();
+
+        LocalDate startDate = request.getStartDate();
+        LocalDate endDate = request.getEndDate();
+
+        if (executionMode == TaskExecutionMode.SEQUENTIAL) {
+            // SEQUENTIAL 모드: 자동 날짜 계산
+            if (request.getManDays() == null) {
+                throw new IllegalArgumentException("SEQUENTIAL 모드에서는 공수(MD)가 필수입니다.");
+            }
+            if (request.getManDays().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("공수(MD)는 0보다 커야 합니다.");
+            }
+
+            // 현재 태스크의 의존관계 조회
+            List<Long> dependsOnTaskIds = taskDependencyRepository.findByTaskIdWithDependsOnTask(taskId).stream()
+                    .map(td -> td.getDependsOnTask().getId())
+                    .collect(Collectors.toList());
+
+            if (startDate == null) {
+                // 후속 태스크: 시작일 자동 계산
+                startDate = calculateAutoStartDate(projectId, request.getAssigneeId(),
+                        dependsOnTaskIds, taskId);
+            } else {
+                // 첫 번째 태스크: 시작일이 영업일인지 보정
+                startDate = businessDayCalculator.ensureBusinessDay(startDate);
+            }
+
+            // 종료일 항상 자동 계산
+            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays());
+        } else {
+            // PARALLEL 모드: 기존 방식
+            if (startDate == null || endDate == null) {
+                throw new IllegalArgumentException("PARALLEL 모드에서는 시작일과 종료일은 필수입니다.");
+            }
+            if (startDate.isAfter(endDate)) {
+                throw new IllegalArgumentException("시작일은 종료일보다 이후일 수 없습니다.");
+            }
+        }
 
         DomainSystem domainSystem = domainSystemRepository.findById(request.getDomainSystemId())
                 .orElseThrow(() -> new EntityNotFoundException(
@@ -236,9 +304,10 @@ public class TaskService {
                     .orElseThrow(() -> new EntityNotFoundException(
                             "멤버를 찾을 수 없습니다. id=" + request.getAssigneeId()));
 
-            // SEQUENTIAL 모드인 경우에만 담당자 일정 충돌 검증 (자기 자신 제외)
-            if (executionMode == TaskExecutionMode.SEQUENTIAL) {
-                validateAssigneeConflict(assignee, request.getStartDate(), request.getEndDate(), taskId);
+            // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증 (자기 자신 제외)
+            // SEQUENTIAL 자동 계산 모드에서는 검증 스킵
+            if (executionMode == TaskExecutionMode.PARALLEL) {
+                validateAssigneeConflict(assignee, startDate, endDate, taskId);
             }
         }
 
@@ -246,8 +315,8 @@ public class TaskService {
         task.setAssignee(assignee);
         task.setName(request.getName());
         task.setDescription(request.getDescription());
-        task.setStartDate(request.getStartDate());
-        task.setEndDate(request.getEndDate());
+        task.setStartDate(startDate);
+        task.setEndDate(endDate);
         task.setManDays(request.getManDays());
         task.setExecutionMode(executionMode);
         if (request.getStatus() != null) {
@@ -256,6 +325,11 @@ public class TaskService {
         task.setSortOrder(request.getSortOrder());
 
         Task updated = taskRepository.save(task);
+
+        // SEQUENTIAL 모드이면 후속 태스크 연쇄 재계산 (동일 트랜잭션 내)
+        if (executionMode == TaskExecutionMode.SEQUENTIAL) {
+            recalculateDependentTasks(taskId);
+        }
 
         // 링크 교체 (replace-all 방식): request.links가 null이 아닌 경우에만 교체
         List<TaskLink> savedLinks;
@@ -271,7 +345,8 @@ public class TaskService {
                 .map(td -> td.getDependsOnTask().getId())
                 .collect(Collectors.toList());
 
-        log.info("태스크 수정 완료: id={}, name={}, executionMode={}", updated.getId(), updated.getName(), executionMode);
+        log.info("태스크 수정 완료: id={}, name={}, executionMode={}, startDate={}, endDate={}",
+                updated.getId(), updated.getName(), executionMode, startDate, endDate);
         return TaskDto.Response.from(updated, dependencies, savedLinks);
     }
 
@@ -333,6 +408,53 @@ public class TaskService {
 
         taskDependencyRepository.delete(dependency);
         log.info("의존관계 제거: taskId={} -> dependsOnTaskId={}", taskId, dependsOnTaskId);
+    }
+
+    // ---- 날짜 프리뷰 API 메서드 ----
+
+    /**
+     * 날짜 프리뷰 계산 (DB 저장 없음, 태스크 모달 프리뷰용)
+     *
+     * @param projectId        프로젝트 ID
+     * @param assigneeId       담당자 ID
+     * @param manDays          공수 (MD)
+     * @param dependsOnTaskIds 선행 태스크 ID 목록
+     * @param excludeTaskId    자기 자신 제외 (수정 시)
+     * @return 예상 시작일, 종료일, 첫 번째 태스크 여부
+     */
+    public TaskDto.PreviewDatesResponse previewDates(Long projectId, Long assigneeId,
+                                                      BigDecimal manDays,
+                                                      List<Long> dependsOnTaskIds,
+                                                      Long excludeTaskId) {
+        // 첫 번째 태스크 여부 판단
+        boolean isFirstTask = true;
+        if (assigneeId != null) {
+            long count = taskRepository.countSequentialTasksByAssignee(
+                    assigneeId, projectId, TaskExecutionMode.SEQUENTIAL, excludeTaskId);
+            isFirstTask = (count == 0);
+        }
+
+        // 시작일/종료일 계산 (assigneeId가 있고, 첫 번째 태스크가 아닌 경우)
+        LocalDate startDate = null;
+        LocalDate endDate = null;
+
+        if (assigneeId != null && !isFirstTask) {
+            startDate = calculateAutoStartDate(projectId, assigneeId,
+                    dependsOnTaskIds != null ? dependsOnTaskIds : List.of(), excludeTaskId);
+
+            if (manDays != null && manDays.compareTo(BigDecimal.ZERO) > 0) {
+                endDate = businessDayCalculator.calculateEndDate(startDate, manDays);
+            }
+        } else if (manDays != null && manDays.compareTo(BigDecimal.ZERO) > 0 && assigneeId != null) {
+            // 첫 번째 태스크이면서 manDays가 있지만 startDate는 클라이언트에서 입력하므로 여기서는 null
+            // (프리뷰에서는 startDate를 알 수 없으므로 null 반환)
+        }
+
+        return TaskDto.PreviewDatesResponse.builder()
+                .startDate(startDate)
+                .endDate(endDate)
+                .isFirstTask(isFirstTask)
+                .build();
     }
 
     // ---- 링크 전용 API 메서드 ----
@@ -403,7 +525,138 @@ public class TaskService {
         log.info("태스크 링크 삭제: taskId={}, linkId={}", taskId, linkId);
     }
 
-    // ---- Private 메서드 ----
+    // ---- 자동 날짜 계산 Private 메서드 ----
+
+    /**
+     * 자동 시작일 계산
+     * 1. 선행 태스크(의존관계)의 종료일 중 최댓값 조회
+     * 2. 동일 담당자의 프로젝트 내 SEQUENTIAL 태스크 중 종료일이 가장 늦은 태스크의 종료일 조회
+     * 3. 두 값 중 더 늦은 날짜를 후보 기준일로 결정
+     * 4. 후보 기준일의 다음 영업일을 최종 시작일로 반환
+     *
+     * @param projectId        프로젝트 ID
+     * @param assigneeId       담당자 ID
+     * @param dependsOnTaskIds 선행 태스크 ID 목록
+     * @param excludeTaskId    제외할 태스크 ID (수정 시 자기 자신)
+     * @return 자동 계산된 시작일
+     */
+    private LocalDate calculateAutoStartDate(Long projectId, Long assigneeId,
+                                              List<Long> dependsOnTaskIds, Long excludeTaskId) {
+        LocalDate latestEndDate = null;
+
+        // 1. 선행 태스크들의 종료일 중 최댓값
+        if (dependsOnTaskIds != null && !dependsOnTaskIds.isEmpty()) {
+            for (Long depTaskId : dependsOnTaskIds) {
+                Task depTask = taskRepository.findById(depTaskId).orElse(null);
+                if (depTask != null && depTask.getEndDate() != null) {
+                    if (latestEndDate == null || depTask.getEndDate().isAfter(latestEndDate)) {
+                        latestEndDate = depTask.getEndDate();
+                    }
+                }
+            }
+        }
+
+        // 2. 동일 담당자의 프로젝트 내 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것
+        if (assigneeId != null) {
+            List<Task> latestTasks = taskRepository.findLatestSequentialTaskByAssignee(
+                    assigneeId, projectId, TaskExecutionMode.SEQUENTIAL, excludeTaskId);
+            if (!latestTasks.isEmpty()) {
+                LocalDate assigneeLatest = latestTasks.get(0).getEndDate();
+                if (assigneeLatest != null && (latestEndDate == null || assigneeLatest.isAfter(latestEndDate))) {
+                    latestEndDate = assigneeLatest;
+                }
+            }
+        }
+
+        // 3. 후보 기준일의 다음 영업일
+        if (latestEndDate != null) {
+            return businessDayCalculator.getNextBusinessDay(latestEndDate);
+        }
+
+        // 선행 태스크도 없고 동일 담당자 태스크도 없으면 오늘 기준 다음 영업일
+        return businessDayCalculator.ensureBusinessDay(LocalDate.now());
+    }
+
+    /**
+     * 후속 태스크 연쇄 재계산 (BFS)
+     * - 해당 태스크를 선행으로 가지는 모든 후속 SEQUENTIAL 태스크를 순회하며 날짜 재계산
+     * - 방문 추적(Set)으로 순환 방지
+     * - 동일 @Transactional 내에서 호출
+     */
+    private void recalculateDependentTasks(Long taskId) {
+        Set<Long> visited = new HashSet<>();
+        Queue<Long> queue = new LinkedList<>();
+        queue.add(taskId);
+        visited.add(taskId);
+
+        int maxIterations = 1000; // 무한 루프 안전장치
+        int iteration = 0;
+
+        while (!queue.isEmpty()) {
+            if (++iteration > maxIterations) {
+                log.warn("연쇄 재계산 최대 반복 횟수({}) 초과. 순환 의존관계 의심. 시작 taskId={}", maxIterations, taskId);
+                break;
+            }
+            Long currentTaskId = queue.poll();
+
+            // 현재 태스크를 선행(dependsOnTask)으로 가지는 후속 태스크 조회
+            List<TaskDependency> dependents = taskDependencyRepository.findByDependsOnTaskIdWithTask(currentTaskId);
+
+            for (TaskDependency td : dependents) {
+                Task dependentTask = td.getTask();
+                Long dependentTaskId = dependentTask.getId();
+
+                // 순환 방지
+                if (visited.contains(dependentTaskId)) {
+                    continue;
+                }
+                visited.add(dependentTaskId);
+
+                // SEQUENTIAL 모드인 경우에만 재계산
+                if (dependentTask.getExecutionMode() != TaskExecutionMode.SEQUENTIAL) {
+                    continue;
+                }
+
+                // 상세 정보 로드 (assignee 등)
+                Task fullTask = taskRepository.findByIdWithDetails(dependentTaskId).orElse(null);
+                if (fullTask == null) {
+                    continue;
+                }
+
+                // 현재 태스크의 의존관계 조회
+                List<Long> depTaskIds = taskDependencyRepository.findByTaskIdWithDependsOnTask(dependentTaskId).stream()
+                        .map(dep -> dep.getDependsOnTask().getId())
+                        .collect(Collectors.toList());
+
+                Long assigneeId = fullTask.getAssignee() != null ? fullTask.getAssignee().getId() : null;
+                Long projectIdForCalc = fullTask.getProject().getId();
+
+                // 시작일 재계산
+                LocalDate newStartDate = calculateAutoStartDate(
+                        projectIdForCalc, assigneeId, depTaskIds, dependentTaskId);
+
+                // 종료일 재계산
+                LocalDate newEndDate = fullTask.getEndDate();
+                if (fullTask.getManDays() != null && fullTask.getManDays().compareTo(BigDecimal.ZERO) > 0) {
+                    newEndDate = businessDayCalculator.calculateEndDate(newStartDate, fullTask.getManDays());
+                }
+
+                // 변경이 있을 때만 저장 (불필요한 UPDATE 방지)
+                if (!newStartDate.equals(fullTask.getStartDate()) || !newEndDate.equals(fullTask.getEndDate())) {
+                    fullTask.setStartDate(newStartDate);
+                    fullTask.setEndDate(newEndDate);
+                    taskRepository.saveAndFlush(fullTask);
+                    log.info("연쇄 재계산: taskId={}, name={}, newStartDate={}, newEndDate={}",
+                            dependentTaskId, fullTask.getName(), newStartDate, newEndDate);
+                }
+
+                // 이 태스크의 후속 태스크도 큐에 추가
+                queue.add(dependentTaskId);
+            }
+        }
+    }
+
+    // ---- Other Private 메서드 ----
 
     /**
      * 담당자 일정 충돌 검증

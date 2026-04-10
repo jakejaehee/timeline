@@ -131,4 +131,30 @@ public class TaskDto {
     public static class AddDependencyRequest {
         private Long dependsOnTaskId;
     }
+
+    /**
+     * 날짜 프리뷰 요청 DTO
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class PreviewDatesRequest {
+        private Long assigneeId;
+        private BigDecimal manDays;
+        private List<Long> dependsOnTaskIds;
+        private Long excludeTaskId;   // 수정 시 자기 자신 제외
+    }
+
+    /**
+     * 날짜 프리뷰 응답 DTO
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class PreviewDatesResponse {
+        private LocalDate startDate;
+        private LocalDate endDate;
+        private boolean isFirstTask;
+    }
 }

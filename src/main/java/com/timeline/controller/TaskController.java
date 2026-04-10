@@ -42,6 +42,25 @@ public class TaskController {
     }
 
     /**
+     * 날짜 프리뷰 계산 (DB 저장 없음)
+     * - 담당자/공수/의존관계 기반으로 예상 시작일/종료일 계산
+     */
+    @PostMapping("/api/v1/projects/{projectId}/tasks/preview-dates")
+    public ResponseEntity<?> previewDates(@PathVariable Long projectId,
+                                           @RequestBody TaskDto.PreviewDatesRequest request) {
+        TaskDto.PreviewDatesResponse preview = taskService.previewDates(
+                projectId,
+                request.getAssigneeId(),
+                request.getManDays(),
+                request.getDependsOnTaskIds(),
+                request.getExcludeTaskId());
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", preview
+        ));
+    }
+
+    /**
      * 태스크 생성
      */
     @PostMapping("/api/v1/projects/{projectId}/tasks")

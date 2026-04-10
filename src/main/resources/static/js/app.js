@@ -1,6 +1,6 @@
 // ========================================
 // Timeline Application JavaScript
-// Version: 20260411c
+// Version: 20260411d
 // ========================================
 
 // ---- 전역 상태 ----
@@ -11,6 +11,8 @@ var ganttInstance = null;        // frappe-gantt 인스턴스
 var currentViewMode = 'Week';   // 간트차트 뷰 모드
 var parsedTaskData = null;       // AI 파싱 결과 임시 저장
 var currentModalProjectId = null; // 태스크 모달에서 사용 중인 프로젝트 ID (Team Board 지원)
+var isFirstTask = true;          // 현재 모달의 태스크가 첫 번째 태스크인지
+var previewDebounceTimer = null; // 프리뷰 API 호출 디바운스 타이머
 
 // ========================================
 // 유틸리티 함수
@@ -870,22 +872,35 @@ async function onTaskDateChange(task, start, end) {
         var taskRes = await apiCall('/api/v1/tasks/' + taskId);
         if (taskRes.success && taskRes.data) {
             var taskData = taskRes.data;
+            var execMode = taskData.executionMode || 'SEQUENTIAL';
             var body = {
                 name: taskData.name,
                 domainSystemId: taskData.domainSystem ? taskData.domainSystem.id : null,
                 assigneeId: taskData.assignee ? taskData.assignee.id : null,
-                startDate: startStr,
-                endDate: endStr,
                 manDays: taskData.manDays,
                 status: taskData.status,
                 sortOrder: taskData.sortOrder,
                 description: taskData.description,
-                executionMode: taskData.executionMode || 'SEQUENTIAL'
+                executionMode: execMode
             };
+
+            if (execMode === 'SEQUENTIAL') {
+                // SEQUENTIAL 모드: 드래그된 startDate를 첫 번째 태스크처럼 전달,
+                // endDate는 서버에서 재계산
+                body.startDate = startStr;
+                body.endDate = null;
+            } else {
+                body.startDate = startStr;
+                body.endDate = endStr;
+            }
 
             var res = await apiCall('/api/v1/tasks/' + taskId, 'PUT', body);
             if (res.success) {
                 showToast('태스크 일정이 변경되었습니다.', 'success');
+                // SEQUENTIAL 모드에서는 연쇄 재계산이 발생하므로 전체 새로고침
+                if (execMode === 'SEQUENTIAL') {
+                    await loadGanttData(currentProjectId);
+                }
             } else {
                 showToast(res.message || '일정 변경에 실패했습니다.', 'error');
                 // 실패 시 간트차트 새로고침
@@ -1021,6 +1036,12 @@ async function showTaskModal(taskId, projectId) {
     warningEl.style.display = 'none';
     warningEl.innerHTML = '';
 
+    // 자동 계산 안내 초기화
+    document.getElementById('task-auto-date-info').style.display = 'none';
+
+    // 첫 번째 태스크 플래그 초기화
+    isFirstTask = true;
+
     // 링크 컨테이너 초기화
     document.getElementById('task-links-container').innerHTML = '';
     updateAddLinkBtnState();
@@ -1102,7 +1123,7 @@ async function showTaskModal(taskId, projectId) {
                         if (taskId && task.id === parseInt(taskId)) return;
                         var checked = currentDependencies.indexOf(task.id) >= 0 ? 'checked' : '';
                         depsHtml += '<div class="form-check">';
-                        depsHtml += '<input class="form-check-input" type="checkbox" value="' + task.id + '" id="dep-' + task.id + '" ' + checked + '>';
+                        depsHtml += '<input class="form-check-input task-dep-checkbox" type="checkbox" value="' + task.id + '" id="dep-' + task.id + '" ' + checked + '>';
                         depsHtml += '<label class="form-check-label" for="dep-' + task.id + '">[' + escapeHtml(ds.name) + '] ' + escapeHtml(task.name) + '</label>';
                         depsHtml += '</div>';
                     });
@@ -1112,6 +1133,14 @@ async function showTaskModal(taskId, projectId) {
         } else {
             depsContainer.innerHTML = '<span class="text-muted">의존 가능한 태스크가 없습니다.</span>';
         }
+    }
+
+    // 날짜 필드 표시 모드 설정 (실행 모드에 따라)
+    updateTaskDateFieldsVisibility();
+
+    // 기존 태스크 수정 시 프리뷰 호출 (담당자가 이미 선택된 경우)
+    if (taskId && document.getElementById('task-assignee').value && document.getElementById('task-execution-mode').value === 'SEQUENTIAL') {
+        triggerDatePreview();
     }
 
     var modal = new bootstrap.Modal(document.getElementById('taskModal'));
@@ -1143,13 +1172,24 @@ async function saveTask() {
         showToast('담당자를 선택해주세요.', 'warning');
         return;
     }
-    if (!startDate || !endDate) {
-        showToast('시작일과 종료일을 입력해주세요.', 'warning');
-        return;
-    }
-    if (!manDays) {
-        showToast('공수(MD)를 입력해주세요.', 'warning');
-        return;
+
+    if (executionMode === 'SEQUENTIAL') {
+        // SEQUENTIAL 모드: 공수 필수
+        if (!manDays) {
+            showToast('SEQUENTIAL 모드에서는 공수(MD)를 입력해주세요.', 'warning');
+            return;
+        }
+        // 첫 번째 태스크인 경우 시작일 필수
+        if (isFirstTask && !startDate) {
+            showToast('첫 번째 태스크에는 시작일을 입력해주세요.', 'warning');
+            return;
+        }
+    } else {
+        // PARALLEL 모드: 시작일, 종료일 필수
+        if (!startDate || !endDate) {
+            showToast('PARALLEL 모드에서는 시작일과 종료일을 입력해주세요.', 'warning');
+            return;
+        }
     }
 
     // 링크 수집
@@ -1169,15 +1209,24 @@ async function saveTask() {
         name: name,
         domainSystemId: parseInt(domainSystemId),
         assigneeId: parseInt(assigneeId),
-        startDate: startDate,
-        endDate: endDate,
-        manDays: parseFloat(manDays),
+        manDays: manDays ? parseFloat(manDays) : null,
         status: status,
         executionMode: executionMode,
         sortOrder: parseInt(sortOrder) || 0,
         description: description,
         links: links
     };
+
+    if (executionMode === 'SEQUENTIAL') {
+        // SEQUENTIAL 모드: 첫 번째 태스크면 startDate 포함, 후속이면 null
+        // endDate는 항상 null (서버에서 자동 계산)
+        body.startDate = isFirstTask ? startDate : null;
+        body.endDate = null;
+    } else {
+        // PARALLEL 모드: 기존 방식
+        body.startDate = startDate;
+        body.endDate = endDate;
+    }
 
     try {
         var res;
@@ -1606,8 +1655,8 @@ async function checkAssigneeConflict() {
     var executionMode = document.getElementById('task-execution-mode').value;
     var warningEl = document.getElementById('task-assignee-conflict-warning');
 
-    // PARALLEL 모드에서는 충돌 경고 숨김
-    if (executionMode === 'PARALLEL') {
+    // SEQUENTIAL 모드에서는 날짜가 자동 계산되므로 충돌 경고 비활성화
+    if (executionMode === 'SEQUENTIAL') {
         warningEl.style.display = 'none';
         warningEl.innerHTML = '';
         return;
@@ -1676,19 +1725,212 @@ function initAssigneeConflictCheck() {
     var startDateInput = document.getElementById('task-start-date');
     var endDateInput = document.getElementById('task-end-date');
     var executionModeSelect = document.getElementById('task-execution-mode');
+    var manDaysInput = document.getElementById('task-man-days');
 
     if (assigneeSelect) {
-        assigneeSelect.addEventListener('change', checkAssigneeConflict);
+        assigneeSelect.addEventListener('change', function() {
+            checkAssigneeConflict();
+            updateTaskDateFieldsVisibility();
+            triggerDatePreview();
+        });
     }
     if (startDateInput) {
-        startDateInput.addEventListener('change', checkAssigneeConflict);
+        startDateInput.addEventListener('change', function() {
+            checkAssigneeConflict();
+            triggerDatePreview();
+        });
     }
     if (endDateInput) {
         endDateInput.addEventListener('change', checkAssigneeConflict);
     }
     if (executionModeSelect) {
-        executionModeSelect.addEventListener('change', checkAssigneeConflict);
+        executionModeSelect.addEventListener('change', function() {
+            checkAssigneeConflict();
+            updateTaskDateFieldsVisibility();
+            triggerDatePreview();
+        });
     }
+    if (manDaysInput) {
+        manDaysInput.addEventListener('input', function() {
+            triggerDatePreview();
+        });
+    }
+
+    // 의존관계 체크박스 변경 시 프리뷰 (이벤트 위임)
+    var depsContainer = document.getElementById('task-dependencies-checklist');
+    if (depsContainer) {
+        depsContainer.addEventListener('change', function(e) {
+            if (e.target && e.target.classList.contains('task-dep-checkbox')) {
+                triggerDatePreview();
+            }
+        });
+    }
+}
+
+/**
+ * 실행 모드에 따른 날짜 필드 표시/숨김 처리
+ */
+function updateTaskDateFieldsVisibility() {
+    var executionMode = document.getElementById('task-execution-mode').value;
+    var assigneeId = document.getElementById('task-assignee').value;
+    var startDateGroup = document.getElementById('task-start-date-group');
+    var endDateGroup = document.getElementById('task-end-date-group');
+    var startDateInput = document.getElementById('task-start-date');
+    var endDateInput = document.getElementById('task-end-date');
+    var autoDateInfo = document.getElementById('task-auto-date-info');
+    var autoDateMsg = document.getElementById('task-auto-date-message');
+
+    if (executionMode === 'PARALLEL') {
+        // PARALLEL 모드: 기존 방식 (시작일/종료일 직접 입력)
+        startDateGroup.style.display = '';
+        endDateGroup.style.display = '';
+        startDateInput.readOnly = false;
+        endDateInput.readOnly = false;
+        startDateInput.required = true;
+        endDateInput.required = true;
+        autoDateInfo.style.display = 'none';
+        isFirstTask = true; // PARALLEL에서는 의미 없으므로 true
+    } else {
+        // SEQUENTIAL 모드
+        endDateInput.readOnly = true;
+        endDateInput.required = false;
+
+        if (!assigneeId) {
+            // 담당자 미선택: 필드 표시하지만 비활성
+            startDateGroup.style.display = '';
+            endDateGroup.style.display = '';
+            startDateInput.readOnly = false;
+            startDateInput.required = true;
+            autoDateInfo.style.display = 'none';
+            isFirstTask = true;
+        } else if (isFirstTask) {
+            // 첫 번째 태스크: 시작일 직접 입력, 종료일 읽기 전용
+            startDateGroup.style.display = '';
+            endDateGroup.style.display = '';
+            startDateInput.readOnly = false;
+            startDateInput.required = true;
+            autoDateInfo.style.display = 'block';
+            autoDateMsg.textContent = '첫 번째 태스크: 시작일을 입력하면 종료일이 공수 기반으로 자동 계산됩니다.';
+        } else {
+            // 후속 태스크: 시작일/종료일 모두 읽기 전용
+            startDateGroup.style.display = '';
+            endDateGroup.style.display = '';
+            startDateInput.readOnly = true;
+            startDateInput.required = false;
+            autoDateInfo.style.display = 'block';
+            autoDateMsg.textContent = '후속 태스크: 시작일/종료일이 선행 태스크 기준으로 자동 계산됩니다. 저장 시 확정됩니다.';
+        }
+    }
+}
+
+/**
+ * 날짜 프리뷰 API 호출 (디바운스 500ms)
+ */
+function triggerDatePreview() {
+    if (previewDebounceTimer) {
+        clearTimeout(previewDebounceTimer);
+    }
+    previewDebounceTimer = setTimeout(function() {
+        fetchDatePreview();
+    }, 500);
+}
+
+/**
+ * 날짜 프리뷰 API 실제 호출
+ */
+async function fetchDatePreview() {
+    var executionMode = document.getElementById('task-execution-mode').value;
+    if (executionMode !== 'SEQUENTIAL') return;
+
+    var assigneeId = document.getElementById('task-assignee').value;
+    if (!assigneeId) return;
+
+    var resolvedProjectId = currentModalProjectId || currentProjectId;
+    if (!resolvedProjectId) return;
+
+    var manDaysVal = document.getElementById('task-man-days').value;
+    var manDays = manDaysVal ? parseFloat(manDaysVal) : null;
+    var excludeTaskId = document.getElementById('task-id').value;
+
+    // 의존관계 체크박스에서 선택된 ID 수집
+    var dependsOnTaskIds = [];
+    var depCheckboxes = document.querySelectorAll('#task-dependencies-checklist .task-dep-checkbox:checked');
+    depCheckboxes.forEach(function(cb) {
+        dependsOnTaskIds.push(parseInt(cb.value));
+    });
+
+    var body = {
+        assigneeId: parseInt(assigneeId),
+        manDays: manDays,
+        dependsOnTaskIds: dependsOnTaskIds,
+        excludeTaskId: excludeTaskId ? parseInt(excludeTaskId) : null
+    };
+
+    try {
+        var res = await apiCall('/api/v1/projects/' + resolvedProjectId + '/tasks/preview-dates', 'POST', body);
+        if (res.success && res.data) {
+            isFirstTask = res.data.firstTask;
+
+            // UI 업데이트
+            updateTaskDateFieldsVisibility();
+
+            // 프리뷰 날짜 표시
+            if (!isFirstTask && res.data.startDate) {
+                document.getElementById('task-start-date').value = res.data.startDate;
+            }
+            if (res.data.endDate) {
+                document.getElementById('task-end-date').value = res.data.endDate;
+            } else if (isFirstTask && manDays) {
+                // 첫 번째 태스크: 시작일 + 공수로 종료일 계산 (클라이언트 측 간이 계산)
+                var startDate = document.getElementById('task-start-date').value;
+                if (startDate) {
+                    document.getElementById('task-end-date').value = calculateEndDateClient(startDate, manDays);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('날짜 프리뷰 실패:', e);
+    }
+}
+
+/**
+ * 클라이언트 측 종료일 간이 계산 (프리뷰용)
+ * - 공수 기반 영업일 계산 (주말 제외)
+ */
+function calculateEndDateClient(startDateStr, manDays) {
+    var businessDays = Math.floor(manDays);
+    if (manDays - businessDays > 0) {
+        businessDays = businessDays + 1;
+    }
+    if (businessDays <= 0) {
+        if (manDays > 0) {
+            businessDays = 1;
+        } else {
+            return startDateStr;
+        }
+    }
+
+    var d = new Date(startDateStr + 'T00:00:00');
+
+    // 시작일이 주말이면 다음 월요일로 보정 (서버 로직과 일치)
+    var startDow = d.getDay();
+    if (startDow === 0) {
+        d.setDate(d.getDate() + 1); // 일요일 -> 월요일
+    } else if (startDow === 6) {
+        d.setDate(d.getDate() + 2); // 토요일 -> 월요일
+    }
+
+    var daysAdded = 1;
+
+    while (daysAdded < businessDays) {
+        d.setDate(d.getDate() + 1);
+        var dow = d.getDay();
+        if (dow !== 0 && dow !== 6) {
+            daysAdded++;
+        }
+    }
+
+    return formatDateObj(d);
 }
 
 // ========================================

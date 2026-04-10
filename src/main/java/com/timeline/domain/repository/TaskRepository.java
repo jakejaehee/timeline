@@ -90,6 +90,39 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate);
 
+    /**
+     * 동일 프로젝트 + 담당자의 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것부터 조회
+     * - excludeTaskId 제외 (수정 시 자기 자신 제외)
+     * - 결과 목록의 첫 번째 요소가 가장 늦은 종료일
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.project.id = :projectId " +
+            "AND t.executionMode = :sequentialMode " +
+            "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId) " +
+            "ORDER BY t.endDate DESC")
+    List<Task> findLatestSequentialTaskByAssignee(
+            @Param("assigneeId") Long assigneeId,
+            @Param("projectId") Long projectId,
+            @Param("sequentialMode") TaskExecutionMode sequentialMode,
+            @Param("excludeTaskId") Long excludeTaskId);
+
+    /**
+     * 동일 프로젝트 + 담당자의 SEQUENTIAL 태스크 수 (excludeTaskId 제외)
+     * - 첫 번째 태스크 여부 판단에 사용
+     */
+    @Query("SELECT COUNT(t) FROM Task t " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.project.id = :projectId " +
+            "AND t.executionMode = :sequentialMode " +
+            "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId)")
+    long countSequentialTasksByAssignee(
+            @Param("assigneeId") Long assigneeId,
+            @Param("projectId") Long projectId,
+            @Param("sequentialMode") TaskExecutionMode sequentialMode,
+            @Param("excludeTaskId") Long excludeTaskId);
+
     List<Task> findByProjectId(Long projectId);
 
     List<Task> findByProjectIdAndStatus(Long projectId, TaskStatus status);

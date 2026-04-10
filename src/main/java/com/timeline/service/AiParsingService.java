@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +41,7 @@ public class AiParsingService {
     private final TaskRepository taskRepository;
     private final TaskDependencyRepository taskDependencyRepository;
     private final ObjectMapper objectMapper;
+    private final BusinessDayCalculator businessDayCalculator;
 
     /**
      * free-text에서 태스크 정보를 파싱 (미리보기용)
@@ -586,59 +586,23 @@ public class AiParsingService {
     }
 
     /**
-     * 종료일 계산 (공수 기반, 주말 제외)
-     *
-     * @param startDate 시작일
-     * @param manDays   공수 (영업일 수)
-     * @return 종료일
+     * 종료일 계산 (공수 기반, 주말 제외) - BusinessDayCalculator 위임
      */
     private LocalDate calculateEndDate(LocalDate startDate, BigDecimal manDays) {
-        int businessDays = manDays.intValue();
-        if (businessDays <= 0) {
-            return startDate;
-        }
-
-        // 소수점이 있으면 올림 (0.5일 → 1일)
-        if (manDays.remainder(BigDecimal.ONE).compareTo(BigDecimal.ZERO) > 0) {
-            businessDays = businessDays + 1;
-        }
-
-        LocalDate endDate = startDate;
-        int daysAdded = 1; // 시작일도 영업일 1일로 카운트
-
-        while (daysAdded < businessDays) {
-            endDate = endDate.plusDays(1);
-            if (isBusinessDay(endDate)) {
-                daysAdded++;
-            }
-        }
-
-        return endDate;
+        return businessDayCalculator.calculateEndDate(startDate, manDays);
     }
 
     /**
-     * 다음 영업일 반환
+     * 다음 영업일 반환 - BusinessDayCalculator 위임
      */
     private LocalDate getNextBusinessDay(LocalDate date) {
-        LocalDate next = date.plusDays(1);
-        return ensureBusinessDay(next);
+        return businessDayCalculator.getNextBusinessDay(date);
     }
 
     /**
-     * 주어진 날짜가 영업일이 아니면 다음 영업일 반환
+     * 주어진 날짜가 영업일이 아니면 다음 영업일 반환 - BusinessDayCalculator 위임
      */
     private LocalDate ensureBusinessDay(LocalDate date) {
-        while (!isBusinessDay(date)) {
-            date = date.plusDays(1);
-        }
-        return date;
-    }
-
-    /**
-     * 영업일 여부 확인 (토/일 제외)
-     */
-    private boolean isBusinessDay(LocalDate date) {
-        DayOfWeek dow = date.getDayOfWeek();
-        return dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY;
+        return businessDayCalculator.ensureBusinessDay(date);
     }
 }

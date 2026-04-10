@@ -447,6 +447,34 @@ body {
     display: block;
 }
 
+/* ---- Team Board ---- */
+#team-board-content .card-header {
+    padding: 10px 16px;
+}
+
+#team-board-content .table th {
+    font-size: 0.8rem;
+}
+
+#team-board-content .table td {
+    font-size: 0.85rem;
+}
+
+/* ---- 태스크 링크 행 ---- */
+.task-link-row {
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+#task-links-container {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
 /* ---- 반응형 ---- */
 @media (max-width: 768px) {
     #sidebar {

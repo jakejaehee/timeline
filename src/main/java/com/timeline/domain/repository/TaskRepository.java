@@ -1,6 +1,7 @@
 package com.timeline.domain.repository;
 
 import com.timeline.domain.entity.Task;
+import com.timeline.domain.enums.TaskExecutionMode;
 import com.timeline.domain.enums.TaskStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -38,10 +39,11 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     Optional<Task> findByIdWithDetails(@Param("taskId") Long taskId);
 
     /**
-     * 담당자별 기간 중복 검사
+     * 담당자별 기간 중복 검사 (SEQUENTIAL 모드인 태스크만 충돌 대상)
      * - 특정 담당자가 주어진 기간에 이미 다른 태스크를 수행 중인지 확인
      * - 기간 겹침 조건: 기존태스크.startDate <= newEndDate AND 기존태스크.endDate >= newStartDate
      * - 자기 자신은 제외 (수정 시)
+     * - PARALLEL 모드인 기존 태스크는 충돌 대상에서 제외
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
@@ -49,12 +51,14 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.startDate <= :endDate " +
             "AND t.endDate >= :startDate " +
-            "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId)")
+            "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId) " +
+            "AND t.executionMode = :sequentialMode")
     List<Task> findOverlappingTasks(
             @Param("assigneeId") Long assigneeId,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
-            @Param("excludeTaskId") Long excludeTaskId);
+            @Param("excludeTaskId") Long excludeTaskId,
+            @Param("sequentialMode") TaskExecutionMode sequentialMode);
 
     /**
      * 담당자별 태스크 조회
@@ -65,6 +69,26 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             "WHERE t.assignee.id = :assigneeId " +
             "ORDER BY t.startDate ASC")
     List<Task> findByAssigneeIdWithDetails(@Param("assigneeId") Long assigneeId);
+
+    /**
+     * 전체 태스크 조회 (팀 보드용) - 필터 조건 적용
+     * - project, domainSystem, assignee JOIN FETCH
+     * - 동적 필터: status, projectId, startDate/endDate 범위
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.assignee " +
+            "WHERE (:status IS NULL OR t.status = :status) " +
+            "AND (:projectId IS NULL OR t.project.id = :projectId) " +
+            "AND (:startDate IS NULL OR t.endDate >= :startDate) " +
+            "AND (:endDate IS NULL OR t.startDate <= :endDate) " +
+            "ORDER BY t.startDate ASC")
+    List<Task> findAllForTeamBoard(
+            @Param("status") TaskStatus status,
+            @Param("projectId") Long projectId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
 
     List<Task> findByProjectId(Long projectId);
 

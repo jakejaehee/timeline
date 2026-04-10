@@ -101,4 +101,42 @@ public class TaskController {
                 "success", true
         ));
     }
+
+    // ---- 태스크 링크 전용 API ----
+
+    /**
+     * 태스크 링크 목록 조회
+     */
+    @GetMapping("/api/v1/tasks/{id}/links")
+    public ResponseEntity<?> getTaskLinks(@PathVariable Long id) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", taskService.getTaskLinks(id)
+        ));
+    }
+
+    /**
+     * 태스크 링크 단건 추가
+     */
+    @PostMapping("/api/v1/tasks/{id}/links")
+    public ResponseEntity<?> addTaskLink(@PathVariable Long id,
+                                         @RequestBody TaskDto.TaskLinkRequest request) {
+        TaskDto.TaskLinkResponse created = taskService.addTaskLink(id, request);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", created
+        ));
+    }
+
+    /**
+     * 태스크 링크 단건 삭제
+     */
+    @DeleteMapping("/api/v1/tasks/{id}/links/{linkId}")
+    public ResponseEntity<?> deleteTaskLink(@PathVariable Long id,
+                                            @PathVariable Long linkId) {
+        taskService.deleteTaskLink(id, linkId);
+        return ResponseEntity.ok(Map.of(
+                "success", true
+        ));
+    }
 }

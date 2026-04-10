@@ -1,6 +1,7 @@
 package com.timeline.dto;
 
 import com.timeline.domain.enums.MemberRole;
+import com.timeline.domain.enums.TaskExecutionMode;
 import com.timeline.domain.enums.TaskStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -62,6 +63,7 @@ public class GanttDataDto {
         private TaskStatus status;
         private Integer sortOrder;
         private List<Long> dependencies;
+        private TaskExecutionMode executionMode;
     }
 
     @Data

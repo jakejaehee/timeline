@@ -1,8 +1,11 @@
 package com.timeline.service;
 
 import com.timeline.domain.entity.Member;
+import com.timeline.domain.entity.Task;
 import com.timeline.domain.repository.MemberRepository;
+import com.timeline.domain.repository.TaskRepository;
 import com.timeline.dto.MemberDto;
+import com.timeline.dto.TeamBoardDto;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +25,7 @@ import java.util.stream.Collectors;
 public class MemberService {
 
     private final MemberRepository memberRepository;
+    private final TaskRepository taskRepository;
 
     /**
      * 전체 멤버 목록 조회 (활성 멤버만)
@@ -95,6 +99,18 @@ public class MemberService {
         member.setActive(false);
         memberRepository.save(member);
         log.info("멤버 비활성화 완료: id={}, name={}", member.getId(), member.getName());
+    }
+
+    /**
+     * 특정 멤버의 배정 태스크 목록 조회
+     */
+    public List<TeamBoardDto.TaskItem> getMemberTasks(Long memberId) {
+        findMemberById(memberId);
+
+        List<Task> tasks = taskRepository.findByAssigneeIdWithDetails(memberId);
+        return tasks.stream()
+                .map(TeamBoardDto.TaskItem::from)
+                .collect(Collectors.toList());
     }
 
     /**

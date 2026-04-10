@@ -1,5 +1,6 @@
 package com.timeline.domain.entity;
 
+import com.timeline.domain.enums.TaskExecutionMode;
 import com.timeline.domain.enums.TaskStatus;
 import jakarta.persistence.*;
 import lombok.*;
@@ -58,6 +59,12 @@ public class Task {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private TaskStatus status = TaskStatus.PENDING;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "execution_mode", nullable = false, length = 20,
+            columnDefinition = "VARCHAR(20) DEFAULT 'SEQUENTIAL'")
+    private TaskExecutionMode executionMode = TaskExecutionMode.SEQUENTIAL;
 
     @Column(name = "sort_order")
     private Integer sortOrder;

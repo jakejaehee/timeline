@@ -30,6 +30,7 @@ public class ProjectService {
     private final DomainSystemRepository domainSystemRepository;
     private final TaskRepository taskRepository;
     private final TaskDependencyRepository taskDependencyRepository;
+    private final TaskLinkRepository taskLinkRepository;
 
     /**
      * 전체 프로젝트 목록 조회
@@ -116,11 +117,12 @@ public class ProjectService {
     @Transactional
     public void deleteProject(Long id) {
         Project project = findProjectById(id);
-        // 태스크 의존관계 먼저 삭제 (FK 제약조건)
+        // 태스크 의존관계 및 링크 먼저 삭제 (FK 제약조건)
         List<Task> tasks = taskRepository.findByProjectId(id);
         for (Task task : tasks) {
             taskDependencyRepository.deleteByTaskId(task.getId());
             taskDependencyRepository.deleteByDependsOnTaskId(task.getId());
+            taskLinkRepository.deleteByTaskId(task.getId());
         }
         // 태스크 삭제
         taskRepository.deleteByProjectId(id);

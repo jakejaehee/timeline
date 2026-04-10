@@ -1,12 +1,14 @@
 package com.timeline.controller;
 
 import com.timeline.dto.MemberDto;
+import com.timeline.dto.TeamBoardDto;
 import com.timeline.service.MemberService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -75,6 +77,18 @@ public class MemberController {
         memberService.deleteMember(id);
         return ResponseEntity.ok(Map.of(
                 "success", true
+        ));
+    }
+
+    /**
+     * 특정 멤버의 배정 태스크 목록 조회
+     */
+    @GetMapping("/{id}/tasks")
+    public ResponseEntity<?> getMemberTasks(@PathVariable Long id) {
+        List<TeamBoardDto.TaskItem> taskItems = memberService.getMemberTasks(id);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", taskItems
         ));
     }
 }

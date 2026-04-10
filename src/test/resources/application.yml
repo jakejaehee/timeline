@@ -22,11 +22,11 @@ spring:
     caffeine:
       spec: maximumSize=100,expireAfterWrite=86400s
 
-# Anthropic AI (disabled in test)
-anthropic:
-  api-key:
-  model: claude-sonnet-4-5
-  max-tokens: 4096
+# Claude CLI (test)
+claude-cli:
+  executable: claude
+  model: sonnet
+  timeout-seconds: 30
 
 logging:
   level:

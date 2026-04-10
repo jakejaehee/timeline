@@ -1,33 +1,30 @@
 package com.timeline.service;
 
-import com.anthropic.client.AnthropicClient;
-import com.anthropic.models.messages.ContentBlock;
-import com.anthropic.models.messages.Message;
-import com.anthropic.models.messages.MessageCreateParams;
-import com.anthropic.models.messages.Model;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.timeline.config.AnthropicProperties;
+import com.timeline.config.ClaudeCliProperties;
 import com.timeline.domain.entity.*;
 import com.timeline.domain.repository.*;
 import com.timeline.dto.ParsedTaskDto;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
  * AI 파싱 서비스
- * - free-text를 Anthropic API로 파싱하여 태스크 정보 추출
+ * - free-text를 Claude CLI로 파싱하여 태스크 정보 추출
  * - 파싱 결과를 DB에 저장
  */
 @Slf4j
@@ -36,10 +33,7 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class AiParsingService {
 
-    @Autowired(required = false)
-    private AnthropicClient anthropicClient;
-
-    private final AnthropicProperties anthropicProperties;
+    private final ClaudeCliProperties claudeCliProperties;
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectDomainSystemRepository projectDomainSystemRepository;
@@ -57,10 +51,6 @@ public class AiParsingService {
      * @return 파싱된 태스크 DTO
      */
     public ParsedTaskDto parseTasksFromText(String freeText, Long projectId) {
-        if (anthropicClient == null || !anthropicProperties.isConfigured()) {
-            throw new IllegalStateException("Anthropic API Key가 설정되지 않았습니다. AI 파싱 기능을 사용할 수 없습니다.");
-        }
-
         // 1. 프로젝트 정보, 멤버 목록, 도메인 시스템 목록 조회
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다. id=" + projectId));
@@ -76,8 +66,8 @@ public class AiParsingService {
         // 2. 시스템 프롬프트 구성
         String systemPrompt = buildSystemPrompt(project, members, domainSystems);
 
-        // 3. Anthropic API 호출
-        String aiResponse = callAnthropicApi(systemPrompt, freeText);
+        // 3. Claude CLI 호출
+        String aiResponse = callClaudeCli(systemPrompt, freeText);
         log.debug("AI 응답: {}", aiResponse);
 
         // 4. JSON 응답 파싱
@@ -297,27 +287,76 @@ public class AiParsingService {
     }
 
     /**
-     * Anthropic API 호출
+     * Claude CLI 호출 (claude -p)
      */
-    private String callAnthropicApi(String systemPrompt, String userMessage) {
-        MessageCreateParams params = MessageCreateParams.builder()
-                .model(Model.of(anthropicProperties.getModel()))
-                .maxTokens(anthropicProperties.getMaxTokens())
-                .system(systemPrompt)
-                .addUserMessage(userMessage)
-                .build();
+    private String callClaudeCli(String systemPrompt, String userMessage) {
+        List<String> command = List.of(
+                claudeCliProperties.getExecutable(),
+                "-p",
+                "--output-format", "json",
+                "--model", claudeCliProperties.getModel(),
+                "--no-session-persistence",
+                "--system-prompt", systemPrompt,
+                userMessage
+        );
 
-        Message message = anthropicClient.messages().create(params);
+        try {
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(false);
 
-        // 응답에서 텍스트 추출
-        StringBuilder responseText = new StringBuilder();
-        for (ContentBlock block : message.content()) {
-            if (block.isText()) {
-                responseText.append(block.asText().text());
+            Process process = pb.start();
+
+            String stdout;
+            String stderr;
+            try (var stdoutStream = process.getInputStream();
+                 var stderrStream = process.getErrorStream()) {
+                stdout = new String(stdoutStream.readAllBytes(), StandardCharsets.UTF_8);
+                stderr = new String(stderrStream.readAllBytes(), StandardCharsets.UTF_8);
             }
-        }
 
-        return responseText.toString().trim();
+            boolean finished = process.waitFor(claudeCliProperties.getTimeoutSeconds(), TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new IllegalStateException("Claude CLI 실행 시간이 초과되었습니다 ("
+                        + claudeCliProperties.getTimeoutSeconds() + "초).");
+            }
+
+            int exitCode = process.exitValue();
+            if (exitCode != 0) {
+                log.error("Claude CLI 오류 (exit {}): {}", exitCode, stderr);
+                throw new IllegalStateException("Claude CLI 실행 실패 (exit " + exitCode + "): " + stderr.trim());
+            }
+
+            return extractResultFromCliOutput(stdout.trim());
+
+        } catch (IOException e) {
+            throw new IllegalStateException("Claude CLI를 실행할 수 없습니다. "
+                    + "CLI가 설치되어 있고 PATH에 포함되어 있는지 확인하세요: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Claude CLI 실행이 인터럽트되었습니다.", e);
+        }
+    }
+
+    /**
+     * CLI JSON 출력에서 result 필드 추출
+     * --output-format json 사용 시 {"type":"result","result":"...","...} 형태
+     */
+    private String extractResultFromCliOutput(String cliOutput) {
+        try {
+            JsonNode root = objectMapper.readTree(cliOutput);
+            JsonNode resultNode = root.get("result");
+            if (resultNode != null && resultNode.isTextual()) {
+                return resultNode.asText();
+            }
+            // result 필드가 없으면 전체 출력을 그대로 반환
+            log.warn("CLI 출력에서 result 필드를 찾을 수 없습니다. 전체 출력 사용.");
+            return cliOutput;
+        } catch (JsonProcessingException e) {
+            // JSON 파싱 실패 시 raw 출력 반환
+            log.warn("CLI 출력이 JSON 형식이 아닙니다. 전체 출력 사용.");
+            return cliOutput;
+        }
     }
 
     /**

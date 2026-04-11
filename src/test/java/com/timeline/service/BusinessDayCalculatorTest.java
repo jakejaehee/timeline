@@ -202,4 +202,87 @@ class BusinessDayCalculatorTest {
         LocalDate result = calculator.calculateEndDate(monday, new BigDecimal("-1"));
         assertThat(result).isEqualTo(monday);
     }
+
+    // ---- calculateEndDate with capacity ----
+
+    @Test
+    @DisplayName("capacity 1.0 + 1MD = 1영업일 (기본 동작과 동일)")
+    void calculateEndDate_capacity1_1md_sameDay() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        LocalDate result = calculator.calculateEndDate(monday, BigDecimal.ONE, BigDecimal.ONE);
+        assertThat(result).isEqualTo(monday);
+    }
+
+    @Test
+    @DisplayName("capacity 0.5 + 1MD = ceil(1/0.5)=2영업일 -> 화요일")
+    void calculateEndDate_capacity05_1md_twoDays() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        // actual_duration = ceil(1.0 / 0.5) = 2영업일 -> 월(1), 화(2)
+        LocalDate expected = LocalDate.of(2026, 4, 14); // 화요일
+        LocalDate result = calculator.calculateEndDate(monday, BigDecimal.ONE, new BigDecimal("0.5"));
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("capacity 0.5 + 1.5MD = ceil(1.5/0.5)=3영업일 -> 수요일")
+    void calculateEndDate_capacity05_15md_threeDays() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        // actual_duration = ceil(1.5 / 0.5) = 3영업일 -> 월(1), 화(2), 수(3)
+        LocalDate expected = LocalDate.of(2026, 4, 15); // 수요일
+        LocalDate result = calculator.calculateEndDate(monday, new BigDecimal("1.5"), new BigDecimal("0.5"));
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("capacity 0.5 + 3MD = ceil(3/0.5)=6영업일 -> 주말 넘김")
+    void calculateEndDate_capacity05_3md_crossWeekend() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        // actual_duration = ceil(3.0 / 0.5) = 6영업일
+        // 월(1), 화(2), 수(3), 목(4), 금(5), [토일 skip], 월(6)
+        LocalDate expected = LocalDate.of(2026, 4, 20); // 다음 월요일
+        LocalDate result = calculator.calculateEndDate(monday, new BigDecimal("3"), new BigDecimal("0.5"));
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("capacity null -> 1.0으로 처리")
+    void calculateEndDate_nullCapacity_treatsAsOne() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        LocalDate result = calculator.calculateEndDate(monday, new BigDecimal("3"), null);
+        LocalDate expected = LocalDate.of(2026, 4, 15); // 수요일
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("capacity 0 -> 1.0으로 보정")
+    void calculateEndDate_zeroCapacity_treatsAsOne() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        LocalDate result = calculator.calculateEndDate(monday, new BigDecimal("3"), BigDecimal.ZERO);
+        LocalDate expected = LocalDate.of(2026, 4, 15); // 수요일
+        assertThat(result).isEqualTo(expected);
+    }
+
+    // ---- isFractionalMd ----
+
+    @Test
+    @DisplayName("정수 MD는 fractional이 아니다")
+    void isFractionalMd_integer_returnsFalse() {
+        assertThat(calculator.isFractionalMd(BigDecimal.ONE)).isFalse();
+        assertThat(calculator.isFractionalMd(new BigDecimal("3"))).isFalse();
+        assertThat(calculator.isFractionalMd(new BigDecimal("10.0"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("소수점 MD는 fractional이다")
+    void isFractionalMd_fractional_returnsTrue() {
+        assertThat(calculator.isFractionalMd(new BigDecimal("0.5"))).isTrue();
+        assertThat(calculator.isFractionalMd(new BigDecimal("1.5"))).isTrue();
+        assertThat(calculator.isFractionalMd(new BigDecimal("2.3"))).isTrue();
+    }
+
+    @Test
+    @DisplayName("null MD는 fractional이 아니다")
+    void isFractionalMd_null_returnsFalse() {
+        assertThat(calculator.isFractionalMd(null)).isFalse();
+    }
 }

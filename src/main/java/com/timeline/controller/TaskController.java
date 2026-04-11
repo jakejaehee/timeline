@@ -1,12 +1,14 @@
 package com.timeline.controller;
 
 import com.timeline.dto.TaskDto;
+import com.timeline.service.AssigneeOrderService;
 import com.timeline.service.TaskService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -18,6 +20,7 @@ import java.util.Map;
 public class TaskController {
 
     private final TaskService taskService;
+    private final AssigneeOrderService assigneeOrderService;
 
     /**
      * 프로젝트의 전체 태스크 조회 (간트차트용)
@@ -118,6 +121,46 @@ public class TaskController {
         taskService.removeDependency(id, dependsOnTaskId);
         return ResponseEntity.ok(Map.of(
                 "success", true
+        ));
+    }
+
+    // ---- 담당자 실행 큐 순서 API ----
+
+    /**
+     * 담당자 실행 큐 순서 일괄 변경
+     * Body: {"assigneeId": Long, "taskIds": [Long, ...]}
+     */
+    @PatchMapping("/api/v1/tasks/assignee-order")
+    public ResponseEntity<?> reorderAssigneeTasks(@RequestBody Map<String, Object> body) {
+        Object assigneeIdObj = body.get("assigneeId");
+        if (assigneeIdObj == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "assigneeId는 필수입니다."
+            ));
+        }
+        Long assigneeId = ((Number) assigneeIdObj).longValue();
+
+        @SuppressWarnings("unchecked")
+        List<Number> taskIdNumbers = (List<Number>) body.get("taskIds");
+        List<Long> taskIds = taskIdNumbers != null
+                ? taskIdNumbers.stream().map(Number::longValue).toList()
+                : List.of();
+
+        assigneeOrderService.reorderTasks(assigneeId, taskIds);
+        return ResponseEntity.ok(Map.of(
+                "success", true
+        ));
+    }
+
+    /**
+     * 담당자별 정렬된 SEQUENTIAL 태스크 목록 조회
+     */
+    @GetMapping("/api/v1/members/{assigneeId}/ordered-tasks")
+    public ResponseEntity<?> getOrderedTasks(@PathVariable Long assigneeId) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", assigneeOrderService.getOrderedTasksByAssignee(assigneeId)
         ));
     }
 

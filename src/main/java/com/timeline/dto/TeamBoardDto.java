@@ -3,7 +3,9 @@ package com.timeline.dto;
 import com.timeline.domain.entity.Task;
 import com.timeline.domain.enums.MemberRole;
 import com.timeline.domain.enums.TaskExecutionMode;
+import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
+import com.timeline.domain.enums.TaskType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -63,6 +65,9 @@ public class TeamBoardDto {
         private TaskStatus status;
         private BigDecimal manDays;
         private TaskExecutionMode executionMode;
+        private TaskPriority priority;
+        private TaskType type;
+        private Integer assigneeOrder;
 
         public static TaskItem from(Task task) {
             return TaskItem.builder()
@@ -77,6 +82,9 @@ public class TeamBoardDto {
                     .status(task.getStatus())
                     .manDays(task.getManDays())
                     .executionMode(task.getExecutionMode())
+                    .priority(task.getPriority())
+                    .type(task.getType())
+                    .assigneeOrder(task.getAssigneeOrder())
                     .build();
         }
     }

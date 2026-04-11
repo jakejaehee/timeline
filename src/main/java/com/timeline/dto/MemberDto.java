@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
+
 /**
  * 멤버 요청/응답 DTO
  */
@@ -20,6 +22,7 @@ public class MemberDto {
         private String name;
         private MemberRole role;
         private String email;
+        private BigDecimal capacity;
     }
 
     @Data
@@ -31,6 +34,7 @@ public class MemberDto {
         private String name;
         private MemberRole role;
         private String email;
+        private BigDecimal capacity;
         private Boolean active;
 
         public static Response from(Member member) {
@@ -39,6 +43,7 @@ public class MemberDto {
                     .name(member.getName())
                     .role(member.getRole())
                     .email(member.getEmail())
+                    .capacity(member.getCapacity())
                     .active(member.getActive())
                     .build();
         }

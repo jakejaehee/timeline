@@ -204,6 +204,8 @@ body {
 .badge-COMPLETED { background-color: #e8f5e9; color: #2e7d32; }
 .badge-ON_HOLD { background-color: #fce4ec; color: #c62828; }
 .badge-PENDING { background-color: #f3e5f5; color: #6a1b9a; }
+.badge-HOLD { background-color: #fff3cd; color: #856404; }
+.badge-CANCELLED { background-color: #f8d7da; color: #721c24; }
 
 /* ---- 역할 배지 ---- */
 .badge-ENGINEER { background-color: #e3f2fd; color: #1565c0; }
@@ -214,6 +216,77 @@ body {
 .badge-SKU_SYSTEM { background-color: #ede7f6; color: #4527a0; }
 .badge-BUSINESS { background-color: #e0f2f1; color: #00695c; }
 .badge-MUKIE { background-color: #fce4ec; color: #ad1457; }
+
+/* ---- 우선순위 배지 ---- */
+.badge-priority {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+.badge-P0 { background-color: #dc3545; color: #fff; }
+.badge-P1 { background-color: #fd7e14; color: #fff; }
+.badge-P2 { background-color: #ffc107; color: #333; }
+.badge-P3 { background-color: #6c757d; color: #fff; }
+
+/* ---- 태스크 유형 배지 ---- */
+.badge-task-type {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+.badge-FEATURE { background-color: #d4edda; color: #155724; }
+.badge-DESIGN { background-color: #e2d5f0; color: #5a2d82; }
+.badge-BACKEND { background-color: #cce5ff; color: #004085; }
+.badge-INFRA { background-color: #d6d8db; color: #383d41; }
+.badge-QA_TYPE { background-color: #d1ecf1; color: #0c5460; }
+.badge-RELEASE { background-color: #f5c6cb; color: #721c24; }
+.badge-OPS { background-color: #ffeeba; color: #856404; }
+.badge-TECH_DEBT { background-color: #f8d7da; color: #721c24; }
+
+/* ---- 지연 표시 ---- */
+.delay-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+.delay-indicator.delayed {
+    color: #dc3545;
+}
+.delay-indicator.on-track {
+    color: #28a745;
+}
+
+/* ---- 간트차트 상태별 바 색상 ---- */
+.bar-hold .bar-progress,
+.bar-hold .bar {
+    fill: #ffc107 !important;
+    opacity: 0.6;
+}
+
+.bar-cancelled .bar-progress,
+.bar-cancelled .bar {
+    fill: #dc3545 !important;
+    opacity: 0.4;
+}
+
+/* ---- 간트차트 Today 마커 ---- */
+.gantt-today-marker {
+    stroke: #dc3545;
+    stroke-width: 2;
+    stroke-dasharray: 5,3;
+}
+
+/* ---- 간트차트 Deadline 마커 ---- */
+.gantt-deadline-marker {
+    stroke: #e65100;
+    stroke-width: 2;
+    stroke-dasharray: 8,4;
+}
 
 /* ---- 색상 프리뷰 ---- */
 .color-preview {

@@ -7,6 +7,7 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -34,6 +35,10 @@ public class Member {
 
     @Column(length = 200)
     private String email;
+
+    @Builder.Default
+    @Column(nullable = false, precision = 3, scale = 1)
+    private BigDecimal capacity = BigDecimal.ONE;
 
     @Builder.Default
     @Column(nullable = false)

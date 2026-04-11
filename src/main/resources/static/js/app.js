@@ -1,6 +1,6 @@
 // ========================================
 // Timeline Application JavaScript
-// Version: 20260411d
+// Version: 20260412a
 // ========================================
 
 // ---- 전역 상태 ----
@@ -13,6 +13,7 @@ var parsedTaskData = null;       // AI 파싱 결과 임시 저장
 var currentModalProjectId = null; // 태스크 모달에서 사용 중인 프로젝트 ID (Team Board 지원)
 var isFirstTask = true;          // 현재 모달의 태스크가 첫 번째 태스크인지
 var previewDebounceTimer = null; // 프리뷰 API 호출 디바운스 타이머
+var currentProjectMembers = [];  // 태스크 모달에서 사용 중인 프로젝트 멤버 목록 (capacity 조회용)
 
 // ========================================
 // 유틸리티 함수
@@ -79,6 +80,23 @@ function roleBadge(role) {
  */
 function typeBadge(type) {
     return '<span class="badge-status badge-' + type + '">' + type + '</span>';
+}
+
+/**
+ * 우선순위 배지 HTML
+ */
+function priorityBadge(priority) {
+    if (!priority) return '';
+    return '<span class="badge-priority badge-' + priority + '">' + priority + '</span>';
+}
+
+/**
+ * 태스크 유형 배지 HTML
+ */
+function taskTypeBadge(taskType) {
+    if (!taskType) return '';
+    var cssClass = taskType === 'QA' ? 'QA_TYPE' : taskType;
+    return '<span class="badge-task-type badge-' + cssClass + '">' + taskType + '</span>';
 }
 
 /**
@@ -234,7 +252,7 @@ async function loadMembers() {
         var tbody = document.getElementById('members-table');
 
         if (members.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">등록된 멤버가 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">등록된 멤버가 없습니다.</td></tr>';
             return;
         }
 
@@ -244,6 +262,7 @@ async function loadMembers() {
             html += '<td>' + escapeHtml(m.name) + '</td>';
             html += '<td>' + roleBadge(m.role) + '</td>';
             html += '<td>' + escapeHtml(m.email || '-') + '</td>';
+            html += '<td>' + (m.capacity != null ? m.capacity : '1.0') + '</td>';
             html += '<td class="text-center">';
             html += '<div class="action-buttons">';
             html += '<button class="btn btn-outline-primary btn-sm" onclick="showMemberModal(' + m.id + ')" title="수정"><i class="bi bi-pencil"></i></button>';
@@ -264,6 +283,7 @@ async function showMemberModal(memberId) {
     document.getElementById('member-name').value = '';
     document.getElementById('member-role').value = 'ENGINEER';
     document.getElementById('member-email').value = '';
+    document.getElementById('member-capacity').value = '1.0';
 
     if (memberId) {
         document.getElementById('memberModalTitle').textContent = '멤버 수정';
@@ -275,6 +295,7 @@ async function showMemberModal(memberId) {
                 document.getElementById('member-name').value = m.name || '';
                 document.getElementById('member-role').value = m.role || 'ENGINEER';
                 document.getElementById('member-email').value = m.email || '';
+                document.getElementById('member-capacity').value = m.capacity != null ? m.capacity : '1.0';
             }
         } catch (e) {
             showToast('멤버 정보를 불러오는데 실패했습니다.', 'error');
@@ -293,13 +314,14 @@ async function saveMember() {
     var name = document.getElementById('member-name').value.trim();
     var role = document.getElementById('member-role').value;
     var email = document.getElementById('member-email').value.trim();
+    var capacity = document.getElementById('member-capacity').value;
 
     if (!name) {
         showToast('이름을 입력해주세요.', 'warning');
         return;
     }
 
-    var body = { name: name, role: role, email: email };
+    var body = { name: name, role: role, email: email, capacity: capacity ? parseFloat(capacity) : 1.0 };
 
     try {
         var res;
@@ -468,19 +490,29 @@ async function loadProjects() {
         var tbody = document.getElementById('projects-table');
 
         if (projects.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">등록된 프로젝트가 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">등록된 프로젝트가 없습니다.</td></tr>';
             return;
         }
 
         var html = '';
         projects.forEach(function(p) {
             var memberCount = (p.members && p.members.length) ? p.members.length : 0;
+            var delayHtml = '';
+            if (p.isDelayed === true) {
+                delayHtml = '<span class="delay-indicator delayed"><i class="bi bi-exclamation-triangle-fill"></i> 지연</span>';
+            } else if (p.isDelayed === false) {
+                delayHtml = '<span class="delay-indicator on-track"><i class="bi bi-check-circle-fill"></i> 정상</span>';
+            } else {
+                delayHtml = '-';
+            }
             html += '<tr>';
             html += '<td><strong>' + escapeHtml(p.name) + '</strong></td>';
             html += '<td>' + typeBadge(p.type) + '</td>';
             html += '<td>' + statusBadge(p.status) + '</td>';
             html += '<td>' + formatDate(p.startDate) + '</td>';
             html += '<td>' + formatDate(p.endDate) + '</td>';
+            html += '<td>' + formatDate(p.deadline) + '</td>';
+            html += '<td>' + delayHtml + '</td>';
             html += '<td>' + memberCount + '명</td>';
             html += '<td class="text-center">';
             html += '<div class="action-buttons">';
@@ -506,7 +538,10 @@ async function showProjectModal(projectId) {
     document.getElementById('project-description').value = '';
     document.getElementById('project-start-date').value = '';
     document.getElementById('project-end-date').value = '';
+    document.getElementById('project-deadline').value = '';
     document.getElementById('project-status').value = 'PLANNING';
+    document.getElementById('project-delay-warning').style.display = 'none';
+    document.getElementById('project-delay-warning').innerHTML = '';
 
     // 멤버/도메인시스템 체크리스트 병렬 로드
     var checklistResults = await Promise.all([
@@ -533,9 +568,27 @@ async function showProjectModal(projectId) {
                 document.getElementById('project-description').value = p.description || '';
                 document.getElementById('project-start-date').value = p.startDate || '';
                 document.getElementById('project-end-date').value = p.endDate || '';
+                document.getElementById('project-deadline').value = p.deadline || '';
                 document.getElementById('project-status').value = p.status || 'PLANNING';
                 currentMembers = p.members ? p.members.map(function(m) { return m.id; }) : [];
                 currentDs = p.domainSystems ? p.domainSystems.map(function(d) { return d.id; }) : [];
+
+                // 지연 경고 표시
+                var delayWarning = document.getElementById('project-delay-warning');
+                if (p.isDelayed === true) {
+                    delayWarning.innerHTML = '<div class="alert alert-danger mb-0 py-2 px-3" style="font-size:0.85rem;">'
+                        + '<i class="bi bi-exclamation-triangle-fill"></i> <strong>지연 경고:</strong> '
+                        + '예상 종료일(' + formatDate(p.expectedEndDate) + ')이 데드라인(' + formatDate(p.deadline) + ')을 초과합니다.'
+                        + '</div>';
+                    delayWarning.style.display = 'block';
+                } else if (p.isDelayed === false) {
+                    delayWarning.innerHTML = '<div class="alert alert-success mb-0 py-2 px-3" style="font-size:0.85rem;">'
+                        + '<i class="bi bi-check-circle-fill"></i> 예상 종료일(' + formatDate(p.expectedEndDate) + ')이 데드라인 내에 있습니다.'
+                        + '</div>';
+                    delayWarning.style.display = 'block';
+                } else {
+                    delayWarning.style.display = 'none';
+                }
             }
         } catch (e) {
             showToast('프로젝트 정보를 불러오는데 실패했습니다.', 'error');
@@ -592,12 +645,15 @@ async function saveProject() {
         return;
     }
 
+    var deadline = document.getElementById('project-deadline').value;
+
     var body = {
         name: name,
         type: type,
         description: description,
         startDate: startDate,
         endDate: endDate,
+        deadline: deadline || null,
         status: status
     };
 
@@ -773,6 +829,9 @@ function renderGantt(data) {
     legendHtml += '<span class="legend-item"><span class="legend-color" style="background-color:#4A90D9"></span>ENGINEER</span>';
     legendHtml += '<span class="legend-item"><span class="legend-color" style="background-color:#27AE60"></span>QA</span>';
     legendHtml += '<span class="legend-item"><span class="legend-color" style="background-color:#E67E22"></span>PM</span>';
+    // 상태 범례 추가
+    legendHtml += '<span class="legend-item"><span class="legend-color" style="background-color:#ffc107;opacity:0.6"></span>HOLD</span>';
+    legendHtml += '<span class="legend-item"><span class="legend-color" style="background-color:#dc3545;opacity:0.4"></span>CANCELLED</span>';
     document.getElementById('gantt-legend').innerHTML = legendHtml;
 
     // frappe-gantt 데이터 변환
@@ -792,14 +851,34 @@ function renderGantt(data) {
                         deps = task.dependencies.map(function(depId) { return 'task-' + depId; }).join(', ');
                     }
 
+                    // 상태별 custom_class 결정: HOLD/CANCELLED > 역할별 색상
+                    var barClass = 'bar-' + assigneeRole.toLowerCase();
+                    if (task.status === 'HOLD') {
+                        barClass = 'bar-hold';
+                    } else if (task.status === 'CANCELLED') {
+                        barClass = 'bar-cancelled';
+                    }
+
+                    // 바 라벨에 우선순위 표시
+                    var priorityPrefix = task.priority ? '[' + task.priority + '] ' : '';
+
+                    // startDate/endDate가 없는 태스크는 건너뜀 (미정렬 상태)
+                    if (!task.startDate || !task.endDate) return;
+
+                    // 진행률 계산
+                    var progress = 0;
+                    if (task.status === 'COMPLETED') progress = 100;
+                    else if (task.status === 'IN_PROGRESS') progress = 50;
+                    else if (task.status === 'HOLD') progress = 25;
+
                     tasks.push({
                         id: 'task-' + task.id,
-                        name: '[' + ds.name + '] ' + task.name + ' (' + assigneeName + ', ' + manDays + 'MD)',
+                        name: priorityPrefix + '[' + ds.name + '] ' + task.name + ' (' + assigneeName + ', ' + manDays + 'MD)',
                         start: task.startDate,
                         end: task.endDate,
-                        progress: task.status === 'COMPLETED' ? 100 : (task.status === 'IN_PROGRESS' ? 50 : 0),
+                        progress: progress,
                         dependencies: deps,
-                        custom_class: 'bar-' + assigneeRole.toLowerCase(),
+                        custom_class: barClass,
                         // 커스텀 데이터 (클릭 이벤트에서 사용)
                         _taskId: task.id,
                         _domainSystem: ds.name,
@@ -881,7 +960,10 @@ async function onTaskDateChange(task, start, end) {
                 status: taskData.status,
                 sortOrder: taskData.sortOrder,
                 description: taskData.description,
-                executionMode: execMode
+                executionMode: execMode,
+                priority: taskData.priority || null,
+                type: taskData.type || null,
+                actualEndDate: taskData.actualEndDate || null
             };
 
             if (execMode === 'SEQUENTIAL') {
@@ -950,8 +1032,11 @@ async function showTaskDetail(taskId, options) {
         html += '<tr><th>담당자</th><td>' + (task.assignee ? escapeHtml(task.assignee.name) + ' (' + task.assignee.role + ')' : '-') + '</td></tr>';
         html += '<tr><th>시작일</th><td>' + formatDate(task.startDate) + '</td></tr>';
         html += '<tr><th>종료일</th><td>' + formatDate(task.endDate) + '</td></tr>';
+        html += '<tr><th>실제 완료일</th><td>' + formatDate(task.actualEndDate) + '</td></tr>';
         html += '<tr><th>공수 (MD)</th><td>' + (task.manDays || '-') + '</td></tr>';
         html += '<tr><th>상태</th><td>' + statusBadge(task.status) + '</td></tr>';
+        html += '<tr><th>우선순위</th><td>' + (task.priority ? priorityBadge(task.priority) : '-') + '</td></tr>';
+        html += '<tr><th>태스크 유형</th><td>' + (task.type ? taskTypeBadge(task.type) : '-') + '</td></tr>';
         html += '<tr><th>실행 모드</th><td>' + (task.executionMode || 'SEQUENTIAL') + '</td></tr>';
         html += '<tr><th>정렬 순서</th><td>' + (task.sortOrder != null ? task.sortOrder : '-') + '</td></tr>';
         html += '<tr><th>설명</th><td>' + escapeHtml(task.description || '-') + '</td></tr>';
@@ -979,7 +1064,6 @@ async function showTaskDetail(taskId, options) {
         var deleteBtn = document.getElementById('task-detail-delete-btn');
         var editBtn = document.getElementById('task-detail-edit-btn');
 
-        // 수정/삭제 버튼 항상 표시 (readOnly 옵션 제거됨)
         deleteBtn.style.display = '';
         editBtn.style.display = '';
 
@@ -1028,6 +1112,9 @@ async function showTaskModal(taskId, projectId) {
     document.getElementById('task-man-days').value = '';
     document.getElementById('task-status').value = 'PENDING';
     document.getElementById('task-execution-mode').value = 'SEQUENTIAL';
+    document.getElementById('task-priority').value = '';
+    document.getElementById('task-type').value = '';
+    document.getElementById('task-actual-end-date').value = '';
     document.getElementById('task-sort-order').value = '0';
     document.getElementById('task-description').value = '';
 
@@ -1049,6 +1136,9 @@ async function showTaskModal(taskId, projectId) {
     // 프로젝트의 도메인 시스템 & 멤버 로드
     var projectRes = await apiCall('/api/v1/projects/' + resolvedProjectId);
     var project = (projectRes.success && projectRes.data) ? projectRes.data : {};
+
+    // 멤버 정보 저장 (capacity 조회용)
+    currentProjectMembers = project.members || [];
 
     // 도메인 시스템 드롭다운
     var dsSelect = document.getElementById('task-domain-system');
@@ -1089,6 +1179,9 @@ async function showTaskModal(taskId, projectId) {
                 document.getElementById('task-man-days').value = t.manDays || '';
                 document.getElementById('task-status').value = t.status || 'PENDING';
                 document.getElementById('task-execution-mode').value = t.executionMode || 'SEQUENTIAL';
+                document.getElementById('task-priority').value = t.priority || '';
+                document.getElementById('task-type').value = t.type || '';
+                document.getElementById('task-actual-end-date').value = t.actualEndDate || '';
                 document.getElementById('task-sort-order').value = t.sortOrder != null ? t.sortOrder : '0';
                 document.getElementById('task-description').value = t.description || '';
                 currentDependencies = t.dependencies || [];
@@ -1205,6 +1298,10 @@ async function saveTask() {
 
     var resolvedProjectId = currentModalProjectId || currentProjectId;
 
+    var priority = document.getElementById('task-priority').value;
+    var taskType = document.getElementById('task-type').value;
+    var actualEndDate = document.getElementById('task-actual-end-date').value;
+
     var body = {
         name: name,
         domainSystemId: parseInt(domainSystemId),
@@ -1212,6 +1309,9 @@ async function saveTask() {
         manDays: manDays ? parseFloat(manDays) : null,
         status: status,
         executionMode: executionMode,
+        priority: priority || null,
+        type: taskType || null,
+        actualEndDate: actualEndDate || null,
         sortOrder: parseInt(sortOrder) || 0,
         description: description,
         links: links
@@ -1568,13 +1668,15 @@ function renderTeamBoard(data) {
             html += '<div class="table-responsive">';
             html += '<table class="table table-hover mb-0">';
             html += '<thead><tr>';
-            html += '<th>프로젝트</th><th>태스크명</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
+            html += '<th>프로젝트</th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
             html += '</tr></thead>';
             html += '<tbody>';
             member.tasks.forEach(function(task) {
                 html += '<tr class="cursor-pointer" onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')">';
                 html += '<td><span class="text-muted">' + escapeHtml(task.projectName) + '</span></td>';
                 html += '<td><strong>' + escapeHtml(task.name) + '</strong></td>';
+                html += '<td>' + priorityBadge(task.priority) + '</td>';
+                html += '<td>' + taskTypeBadge(task.type) + '</td>';
                 html += '<td>' + statusBadge(task.status) + '</td>';
                 html += '<td class="text-nowrap">' + formatDate(task.startDate) + ' ~ ' + formatDate(task.endDate) + '</td>';
                 html += '<td>' + (task.manDays != null ? task.manDays + ' MD' : '-') + '</td>';
@@ -1604,13 +1706,15 @@ function renderTeamBoard(data) {
         html += '<div class="table-responsive">';
         html += '<table class="table table-hover mb-0">';
         html += '<thead><tr>';
-        html += '<th>프로젝트</th><th>태스크명</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
+        html += '<th>프로젝트</th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
         html += '</tr></thead>';
         html += '<tbody>';
         data.unassigned.forEach(function(task) {
             html += '<tr class="cursor-pointer" onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')">';
             html += '<td><span class="text-muted">' + escapeHtml(task.projectName) + '</span></td>';
             html += '<td><strong>' + escapeHtml(task.name) + '</strong></td>';
+            html += '<td>' + priorityBadge(task.priority) + '</td>';
+            html += '<td>' + taskTypeBadge(task.type) + '</td>';
             html += '<td>' + statusBadge(task.status) + '</td>';
             html += '<td class="text-nowrap">' + formatDate(task.startDate) + ' ~ ' + formatDate(task.endDate) + '</td>';
             html += '<td>' + (task.manDays != null ? task.manDays + ' MD' : '-') + '</td>';
@@ -1634,7 +1738,7 @@ function renderTeamBoard(data) {
  * - projectId를 전달하여 수정 시 도메인 시스템/멤버 로드에 사용
  */
 function showTeamBoardTaskDetail(taskId, projectId) {
-    showTaskDetail(taskId, { readOnly: false, projectId: projectId });
+    showTaskDetail(taskId, { projectId: projectId });
 }
 
 // ========================================
@@ -1881,10 +1985,11 @@ async function fetchDatePreview() {
             if (res.data.endDate) {
                 document.getElementById('task-end-date').value = res.data.endDate;
             } else if (isFirstTask && manDays) {
-                // 첫 번째 태스크: 시작일 + 공수로 종료일 계산 (클라이언트 측 간이 계산)
+                // 첫 번째 태스크: 시작일 + 공수로 종료일 계산 (클라이언트 측 간이 계산, capacity 반영)
                 var startDate = document.getElementById('task-start-date').value;
                 if (startDate) {
-                    document.getElementById('task-end-date').value = calculateEndDateClient(startDate, manDays);
+                    var capacity = getSelectedAssigneeCapacity();
+                    document.getElementById('task-end-date').value = calculateEndDateClient(startDate, manDays, capacity);
                 }
             }
         }
@@ -1894,14 +1999,30 @@ async function fetchDatePreview() {
 }
 
 /**
+ * 선택된 담당자의 capacity 조회
+ * @returns {number} capacity (기본값 1.0)
+ */
+function getSelectedAssigneeCapacity() {
+    var assigneeId = document.getElementById('task-assignee').value;
+    if (!assigneeId) return 1.0;
+    var id = parseInt(assigneeId);
+    for (var i = 0; i < currentProjectMembers.length; i++) {
+        if (currentProjectMembers[i].id === id) {
+            return currentProjectMembers[i].capacity != null ? currentProjectMembers[i].capacity : 1.0;
+        }
+    }
+    return 1.0;
+}
+
+/**
  * 클라이언트 측 종료일 간이 계산 (프리뷰용)
  * - 공수 기반 영업일 계산 (주말 제외)
+ * - capacity 반영: actual_duration = ceil(MD / capacity)
  */
-function calculateEndDateClient(startDateStr, manDays) {
-    var businessDays = Math.floor(manDays);
-    if (manDays - businessDays > 0) {
-        businessDays = businessDays + 1;
-    }
+function calculateEndDateClient(startDateStr, manDays, capacity) {
+    var effectiveCapacity = (capacity && capacity > 0) ? capacity : 1.0;
+    var actualDuration = Math.ceil(manDays / effectiveCapacity);
+    var businessDays = actualDuration;
     if (businessDays <= 0) {
         if (manDays > 0) {
             businessDays = 1;

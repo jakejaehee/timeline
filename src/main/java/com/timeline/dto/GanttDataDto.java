@@ -2,7 +2,9 @@ package com.timeline.dto;
 
 import com.timeline.domain.enums.MemberRole;
 import com.timeline.domain.enums.TaskExecutionMode;
+import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
+import com.timeline.domain.enums.TaskType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -36,6 +38,7 @@ public class GanttDataDto {
         private String name;
         private LocalDate startDate;
         private LocalDate endDate;
+        private LocalDate deadline;
     }
 
     @Data
@@ -64,6 +67,10 @@ public class GanttDataDto {
         private Integer sortOrder;
         private List<Long> dependencies;
         private TaskExecutionMode executionMode;
+        private TaskPriority priority;
+        private TaskType type;
+        private LocalDate actualEndDate;
+        private Integer assigneeOrder;
     }
 
     @Data

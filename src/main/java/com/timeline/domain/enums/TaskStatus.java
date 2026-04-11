@@ -6,5 +6,7 @@ package com.timeline.domain.enums;
 public enum TaskStatus {
     PENDING,
     IN_PROGRESS,
-    COMPLETED
+    COMPLETED,
+    HOLD,
+    CANCELLED
 }

@@ -1,6 +1,7 @@
 package com.timeline.service;
 
 import com.timeline.domain.entity.*;
+import com.timeline.domain.enums.TaskStatus;
 import com.timeline.domain.repository.*;
 import com.timeline.dto.DomainSystemDto;
 import com.timeline.dto.MemberDto;
@@ -11,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,17 +34,23 @@ public class ProjectService {
     private final TaskDependencyRepository taskDependencyRepository;
     private final TaskLinkRepository taskLinkRepository;
 
+    /** CANCELLED 태스크는 expectedEndDate 계산에서 제외 */
+    private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
+
     /**
-     * 전체 프로젝트 목록 조회
+     * 전체 프로젝트 목록 조회 (expectedEndDate, isDelayed 포함)
      */
     public List<ProjectDto.Response> getAllProjects() {
         return projectRepository.findAllByOrderByCreatedAtDesc().stream()
-                .map(ProjectDto.Response::from)
+                .map(project -> {
+                    LocalDate expectedEndDate = calculateExpectedEndDate(project.getId());
+                    return ProjectDto.Response.from(project, null, null, expectedEndDate);
+                })
                 .collect(Collectors.toList());
     }
 
     /**
-     * 프로젝트 상세 조회 (멤버, 도메인시스템 포함)
+     * 프로젝트 상세 조회 (멤버, 도메인시스템, expectedEndDate, isDelayed 포함)
      */
     public ProjectDto.Response getProject(Long id) {
         Project project = findProjectById(id);
@@ -57,7 +65,9 @@ public class ProjectService {
                 .map(pds -> DomainSystemDto.Response.from(pds.getDomainSystem()))
                 .collect(Collectors.toList());
 
-        return ProjectDto.Response.from(project, members, domainSystems);
+        LocalDate expectedEndDate = calculateExpectedEndDate(id);
+
+        return ProjectDto.Response.from(project, members, domainSystems, expectedEndDate);
     }
 
     /**
@@ -74,7 +84,8 @@ public class ProjectService {
                 .type(request.getType())
                 .description(request.getDescription())
                 .startDate(request.getStartDate())
-                .endDate(request.getEndDate());
+                .endDate(request.getEndDate())
+                .deadline(request.getDeadline());
 
         // status가 null이면 @Builder.Default(PLANNING)가 적용됨
         if (request.getStatus() != null) {
@@ -102,13 +113,16 @@ public class ProjectService {
         project.setDescription(request.getDescription());
         project.setStartDate(request.getStartDate());
         project.setEndDate(request.getEndDate());
+        project.setDeadline(request.getDeadline());
         if (request.getStatus() != null) {
             project.setStatus(request.getStatus());
         }
 
         Project updated = projectRepository.save(project);
         log.info("프로젝트 수정 완료: id={}, name={}", updated.getId(), updated.getName());
-        return ProjectDto.Response.from(updated);
+
+        LocalDate expectedEndDate = calculateExpectedEndDate(id);
+        return ProjectDto.Response.from(updated, null, null, expectedEndDate);
     }
 
     /**
@@ -211,6 +225,15 @@ public class ProjectService {
     public Project findProjectById(Long id) {
         return projectRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다. id=" + id));
+    }
+
+    /**
+     * 프로젝트 내 모든 태스크의 최대 endDate 계산 (expectedEndDate)
+     * - HOLD/CANCELLED 상태 태스크는 제외
+     * - SEQUENTIAL/PARALLEL 무관
+     */
+    private LocalDate calculateExpectedEndDate(Long projectId) {
+        return taskRepository.findMaxEndDateByProjectId(projectId, INACTIVE_STATUSES);
     }
 
 }

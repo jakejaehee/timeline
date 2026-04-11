@@ -3,7 +3,9 @@ package com.timeline.dto;
 import com.timeline.domain.entity.Task;
 import com.timeline.domain.entity.TaskLink;
 import com.timeline.domain.enums.TaskExecutionMode;
+import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
+import com.timeline.domain.enums.TaskType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -35,6 +37,9 @@ public class TaskDto {
         private Integer sortOrder;
         private String description;
         private TaskExecutionMode executionMode;   // null 시 SEQUENTIAL 기본값 적용
+        private TaskPriority priority;
+        private TaskType type;
+        private LocalDate actualEndDate;
         private List<TaskLinkRequest> links;       // null 또는 빈 배열 허용
     }
 
@@ -66,6 +71,10 @@ public class TaskDto {
         private String description;
         private List<Long> dependencies;
         private TaskExecutionMode executionMode;
+        private TaskPriority priority;
+        private TaskType type;
+        private LocalDate actualEndDate;
+        private Integer assigneeOrder;
         private List<TaskLinkResponse> links;
 
         public static Response from(Task task, List<Long> dependencies) {
@@ -94,6 +103,10 @@ public class TaskDto {
                     .description(task.getDescription())
                     .dependencies(dependencies)
                     .executionMode(task.getExecutionMode())
+                    .priority(task.getPriority())
+                    .type(task.getType())
+                    .actualEndDate(task.getActualEndDate())
+                    .assigneeOrder(task.getAssigneeOrder())
                     .links(linkResponses)
                     .build();
         }

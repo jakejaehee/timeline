@@ -2,6 +2,7 @@ package com.timeline.service;
 
 import com.timeline.domain.entity.*;
 import com.timeline.domain.enums.TaskExecutionMode;
+import com.timeline.domain.enums.TaskStatus;
 import com.timeline.domain.repository.*;
 import com.timeline.dto.GanttDataDto;
 import com.timeline.dto.TaskDto;
@@ -19,6 +20,7 @@ import java.util.stream.Collectors;
 
 /**
  * 태스크 CRUD + 의존관계 + 간트차트 데이터 + 담당자 충돌 검증 + 링크 관리 + 자동 날짜 계산 서비스
+ * Phase 1: capacity, Same-Day Rule, 담당자 전역 큐, Hold/Cancelled 제외 반영
  */
 @Slf4j
 @Service
@@ -33,6 +35,9 @@ public class TaskService {
     private final DomainSystemRepository domainSystemRepository;
     private final MemberRepository memberRepository;
     private final BusinessDayCalculator businessDayCalculator;
+
+    /** Hold/Cancelled 상태 목록 (스케줄링 제외용) */
+    private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
 
     /**
      * 간트차트용 프로젝트 태스크 조회 (도메인 시스템별 그룹핑)
@@ -86,6 +91,10 @@ public class TaskService {
                                     .sortOrder(task.getSortOrder())
                                     .dependencies(dependencyMap.getOrDefault(task.getId(), List.of()))
                                     .executionMode(task.getExecutionMode())
+                                    .priority(task.getPriority())
+                                    .type(task.getType())
+                                    .actualEndDate(task.getActualEndDate())
+                                    .assigneeOrder(task.getAssigneeOrder())
                                     .build())
                             .collect(Collectors.toList());
 
@@ -104,6 +113,7 @@ public class TaskService {
                         .name(project.getName())
                         .startDate(project.getStartDate())
                         .endDate(project.getEndDate())
+                        .deadline(project.getDeadline())
                         .build())
                 .domainSystems(domainSystemGroups)
                 .build();
@@ -129,6 +139,7 @@ public class TaskService {
      * 태스크 생성
      * - SEQUENTIAL 모드: 자동 날짜 계산 (startDate null이면 자동 계산, endDate 항상 자동 계산)
      * - PARALLEL 모드: 기존 방식 (startDate, endDate 직접 입력)
+     * - capacity, Same-Day Rule, Hold/Cancelled 제외, 전역 큐 반영
      */
     @Transactional
     public TaskDto.Response createTask(Long projectId, TaskDto.Request request) {
@@ -149,6 +160,16 @@ public class TaskService {
         LocalDate startDate = request.getStartDate();
         LocalDate endDate = request.getEndDate();
 
+        // 담당자 조회 (capacity 필요)
+        Member assignee = null;
+        BigDecimal capacity = BigDecimal.ONE;
+        if (request.getAssigneeId() != null) {
+            assignee = memberRepository.findById(request.getAssigneeId())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "멤버를 찾을 수 없습니다. id=" + request.getAssigneeId()));
+            capacity = assignee.getCapacity() != null ? assignee.getCapacity() : BigDecimal.ONE;
+        }
+
         if (executionMode == TaskExecutionMode.SEQUENTIAL) {
             // SEQUENTIAL 모드: 자동 날짜 계산
             if (request.getManDays() == null) {
@@ -162,7 +183,7 @@ public class TaskService {
             }
 
             if (startDate == null) {
-                // 후속 태스크: 시작일 자동 계산
+                // 후속 태스크: 시작일 자동 계산 (전역 큐 + Same-Day Rule + Hold/Cancelled 제외)
                 startDate = calculateAutoStartDate(projectId, request.getAssigneeId(),
                         List.of(), null);
             } else {
@@ -170,8 +191,8 @@ public class TaskService {
                 startDate = businessDayCalculator.ensureBusinessDay(startDate);
             }
 
-            // 종료일 항상 자동 계산
-            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays());
+            // 종료일 자동 계산 (capacity 반영)
+            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays(), capacity);
         } else {
             // PARALLEL 모드: 기존 방식
             if (startDate == null || endDate == null) {
@@ -189,17 +210,9 @@ public class TaskService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
 
-        Member assignee = null;
-        if (request.getAssigneeId() != null) {
-            assignee = memberRepository.findById(request.getAssigneeId())
-                    .orElseThrow(() -> new EntityNotFoundException(
-                            "멤버를 찾을 수 없습니다. id=" + request.getAssigneeId()));
-
-            // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증
-            // SEQUENTIAL 자동 계산 모드에서는 날짜가 자동으로 비겹치게 계산되므로 검증 스킵
-            if (executionMode == TaskExecutionMode.PARALLEL) {
-                validateAssigneeConflict(assignee, startDate, endDate, null);
-            }
+        // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증
+        if (assignee != null && executionMode == TaskExecutionMode.PARALLEL) {
+            validateAssigneeConflict(assignee, startDate, endDate, null);
         }
 
         Task.TaskBuilder taskBuilder = Task.builder()
@@ -212,7 +225,10 @@ public class TaskService {
                 .endDate(endDate)
                 .manDays(request.getManDays())
                 .sortOrder(request.getSortOrder())
-                .executionMode(executionMode);
+                .executionMode(executionMode)
+                .priority(request.getPriority())
+                .type(request.getType())
+                .actualEndDate(request.getActualEndDate());
 
         // status가 null이면 @Builder.Default(PENDING)가 적용됨
         if (request.getStatus() != null) {
@@ -234,6 +250,7 @@ public class TaskService {
      * 태스크 수정
      * - SEQUENTIAL 모드: 자동 날짜 계산 + 후속 태스크 연쇄 재계산
      * - PARALLEL 모드: 기존 방식 (startDate, endDate 직접 입력)
+     * - capacity, Same-Day Rule, Hold/Cancelled 제외, 전역 큐 반영
      */
     @Transactional
     public TaskDto.Response updateTask(Long taskId, TaskDto.Request request) {
@@ -259,6 +276,16 @@ public class TaskService {
         LocalDate startDate = request.getStartDate();
         LocalDate endDate = request.getEndDate();
 
+        // 담당자 조회 (capacity 필요)
+        Member assignee = null;
+        BigDecimal capacity = BigDecimal.ONE;
+        if (request.getAssigneeId() != null) {
+            assignee = memberRepository.findById(request.getAssigneeId())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "멤버를 찾을 수 없습니다. id=" + request.getAssigneeId()));
+            capacity = assignee.getCapacity() != null ? assignee.getCapacity() : BigDecimal.ONE;
+        }
+
         if (executionMode == TaskExecutionMode.SEQUENTIAL) {
             // SEQUENTIAL 모드: 자동 날짜 계산
             if (request.getManDays() == null) {
@@ -266,6 +293,9 @@ public class TaskService {
             }
             if (request.getManDays().compareTo(BigDecimal.ZERO) <= 0) {
                 throw new IllegalArgumentException("공수(MD)는 0보다 커야 합니다.");
+            }
+            if (request.getAssigneeId() == null && startDate == null) {
+                throw new IllegalArgumentException("SEQUENTIAL 모드에서 담당자가 없으면 시작일을 직접 입력해야 합니다.");
             }
 
             // 현재 태스크의 의존관계 조회
@@ -282,8 +312,8 @@ public class TaskService {
                 startDate = businessDayCalculator.ensureBusinessDay(startDate);
             }
 
-            // 종료일 항상 자동 계산
-            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays());
+            // 종료일 자동 계산 (capacity 반영)
+            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays(), capacity);
         } else {
             // PARALLEL 모드: 기존 방식
             if (startDate == null || endDate == null) {
@@ -298,17 +328,9 @@ public class TaskService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
 
-        Member assignee = null;
-        if (request.getAssigneeId() != null) {
-            assignee = memberRepository.findById(request.getAssigneeId())
-                    .orElseThrow(() -> new EntityNotFoundException(
-                            "멤버를 찾을 수 없습니다. id=" + request.getAssigneeId()));
-
-            // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증 (자기 자신 제외)
-            // SEQUENTIAL 자동 계산 모드에서는 검증 스킵
-            if (executionMode == TaskExecutionMode.PARALLEL) {
-                validateAssigneeConflict(assignee, startDate, endDate, taskId);
-            }
+        // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증 (자기 자신 제외)
+        if (assignee != null && executionMode == TaskExecutionMode.PARALLEL) {
+            validateAssigneeConflict(assignee, startDate, endDate, taskId);
         }
 
         task.setDomainSystem(domainSystem);
@@ -319,6 +341,9 @@ public class TaskService {
         task.setEndDate(endDate);
         task.setManDays(request.getManDays());
         task.setExecutionMode(executionMode);
+        task.setPriority(request.getPriority());
+        task.setType(request.getType());
+        task.setActualEndDate(request.getActualEndDate());
         if (request.getStatus() != null) {
             task.setStatus(request.getStatus());
         }
@@ -414,23 +439,18 @@ public class TaskService {
 
     /**
      * 날짜 프리뷰 계산 (DB 저장 없음, 태스크 모달 프리뷰용)
-     *
-     * @param projectId        프로젝트 ID
-     * @param assigneeId       담당자 ID
-     * @param manDays          공수 (MD)
-     * @param dependsOnTaskIds 선행 태스크 ID 목록
-     * @param excludeTaskId    자기 자신 제외 (수정 시)
-     * @return 예상 시작일, 종료일, 첫 번째 태스크 여부
+     * - 전역 큐 기반 (프로젝트 제한 없이 담당자 전체 태스크 참조)
+     * - capacity 반영
      */
     public TaskDto.PreviewDatesResponse previewDates(Long projectId, Long assigneeId,
                                                       BigDecimal manDays,
                                                       List<Long> dependsOnTaskIds,
                                                       Long excludeTaskId) {
-        // 첫 번째 태스크 여부 판단
+        // 첫 번째 태스크 여부 판단 (전역 기준, Hold/Cancelled 제외)
         boolean isFirstTask = true;
         if (assigneeId != null) {
-            long count = taskRepository.countSequentialTasksByAssignee(
-                    assigneeId, projectId, TaskExecutionMode.SEQUENTIAL, excludeTaskId);
+            long count = taskRepository.countSequentialTasksByAssigneeGlobal(
+                    assigneeId, TaskExecutionMode.SEQUENTIAL, INACTIVE_STATUSES, excludeTaskId);
             isFirstTask = (count == 0);
         }
 
@@ -443,11 +463,12 @@ public class TaskService {
                     dependsOnTaskIds != null ? dependsOnTaskIds : List.of(), excludeTaskId);
 
             if (manDays != null && manDays.compareTo(BigDecimal.ZERO) > 0) {
-                endDate = businessDayCalculator.calculateEndDate(startDate, manDays);
+                // capacity 반영
+                Member assignee = memberRepository.findById(assigneeId).orElse(null);
+                BigDecimal capacity = (assignee != null && assignee.getCapacity() != null)
+                        ? assignee.getCapacity() : BigDecimal.ONE;
+                endDate = businessDayCalculator.calculateEndDate(startDate, manDays, capacity);
             }
-        } else if (manDays != null && manDays.compareTo(BigDecimal.ZERO) > 0 && assigneeId != null) {
-            // 첫 번째 태스크이면서 manDays가 있지만 startDate는 클라이언트에서 입력하므로 여기서는 null
-            // (프리뷰에서는 startDate를 알 수 없으므로 null 반환)
         }
 
         return TaskDto.PreviewDatesResponse.builder()
@@ -528,49 +549,59 @@ public class TaskService {
     // ---- 자동 날짜 계산 Private 메서드 ----
 
     /**
-     * 자동 시작일 계산
-     * 1. 선행 태스크(의존관계)의 종료일 중 최댓값 조회
-     * 2. 동일 담당자의 프로젝트 내 SEQUENTIAL 태스크 중 종료일이 가장 늦은 태스크의 종료일 조회
+     * 자동 시작일 계산 (Phase 1 개선)
+     * 1. 선행 태스크(의존관계)의 종료일 중 최댓값 조회 — HOLD/CANCELLED 제외 (GAP-14)
+     * 2. 동일 담당자의 전체 프로젝트 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것 조회 (GAP-07 전역 큐)
      * 3. 두 값 중 더 늦은 날짜를 후보 기준일로 결정
-     * 4. 후보 기준일의 다음 영업일을 최종 시작일로 반환
-     *
-     * @param projectId        프로젝트 ID
-     * @param assigneeId       담당자 ID
-     * @param dependsOnTaskIds 선행 태스크 ID 목록
-     * @param excludeTaskId    제외할 태스크 ID (수정 시 자기 자신)
-     * @return 자동 계산된 시작일
+     * 4. Same-Day Rule 적용 (GAP-06): 선행 MD가 fractional이면 당일 시작
+     * 5. 아니면 후보 기준일의 다음 영업일을 최종 시작일로 반환
      */
     private LocalDate calculateAutoStartDate(Long projectId, Long assigneeId,
                                               List<Long> dependsOnTaskIds, Long excludeTaskId) {
         LocalDate latestEndDate = null;
+        boolean latestIsFractional = false;
 
-        // 1. 선행 태스크들의 종료일 중 최댓값
+        // 1. 선행 태스크들의 종료일 중 최댓값 (HOLD/CANCELLED 제외)
         if (dependsOnTaskIds != null && !dependsOnTaskIds.isEmpty()) {
-            for (Long depTaskId : dependsOnTaskIds) {
-                Task depTask = taskRepository.findById(depTaskId).orElse(null);
-                if (depTask != null && depTask.getEndDate() != null) {
-                    if (latestEndDate == null || depTask.getEndDate().isAfter(latestEndDate)) {
-                        latestEndDate = depTask.getEndDate();
-                    }
+            List<Task> depTasks = taskRepository.findAllById(dependsOnTaskIds);
+            for (Task depTask : depTasks) {
+                if (depTask.getEndDate() == null) {
+                    continue;
+                }
+                // GAP-14: Hold/Cancelled 상태 태스크는 의존관계 계산에서 제외
+                if (INACTIVE_STATUSES.contains(depTask.getStatus())) {
+                    continue;
+                }
+                if (latestEndDate == null || depTask.getEndDate().isAfter(latestEndDate)) {
+                    latestEndDate = depTask.getEndDate();
+                    latestIsFractional = businessDayCalculator.isFractionalMd(depTask.getManDays());
                 }
             }
         }
 
-        // 2. 동일 담당자의 프로젝트 내 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것
+        // 2. 동일 담당자의 전체 프로젝트 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것 (GAP-07 전역 큐)
         if (assigneeId != null) {
-            List<Task> latestTasks = taskRepository.findLatestSequentialTaskByAssignee(
-                    assigneeId, projectId, TaskExecutionMode.SEQUENTIAL, excludeTaskId);
+            List<Task> latestTasks = taskRepository.findLatestSequentialTaskByAssigneeGlobal(
+                    assigneeId, TaskExecutionMode.SEQUENTIAL, INACTIVE_STATUSES, excludeTaskId);
             if (!latestTasks.isEmpty()) {
-                LocalDate assigneeLatest = latestTasks.get(0).getEndDate();
+                Task assigneeLatestTask = latestTasks.get(0);
+                LocalDate assigneeLatest = assigneeLatestTask.getEndDate();
                 if (assigneeLatest != null && (latestEndDate == null || assigneeLatest.isAfter(latestEndDate))) {
                     latestEndDate = assigneeLatest;
+                    latestIsFractional = businessDayCalculator.isFractionalMd(assigneeLatestTask.getManDays());
                 }
             }
         }
 
-        // 3. 후보 기준일의 다음 영업일
+        // 3. Same-Day Rule (GAP-06) + 다음 영업일 결정
         if (latestEndDate != null) {
-            return businessDayCalculator.getNextBusinessDay(latestEndDate);
+            if (latestIsFractional) {
+                // 선행 태스크가 fractional MD로 끝나면 같은 날 시작 가능
+                return businessDayCalculator.ensureBusinessDay(latestEndDate);
+            } else {
+                // full-day로 끝나면 다음 영업일
+                return businessDayCalculator.getNextBusinessDay(latestEndDate);
+            }
         }
 
         // 선행 태스크도 없고 동일 담당자 태스크도 없으면 오늘 기준 다음 영업일
@@ -580,7 +611,9 @@ public class TaskService {
     /**
      * 후속 태스크 연쇄 재계산 (BFS)
      * - 해당 태스크를 선행으로 가지는 모든 후속 SEQUENTIAL 태스크를 순회하며 날짜 재계산
+     * - HOLD/CANCELLED 상태 태스크는 건너뜀 (GAP-14)
      * - 방문 추적(Set)으로 순환 방지
+     * - capacity 반영
      * - 동일 @Transactional 내에서 호출
      */
     private void recalculateDependentTasks(Long taskId) {
@@ -589,7 +622,7 @@ public class TaskService {
         queue.add(taskId);
         visited.add(taskId);
 
-        int maxIterations = 1000; // 무한 루프 안전장치
+        int maxIterations = 1000;
         int iteration = 0;
 
         while (!queue.isEmpty()) {
@@ -623,6 +656,13 @@ public class TaskService {
                     continue;
                 }
 
+                // GAP-14: HOLD/CANCELLED 상태 태스크는 재계산 건너뜀
+                if (INACTIVE_STATUSES.contains(fullTask.getStatus())) {
+                    // 그래도 이 태스크의 후속 태스크는 큐에 추가 (chain은 유지)
+                    queue.add(dependentTaskId);
+                    continue;
+                }
+
                 // 현재 태스크의 의존관계 조회
                 List<Long> depTaskIds = taskDependencyRepository.findByTaskIdWithDependsOnTask(dependentTaskId).stream()
                         .map(dep -> dep.getDependsOnTask().getId())
@@ -635,14 +675,20 @@ public class TaskService {
                 LocalDate newStartDate = calculateAutoStartDate(
                         projectIdForCalc, assigneeId, depTaskIds, dependentTaskId);
 
-                // 종료일 재계산
+                // 종료일 재계산 (capacity 반영)
                 LocalDate newEndDate = fullTask.getEndDate();
                 if (fullTask.getManDays() != null && fullTask.getManDays().compareTo(BigDecimal.ZERO) > 0) {
-                    newEndDate = businessDayCalculator.calculateEndDate(newStartDate, fullTask.getManDays());
+                    BigDecimal capacity = BigDecimal.ONE;
+                    if (fullTask.getAssignee() != null && fullTask.getAssignee().getCapacity() != null) {
+                        capacity = fullTask.getAssignee().getCapacity();
+                    }
+                    newEndDate = businessDayCalculator.calculateEndDate(newStartDate, fullTask.getManDays(), capacity);
                 }
 
                 // 변경이 있을 때만 저장 (불필요한 UPDATE 방지)
-                if (!newStartDate.equals(fullTask.getStartDate()) || !newEndDate.equals(fullTask.getEndDate())) {
+                boolean startChanged = (newStartDate != null && !newStartDate.equals(fullTask.getStartDate()));
+                boolean endChanged = (newEndDate != null && !newEndDate.equals(fullTask.getEndDate()));
+                if (startChanged || endChanged) {
                     fullTask.setStartDate(newStartDate);
                     fullTask.setEndDate(newEndDate);
                     taskRepository.saveAndFlush(fullTask);
@@ -669,7 +715,7 @@ public class TaskService {
                                            Long excludeTaskId) {
         List<Task> overlapping = taskRepository.findOverlappingTasks(
                 assignee.getId(), startDate, endDate, excludeTaskId,
-                TaskExecutionMode.SEQUENTIAL);
+                TaskExecutionMode.SEQUENTIAL, INACTIVE_STATUSES);
 
         if (!overlapping.isEmpty()) {
             Task conflict = overlapping.get(0);
@@ -685,16 +731,12 @@ public class TaskService {
 
     /**
      * 태스크 링크 목록 저장
-     * - 개수 제한 검증 (10개)
-     * - URL이 비어 있는 항목은 skip
-     * - 라벨 미입력 시 URL 앞 50자를 라벨로 자동 설정
      */
     private List<TaskLink> saveTaskLinks(Task task, List<TaskDto.TaskLinkRequest> linkRequests) {
         if (linkRequests == null || linkRequests.isEmpty()) {
             return List.of();
         }
 
-        // URL이 비어 있는 항목 필터링
         List<TaskDto.TaskLinkRequest> validLinks = linkRequests.stream()
                 .filter(lr -> lr.getUrl() != null && !lr.getUrl().isBlank())
                 .collect(Collectors.toList());
@@ -727,8 +769,6 @@ public class TaskService {
 
     /**
      * 링크 URL 검증
-     * - http:// 또는 https:// 프로토콜만 허용 (javascript:, data: 등 방지)
-     * - 최대 2000자 제한
      */
     private void validateLinkUrl(String url) {
         if (url.length() > 2000) {

@@ -11,6 +11,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+
 /**
  * 프로젝트 엔티티
  */
@@ -42,6 +43,9 @@ public class Project {
 
     @Column(name = "end_date")
     private LocalDate endDate;
+
+    @Column(name = "deadline")
+    private LocalDate deadline;
 
     @Builder.Default
     @Enumerated(EnumType.STRING)

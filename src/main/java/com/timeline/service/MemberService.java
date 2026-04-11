@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -56,14 +57,19 @@ public class MemberService {
             throw new IllegalArgumentException("멤버 역할은 필수입니다.");
         }
 
-        Member member = Member.builder()
+        Member.MemberBuilder builder = Member.builder()
                 .name(request.getName())
                 .role(request.getRole())
-                .email(request.getEmail())
-                .build();
+                .email(request.getEmail());
 
-        Member saved = memberRepository.save(member);
-        log.info("멤버 생성 완료: id={}, name={}", saved.getId(), saved.getName());
+        // capacity가 null이면 @Builder.Default(1.0)가 적용됨
+        if (request.getCapacity() != null) {
+            validateCapacity(request.getCapacity());
+            builder.capacity(request.getCapacity());
+        }
+
+        Member saved = memberRepository.save(builder.build());
+        log.info("멤버 생성 완료: id={}, name={}, capacity={}", saved.getId(), saved.getName(), saved.getCapacity());
         return MemberDto.Response.from(saved);
     }
 
@@ -84,9 +90,13 @@ public class MemberService {
         member.setName(request.getName());
         member.setRole(request.getRole());
         member.setEmail(request.getEmail());
+        if (request.getCapacity() != null) {
+            validateCapacity(request.getCapacity());
+            member.setCapacity(request.getCapacity());
+        }
 
         Member updated = memberRepository.save(member);
-        log.info("멤버 수정 완료: id={}, name={}", updated.getId(), updated.getName());
+        log.info("멤버 수정 완료: id={}, name={}, capacity={}", updated.getId(), updated.getName(), updated.getCapacity());
         return MemberDto.Response.from(updated);
     }
 
@@ -119,5 +129,19 @@ public class MemberService {
     public Member findMemberById(Long id) {
         return memberRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("멤버를 찾을 수 없습니다. id=" + id));
+    }
+
+    /**
+     * capacity 값 유효성 검증
+     * - 0보다 커야 함
+     * - DB column precision(3, scale=1) 이므로 최대 99.9
+     */
+    private void validateCapacity(BigDecimal capacity) {
+        if (capacity.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Capacity는 0보다 커야 합니다.");
+        }
+        if (capacity.compareTo(new BigDecimal("99.9")) > 0) {
+            throw new IllegalArgumentException("Capacity는 99.9를 초과할 수 없습니다.");
+        }
     }
 }

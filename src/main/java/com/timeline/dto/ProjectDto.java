@@ -26,6 +26,7 @@ public class ProjectDto {
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
+        private LocalDate deadline;
         private ProjectStatus status;
     }
 
@@ -40,6 +41,9 @@ public class ProjectDto {
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
+        private LocalDate deadline;
+        private LocalDate expectedEndDate;    // 계산값: 프로젝트 내 모든 태스크의 최대 endDate
+        private Boolean isDelayed;            // 계산값: expectedEndDate > deadline
         private ProjectStatus status;
         private List<MemberDto.Response> members;
         private List<DomainSystemDto.Response> domainSystems;
@@ -52,6 +56,7 @@ public class ProjectDto {
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
+                    .deadline(project.getDeadline())
                     .status(project.getStatus())
                     .build();
         }
@@ -66,6 +71,31 @@ public class ProjectDto {
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
+                    .deadline(project.getDeadline())
+                    .status(project.getStatus())
+                    .members(members)
+                    .domainSystems(domainSystems)
+                    .build();
+        }
+
+        public static Response from(Project project,
+                                     List<MemberDto.Response> members,
+                                     List<DomainSystemDto.Response> domainSystems,
+                                     LocalDate expectedEndDate) {
+            Boolean delayed = null;
+            if (expectedEndDate != null && project.getDeadline() != null) {
+                delayed = expectedEndDate.isAfter(project.getDeadline());
+            }
+            return Response.builder()
+                    .id(project.getId())
+                    .name(project.getName())
+                    .type(project.getType())
+                    .description(project.getDescription())
+                    .startDate(project.getStartDate())
+                    .endDate(project.getEndDate())
+                    .deadline(project.getDeadline())
+                    .expectedEndDate(expectedEndDate)
+                    .isDelayed(delayed)
                     .status(project.getStatus())
                     .members(members)
                     .domainSystems(domainSystems)

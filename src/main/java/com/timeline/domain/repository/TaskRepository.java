@@ -44,6 +44,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      * - 기간 겹침 조건: 기존태스크.startDate <= newEndDate AND 기존태스크.endDate >= newStartDate
      * - 자기 자신은 제외 (수정 시)
      * - PARALLEL 모드인 기존 태스크는 충돌 대상에서 제외
+     * - HOLD/CANCELLED 상태 태스크는 충돌 대상에서 제외
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
@@ -52,13 +53,15 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             "AND t.startDate <= :endDate " +
             "AND t.endDate >= :startDate " +
             "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId) " +
-            "AND t.executionMode = :sequentialMode")
+            "AND t.executionMode = :sequentialMode " +
+            "AND t.status NOT IN :excludeStatuses")
     List<Task> findOverlappingTasks(
             @Param("assigneeId") Long assigneeId,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
             @Param("excludeTaskId") Long excludeTaskId,
-            @Param("sequentialMode") TaskExecutionMode sequentialMode);
+            @Param("sequentialMode") TaskExecutionMode sequentialMode,
+            @Param("excludeStatuses") List<TaskStatus> excludeStatuses);
 
     /**
      * 담당자별 태스크 조회
@@ -122,6 +125,64 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             @Param("projectId") Long projectId,
             @Param("sequentialMode") TaskExecutionMode sequentialMode,
             @Param("excludeTaskId") Long excludeTaskId);
+
+    /**
+     * 담당자의 전체 프로젝트 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것부터 조회 (전역 큐)
+     * - 프로젝트 제한 없음
+     * - Hold/Cancelled 상태 제외
+     * - excludeTaskId 제외 (수정 시 자기 자신)
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.executionMode = :sequentialMode " +
+            "AND t.status NOT IN :excludeStatuses " +
+            "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId) " +
+            "ORDER BY t.endDate DESC")
+    List<Task> findLatestSequentialTaskByAssigneeGlobal(
+            @Param("assigneeId") Long assigneeId,
+            @Param("sequentialMode") TaskExecutionMode sequentialMode,
+            @Param("excludeStatuses") List<TaskStatus> excludeStatuses,
+            @Param("excludeTaskId") Long excludeTaskId);
+
+    /**
+     * 담당자의 전체 프로젝트 SEQUENTIAL 태스크 수 (Hold/Cancelled 제외)
+     */
+    @Query("SELECT COUNT(t) FROM Task t " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.executionMode = :sequentialMode " +
+            "AND t.status NOT IN :excludeStatuses " +
+            "AND (:excludeTaskId IS NULL OR t.id <> :excludeTaskId)")
+    long countSequentialTasksByAssigneeGlobal(
+            @Param("assigneeId") Long assigneeId,
+            @Param("sequentialMode") TaskExecutionMode sequentialMode,
+            @Param("excludeStatuses") List<TaskStatus> excludeStatuses,
+            @Param("excludeTaskId") Long excludeTaskId);
+
+    /**
+     * 담당자의 SEQUENTIAL 태스크 조회 (assigneeOrder 순, 전역 큐 관리용)
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "JOIN FETCH t.domainSystem " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.executionMode = :sequentialMode " +
+            "AND t.status NOT IN :excludeStatuses " +
+            "ORDER BY t.assigneeOrder ASC NULLS LAST, t.startDate ASC")
+    List<Task> findSequentialTasksByAssigneeOrdered(
+            @Param("assigneeId") Long assigneeId,
+            @Param("sequentialMode") TaskExecutionMode sequentialMode,
+            @Param("excludeStatuses") List<TaskStatus> excludeStatuses);
+
+    /**
+     * 프로젝트 내 최대 endDate 조회 (expectedEndDate 계산용)
+     */
+    @Query("SELECT MAX(t.endDate) FROM Task t " +
+            "WHERE t.project.id = :projectId " +
+            "AND t.status NOT IN :excludeStatuses")
+    LocalDate findMaxEndDateByProjectId(
+            @Param("projectId") Long projectId,
+            @Param("excludeStatuses") List<TaskStatus> excludeStatuses);
 
     List<Task> findByProjectId(Long projectId);
 

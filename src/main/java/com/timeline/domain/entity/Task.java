@@ -1,7 +1,9 @@
 package com.timeline.domain.entity;
 
 import com.timeline.domain.enums.TaskExecutionMode;
+import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
+import com.timeline.domain.enums.TaskType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -46,10 +48,10 @@ public class Task {
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "start_date", nullable = false)
+    @Column(name = "start_date")
     private LocalDate startDate;
 
-    @Column(name = "end_date", nullable = false)
+    @Column(name = "end_date")
     private LocalDate endDate;
 
     @Column(name = "man_days", precision = 5, scale = 1)
@@ -65,6 +67,20 @@ public class Task {
     @Column(name = "execution_mode", nullable = false, length = 20,
             columnDefinition = "VARCHAR(20) DEFAULT 'SEQUENTIAL'")
     private TaskExecutionMode executionMode = TaskExecutionMode.SEQUENTIAL;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 5)
+    private TaskPriority priority;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private TaskType type;
+
+    @Column(name = "actual_end_date")
+    private LocalDate actualEndDate;
+
+    @Column(name = "assignee_order")
+    private Integer assigneeOrder;
 
     @Column(name = "sort_order")
     private Integer sortOrder;

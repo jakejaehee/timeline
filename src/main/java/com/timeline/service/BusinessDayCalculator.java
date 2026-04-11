@@ -3,6 +3,7 @@ package com.timeline.service;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 
@@ -12,6 +13,7 @@ import java.time.LocalDate;
  * - 다음 영업일 반환
  * - 영업일 보정
  * - 토/일 제외 영업일 판단
+ * - capacity 반영 종료일 계산
  */
 @Component
 public class BusinessDayCalculator {
@@ -19,28 +21,45 @@ public class BusinessDayCalculator {
     /**
      * 종료일 계산 (공수 기반, 주말 제외)
      * - 소수점 공수는 올림 처리 (0.5일 -> 1일)
+     * - capacity 1.0 기본 적용
      *
      * @param startDate 시작일
      * @param manDays   공수 (영업일 수)
      * @return 종료일
      */
     public LocalDate calculateEndDate(LocalDate startDate, BigDecimal manDays) {
+        return calculateEndDate(startDate, manDays, BigDecimal.ONE);
+    }
+
+    /**
+     * 종료일 계산 (공수 + capacity 기반, 주말 제외)
+     * - actual_duration = ceil(MD / capacity) 영업일 수
+     * - 소수점 공수는 올림 처리
+     *
+     * @param startDate 시작일
+     * @param manDays   공수 (영업일 수)
+     * @param capacity  담당자 하루 투입 가능 MD (0.5 또는 1.0, null이면 1.0)
+     * @return 종료일
+     */
+    public LocalDate calculateEndDate(LocalDate startDate, BigDecimal manDays, BigDecimal capacity) {
         if (manDays == null || manDays.compareTo(BigDecimal.ZERO) < 0) {
             return startDate;
         }
 
-        int businessDays = manDays.intValue();
+        // capacity 보정 (null 또는 0 이하이면 1.0)
+        BigDecimal effectiveCapacity = (capacity != null && capacity.compareTo(BigDecimal.ZERO) > 0)
+                ? capacity : BigDecimal.ONE;
+
+        // actual_duration = ceil(MD / capacity)
+        BigDecimal actualDuration = manDays.divide(effectiveCapacity, 0, RoundingMode.CEILING);
+
+        int businessDays = actualDuration.intValue();
         if (businessDays <= 0) {
-            // 소수점만 있는 경우 (예: 0.5) -> 올림 후 1일
-            if (manDays.remainder(BigDecimal.ONE).compareTo(BigDecimal.ZERO) > 0) {
+            // MD > 0인데 capacity로 나눈 결과가 0 이하이면 최소 1일
+            if (manDays.compareTo(BigDecimal.ZERO) > 0) {
                 businessDays = 1;
             } else {
                 return startDate;
-            }
-        } else {
-            // 소수점이 있으면 올림 (1.5일 -> 2일)
-            if (manDays.remainder(BigDecimal.ONE).compareTo(BigDecimal.ZERO) > 0) {
-                businessDays = businessDays + 1;
             }
         }
 
@@ -56,6 +75,20 @@ public class BusinessDayCalculator {
         }
 
         return endDate;
+    }
+
+    /**
+     * MD가 fractional(소수점)인지 확인
+     * - fractional이면 Same-Day Rule 적용 가능 (선행 태스크 endDate 당일 시작)
+     *
+     * @param manDays 공수
+     * @return fractional 여부
+     */
+    public boolean isFractionalMd(BigDecimal manDays) {
+        if (manDays == null) {
+            return false;
+        }
+        return manDays.remainder(BigDecimal.ONE).compareTo(BigDecimal.ZERO) != 0;
     }
 
     /**

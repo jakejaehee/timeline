@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -38,13 +39,22 @@ public class ProjectService {
     private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
 
     /**
-     * 전체 프로젝트 목록 조회 (expectedEndDate, isDelayed 포함)
+     * 전체 프로젝트 목록 조회 (expectedEndDate, isDelayed, memberCount 포함)
+     * - 멤버 수를 일괄 조회하여 N+1 쿼리 방지
      */
     public List<ProjectDto.Response> getAllProjects() {
+        // 멤버 수를 한 번에 조회 (N+1 방지)
+        Map<Long, Long> memberCountMap = projectMemberRepository.countByProjectIdGrouped().stream()
+                .collect(Collectors.toMap(
+                        row -> (Long) row[0],
+                        row -> (Long) row[1]
+                ));
+
         return projectRepository.findAllByOrderByCreatedAtDesc().stream()
                 .map(project -> {
                     LocalDate expectedEndDate = calculateExpectedEndDate(project.getId());
-                    return ProjectDto.Response.from(project, null, null, expectedEndDate);
+                    long memberCount = memberCountMap.getOrDefault(project.getId(), 0L);
+                    return ProjectDto.Response.from(project, memberCount, expectedEndDate);
                 })
                 .collect(Collectors.toList());
     }
@@ -81,7 +91,7 @@ public class ProjectService {
 
         Project.ProjectBuilder builder = Project.builder()
                 .name(request.getName())
-                .type(request.getType())
+                .projectType(normalizeProjectType(request.getProjectType()))
                 .description(request.getDescription())
                 .startDate(request.getStartDate())
                 .endDate(request.getEndDate())
@@ -109,7 +119,7 @@ public class ProjectService {
         Project project = findProjectById(id);
 
         project.setName(request.getName());
-        project.setType(request.getType());
+        project.setProjectType(normalizeProjectType(request.getProjectType()));
         project.setDescription(request.getDescription());
         project.setStartDate(request.getStartDate());
         project.setEndDate(request.getEndDate());
@@ -217,6 +227,27 @@ public class ProjectService {
                         "프로젝트에 등록되지 않은 도메인 시스템입니다. projectId=" + projectId + ", domainSystemId=" + domainSystemId));
         projectDomainSystemRepository.delete(pds);
         log.info("프로젝트 도메인 시스템 제거: projectId={}, domainSystemId={}", projectId, domainSystemId);
+    }
+
+    /**
+     * 기존 프로젝트 유형 목록 조회 (중복 제거, null 제외, 정렬)
+     */
+    public List<String> getProjectTypes() {
+        return projectRepository.findDistinctProjectTypes();
+    }
+
+    /**
+     * projectType null 정규화: null/빈 문자열이면 null, 아니면 trim 처리 + 길이 검증 (DB column 100)
+     */
+    private String normalizeProjectType(String rawType) {
+        if (rawType == null || rawType.isBlank()) {
+            return null;
+        }
+        String trimmed = rawType.trim();
+        if (trimmed.length() > 100) {
+            throw new IllegalArgumentException("프로젝트 유형은 100자를 초과할 수 없습니다.");
+        }
+        return trimmed;
     }
 
     /**

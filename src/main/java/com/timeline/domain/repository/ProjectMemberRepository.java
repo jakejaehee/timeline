@@ -25,4 +25,13 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     void deleteByProjectIdAndMemberId(Long projectId, Long memberId);
 
     void deleteByProjectId(Long projectId);
+
+    long countByProjectId(Long projectId);
+
+    /**
+     * 프로젝트별 멤버 수 일괄 조회 (N+1 방지)
+     * 결과: Object[] { projectId (Long), memberCount (Long) }
+     */
+    @Query("SELECT pm.project.id, COUNT(pm) FROM ProjectMember pm GROUP BY pm.project.id")
+    List<Object[]> countByProjectIdGrouped();
 }

@@ -235,7 +235,7 @@ public class TaskService {
                 .type(request.getType())
                 .actualEndDate(request.getActualEndDate());
 
-        // status가 null이면 @Builder.Default(PENDING)가 적용됨
+        // status가 null이면 @Builder.Default(TODO)가 적용됨
         if (request.getStatus() != null) {
             taskBuilder.status(request.getStatus());
         }

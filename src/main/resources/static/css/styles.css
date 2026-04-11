@@ -23,15 +23,15 @@ body {
     top: 0;
     left: 0;
     bottom: 0;
-    width: 250px;
+    width: 220px;
     background-color: #343a40;
     color: #fff;
-    z-index: 1000;
+    z-index: 1001;
     overflow-y: auto;
 }
 
 .sidebar-header {
-    padding: 20px 20px 15px;
+    padding: 16px 16px 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -39,7 +39,7 @@ body {
     margin: 0;
     font-weight: 600;
     color: #fff;
-    font-size: 1.25rem;
+    font-size: 1.15rem;
 }
 
 .sidebar-header h4 i {
@@ -57,7 +57,8 @@ body {
 }
 
 .sidebar-nav .nav-link {
-    display: block;
+    display: flex;
+    align-items: center;
     padding: 10px 15px;
     color: #adb5bd;
     text-decoration: none;
@@ -84,11 +85,45 @@ body {
     background-color: rgba(78, 115, 223, 0.5);
 }
 
+/* 사이드바 배지 */
+.sidebar-nav .nav-link .badge {
+    font-size: 0.65rem;
+    line-height: 1.4;
+}
+
+/* ---- 글로벌 상단 바 ---- */
+#topbar {
+    position: fixed;
+    top: 0;
+    left: 220px;
+    right: 0;
+    height: 56px;
+    background: #fff;
+    border-bottom: 1px solid #dee2e6;
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 12px;
+}
+
+.topbar-brand {
+    font-weight: 600;
+    font-size: 1rem;
+    color: #4e73df;
+    display: none;
+}
+
+.topbar-spacer {
+    flex: 1;
+}
+
 /* ---- 메인 콘텐츠 ---- */
 #main-content {
-    margin-left: 250px;
-    padding: 20px 30px;
-    min-height: 100vh;
+    margin-left: 220px;
+    margin-top: 56px;
+    padding: 16px 24px;
+    min-height: calc(100vh - 56px);
 }
 
 /* ---- 섹션 헤더 ---- */
@@ -203,7 +238,7 @@ body {
 .badge-IN_PROGRESS { background-color: #fff3e0; color: #e65100; }
 .badge-COMPLETED { background-color: #e8f5e9; color: #2e7d32; }
 .badge-ON_HOLD { background-color: #fce4ec; color: #c62828; }
-.badge-PENDING { background-color: #f3e5f5; color: #6a1b9a; }
+.badge-TODO { background-color: #f3e5f5; color: #6a1b9a; }
 .badge-HOLD { background-color: #fff3cd; color: #856404; }
 .badge-CANCELLED { background-color: #f8d7da; color: #721c24; }
 
@@ -212,10 +247,15 @@ body {
 .badge-QA { background-color: #e8f5e9; color: #2e7d32; }
 .badge-PM { background-color: #fff3e0; color: #e65100; }
 
-/* ---- 프로젝트 유형 배지 ---- */
-.badge-SKU_SYSTEM { background-color: #ede7f6; color: #4527a0; }
-.badge-BUSINESS { background-color: #e0f2f1; color: #00695c; }
-.badge-MUKIE { background-color: #fce4ec; color: #ad1457; }
+/* ---- 프로젝트 유형 배지 (자유 문자열) ---- */
+.badge-project-type {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background-color: #e8eaf6;
+    color: #283593;
+}
 
 /* ---- 우선순위 배지 ---- */
 .badge-priority {
@@ -419,6 +459,26 @@ body {
     width: 100%;
 }
 
+/* 프로젝트 상세 간트 */
+#project-gantt-chart {
+    overflow-x: auto;
+}
+
+#project-gantt-chart .gantt .bar-label {
+    font-size: 11px !important;
+    fill: #fff !important;
+    font-weight: 500;
+}
+
+#project-gantt-chart .gantt .bar-label.big {
+    font-size: 11px !important;
+    fill: #333 !important;
+}
+
+#project-gantt-chart svg {
+    width: 100%;
+}
+
 /* ---- AI Parser ---- */
 #ai-text-input {
     font-family: "Courier New", monospace;
@@ -526,19 +586,6 @@ body {
     display: block;
 }
 
-/* ---- Team Board ---- */
-#team-board-content .card-header {
-    padding: 10px 16px;
-}
-
-#team-board-content .table th {
-    font-size: 0.8rem;
-}
-
-#team-board-content .table td {
-    font-size: 0.85rem;
-}
-
 /* ---- 태스크 링크 행 ---- */
 .task-link-row {
     animation: fadeIn 0.2s ease;
@@ -596,12 +643,6 @@ body {
 .badge-holiday-NATIONAL { background-color: #e3f2fd; color: #1565c0; }
 .badge-holiday-COMPANY { background-color: #e0f7fa; color: #006064; }
 
-/* ---- 뷰 모드 토글 ---- */
-#tb-view-mode-group .btn {
-    font-size: 0.78rem;
-    padding: 4px 10px;
-}
-
 /* ---- 간트차트 도메인 필터 ---- */
 #gantt-domain-filter .form-check-inline {
     margin-right: 8px;
@@ -613,20 +654,139 @@ body {
     gap: 4px;
 }
 
+/* ---- 담당자 스케줄 3패널 레이아웃 ---- */
+.schedule-panel-left {
+    width: 20%;
+    min-width: 180px;
+    border-right: 1px solid #dee2e6;
+    overflow-y: auto;
+    background: #fff;
+}
+
+.schedule-panel-middle {
+    width: 50%;
+    border-right: 1px solid #dee2e6;
+    overflow-y: auto;
+    background: #fff;
+}
+
+.schedule-panel-right {
+    width: 30%;
+    overflow-y: auto;
+    background: #fff;
+}
+
+.schedule-member-item {
+    cursor: pointer;
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.15s;
+    font-size: 0.9rem;
+}
+
+.schedule-member-item:hover {
+    background: rgba(78, 115, 223, 0.08);
+}
+
+.schedule-member-item.active {
+    background: rgba(78, 115, 223, 0.15);
+    font-weight: 600;
+    border-left: 3px solid #4e73df;
+}
+
+.schedule-task-item {
+    padding: 10px 12px;
+    border: 1px solid #e3e6f0;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    background: #fff;
+    cursor: pointer;
+    transition: box-shadow 0.15s;
+    font-size: 0.85rem;
+}
+
+.schedule-task-item:hover {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.schedule-task-item.active {
+    border-color: #4e73df;
+    box-shadow: 0 0 0 2px rgba(78, 115, 223, 0.25);
+}
+
+.schedule-task-order {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #4e73df;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+/* ---- 프로젝트 진행률 바 ---- */
+.progress-sm {
+    height: 6px;
+}
+
+/* ---- 경고 센터 경고 카드 ---- */
+.warning-item {
+    border-left: 4px solid #dc3545;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    background: #fff;
+    border-radius: 0 6px 6px 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.warning-item.severity-high {
+    border-left-color: #dc3545;
+}
+
+.warning-item.severity-medium {
+    border-left-color: #ffc107;
+}
+
+.warning-item.severity-low {
+    border-left-color: #17a2b8;
+}
+
 /* ---- 반응형 ---- */
 @media (max-width: 768px) {
     #sidebar {
         width: 200px;
     }
 
+    #topbar {
+        left: 200px;
+    }
+
     #main-content {
         margin-left: 200px;
-        padding: 15px;
+        padding: 12px 16px;
     }
 
     .section-header {
         flex-direction: column;
         align-items: flex-start;
         gap: 10px;
+    }
+
+    .schedule-panel-left {
+        width: 30%;
+        min-width: 140px;
+    }
+
+    .schedule-panel-middle {
+        width: 40%;
+    }
+
+    .schedule-panel-right {
+        width: 30%;
     }
 }

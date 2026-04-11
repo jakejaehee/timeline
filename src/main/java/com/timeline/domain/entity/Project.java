@@ -1,7 +1,6 @@
 package com.timeline.domain.entity;
 
 import com.timeline.domain.enums.ProjectStatus;
-import com.timeline.domain.enums.ProjectType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -31,9 +30,8 @@ public class Project {
     @Column(nullable = false, length = 200)
     private String name;
 
-    @Enumerated(EnumType.STRING)
-    @Column(length = 30)
-    private ProjectType type;
+    @Column(name = "project_type", length = 100)
+    private String projectType;
 
     @Column(columnDefinition = "TEXT")
     private String description;

@@ -32,6 +32,17 @@ public class ProjectController {
     }
 
     /**
+     * 기존 프로젝트 유형 목록 조회 (datalist 자동완성용)
+     */
+    @GetMapping("/types")
+    public ResponseEntity<?> getProjectTypes() {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", projectService.getProjectTypes()
+        ));
+    }
+
+    /**
      * 프로젝트 상세 조회 (멤버, 도메인시스템 포함)
      */
     @GetMapping("/{id}")

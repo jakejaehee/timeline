@@ -2,7 +2,6 @@ package com.timeline.dto;
 
 import com.timeline.domain.entity.Project;
 import com.timeline.domain.enums.ProjectStatus;
-import com.timeline.domain.enums.ProjectType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -22,7 +21,7 @@ public class ProjectDto {
     @AllArgsConstructor
     public static class Request {
         private String name;
-        private ProjectType type;
+        private String projectType;
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
@@ -37,7 +36,7 @@ public class ProjectDto {
     public static class Response {
         private Long id;
         private String name;
-        private ProjectType type;
+        private String projectType;
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
@@ -45,6 +44,7 @@ public class ProjectDto {
         private LocalDate expectedEndDate;    // 계산값: 프로젝트 내 모든 태스크의 최대 endDate
         private Boolean isDelayed;            // 계산값: expectedEndDate > deadline
         private ProjectStatus status;
+        private Integer memberCount;
         private List<MemberDto.Response> members;
         private List<DomainSystemDto.Response> domainSystems;
 
@@ -52,7 +52,7 @@ public class ProjectDto {
             return Response.builder()
                     .id(project.getId())
                     .name(project.getName())
-                    .type(project.getType())
+                    .projectType(project.getProjectType())
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
@@ -67,7 +67,7 @@ public class ProjectDto {
             return Response.builder()
                     .id(project.getId())
                     .name(project.getName())
-                    .type(project.getType())
+                    .projectType(project.getProjectType())
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
@@ -75,6 +75,29 @@ public class ProjectDto {
                     .status(project.getStatus())
                     .members(members)
                     .domainSystems(domainSystems)
+                    .build();
+        }
+
+        /**
+         * 목록 조회용: memberCount + expectedEndDate (members/domainSystems 없음)
+         */
+        public static Response from(Project project, long memberCount, LocalDate expectedEndDate) {
+            Boolean delayed = null;
+            if (expectedEndDate != null && project.getDeadline() != null) {
+                delayed = expectedEndDate.isAfter(project.getDeadline());
+            }
+            return Response.builder()
+                    .id(project.getId())
+                    .name(project.getName())
+                    .projectType(project.getProjectType())
+                    .description(project.getDescription())
+                    .startDate(project.getStartDate())
+                    .endDate(project.getEndDate())
+                    .deadline(project.getDeadline())
+                    .expectedEndDate(expectedEndDate)
+                    .isDelayed(delayed)
+                    .status(project.getStatus())
+                    .memberCount((int) memberCount)
                     .build();
         }
 
@@ -89,7 +112,7 @@ public class ProjectDto {
             return Response.builder()
                     .id(project.getId())
                     .name(project.getName())
-                    .type(project.getType())
+                    .projectType(project.getProjectType())
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())

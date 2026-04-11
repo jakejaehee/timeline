@@ -7,7 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/frappe-gantt/dist/frappe-gantt.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="/css/styles.css?v=20260412b">
+    <link rel="stylesheet" href="/css/styles.css?v=20260411e">
 </head>
 <body>
     <!-- 좌측 사이드바 -->
@@ -18,22 +18,38 @@
         <ul class="sidebar-nav">
             <li>
                 <a href="#" class="nav-link active" data-section="dashboard" onclick="showSection('dashboard', this)">
-                    <i class="bi bi-speedometer2"></i> Dashboard
+                    <i class="bi bi-speedometer2"></i> 대시보드
                 </a>
             </li>
             <li>
                 <a href="#" class="nav-link" data-section="projects" onclick="showSection('projects', this)">
-                    <i class="bi bi-folder"></i> Projects
+                    <i class="bi bi-folder"></i> 프로젝트
                 </a>
             </li>
             <li>
-                <a href="#" class="nav-link" data-section="members" onclick="showSection('members', this)">
-                    <i class="bi bi-people"></i> Members
+                <a href="#" class="nav-link" data-section="tasks" onclick="showSection('tasks', this)">
+                    <i class="bi bi-list-task"></i> 태스크
                 </a>
             </li>
             <li>
-                <a href="#" class="nav-link" data-section="domain-systems" onclick="showSection('domain-systems', this)">
-                    <i class="bi bi-diagram-3"></i> Domain Systems
+                <a href="#" class="nav-link" data-section="assignee-schedule" onclick="showSection('assignee-schedule', this)">
+                    <i class="bi bi-person-lines-fill"></i> 담당자 스케줄
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-section="gantt" onclick="showSection('gantt', this)">
+                    <i class="bi bi-bar-chart-gantt"></i> 간트차트
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-section="warning-center" onclick="showSection('warning-center', this)">
+                    <i class="bi bi-exclamation-triangle"></i> 경고 센터
+                    <span id="sidebar-warning-count" class="badge bg-danger rounded-pill ms-auto" style="display:none;">0</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-section="settings" onclick="showSection('settings', this)">
+                    <i class="bi bi-gear"></i> 설정
                 </a>
             </li>
             <li>
@@ -41,18 +57,24 @@
                     <i class="bi bi-robot"></i> AI Parser
                 </a>
             </li>
-            <li>
-                <a href="#" class="nav-link" data-section="team-board" onclick="showSection('team-board', this)">
-                    <i class="bi bi-kanban"></i> Team Board
-                </a>
-            </li>
-            <li>
-                <a href="#" class="nav-link" data-section="holidays" onclick="showSection('holidays', this)">
-                    <i class="bi bi-calendar-event"></i> Holidays
-                </a>
-            </li>
         </ul>
     </nav>
+
+    <!-- 글로벌 상단 바 -->
+    <header id="topbar">
+        <div class="topbar-brand">Timeline</div>
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-outline-primary btn-sm" onclick="showQuickAddTask()" title="빠른 태스크 추가">
+            <i class="bi bi-plus-lg"></i> 태스크 추가
+        </button>
+        <button class="btn btn-outline-secondary btn-sm position-relative" onclick="showSection('warning-center')" title="경고 센터">
+            <i class="bi bi-bell"></i>
+            <span id="topbar-warning-badge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="display:none;">0</span>
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="showSection('settings')" title="설정">
+            <i class="bi bi-gear"></i>
+        </button>
+    </header>
 
     <!-- 우측 작업 영역 -->
     <main id="main-content">
@@ -60,10 +82,11 @@
         <!-- ==================== Dashboard 섹션 ==================== -->
         <div id="dashboard-section" class="section">
             <div class="section-header">
-                <h2><i class="bi bi-speedometer2"></i> Dashboard</h2>
+                <h2><i class="bi bi-speedometer2"></i> 대시보드</h2>
             </div>
+            <!-- 통계 카드 행 1: 프로젝트 & 태스크 -->
             <div class="row mb-4" id="dashboard-cards">
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body">
                             <div class="stat-icon bg-primary"><i class="bi bi-folder"></i></div>
@@ -74,36 +97,73 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body">
-                            <div class="stat-icon bg-success"><i class="bi bi-people"></i></div>
+                            <div class="stat-icon bg-danger"><i class="bi bi-exclamation-triangle"></i></div>
                             <div class="stat-info">
-                                <h6 class="text-muted">전체 멤버</h6>
-                                <h3 id="stat-members">0</h3>
+                                <h6 class="text-muted">지연 프로젝트</h6>
+                                <h3 id="stat-delayed">0</h3>
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <div class="card stat-card">
                         <div class="card-body">
-                            <div class="stat-icon bg-warning"><i class="bi bi-list-task"></i></div>
+                            <div class="stat-icon bg-warning"><i class="bi bi-sort-numeric-down"></i></div>
                             <div class="stat-info">
-                                <h6 class="text-muted">전체 태스크</h6>
-                                <h3 id="stat-tasks">0</h3>
+                                <h6 class="text-muted">순서 미지정</h6>
+                                <h3 id="stat-unordered">0</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stat-card">
+                        <div class="card-body">
+                            <div class="stat-icon" style="background-color:#dc3545;"><i class="bi bi-exclamation-diamond"></i></div>
+                            <div class="stat-info">
+                                <h6 class="text-muted">일정 충돌</h6>
+                                <h3 id="stat-conflict">0</h3>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <!-- Warning 요약 카드 -->
+
+            <!-- 경고 요약 카드 -->
             <div class="card mb-4" id="dashboard-warnings-card" style="display:none;">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> 경고 요약</h5>
                     <span class="badge bg-danger" id="dashboard-warning-total">0</span>
                 </div>
                 <div class="card-body" id="dashboard-warnings-content">
+                </div>
+            </div>
+
+            <div class="row mb-4">
+                <!-- 담당자 workload 카드 -->
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-people"></i> 담당자 Workload</h5>
+                        </div>
+                        <div class="card-body" id="dashboard-workload-content">
+                            <div class="text-center text-muted">로딩 중...</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 마감 임박 프로젝트 -->
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-alarm"></i> 마감 임박 프로젝트 (14일 이내)</h5>
+                        </div>
+                        <div class="card-body" id="dashboard-deadline-content">
+                            <div class="text-center text-muted">로딩 중...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -120,10 +180,11 @@
                                     <th>유형</th>
                                     <th>상태</th>
                                     <th>기간</th>
+                                    <th>지연</th>
                                 </tr>
                             </thead>
                             <tbody id="dashboard-projects-table">
-                                <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
+                                <tr><td colspan="5" class="text-center text-muted">로딩 중...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -133,33 +194,247 @@
 
         <!-- ==================== Projects 섹션 ==================== -->
         <div id="projects-section" class="section" style="display:none;">
-            <div class="section-header">
-                <h2><i class="bi bi-folder"></i> Projects</h2>
-                <button class="btn btn-primary" onclick="showProjectModal()">
-                    <i class="bi bi-plus-lg"></i> 프로젝트 추가
-                </button>
+            <!-- 프로젝트 목록 뷰 -->
+            <div id="project-list-view">
+                <div class="section-header">
+                    <h2><i class="bi bi-folder"></i> 프로젝트</h2>
+                    <button class="btn btn-primary" onclick="showProjectModal()">
+                        <i class="bi bi-plus-lg"></i> 프로젝트 추가
+                    </button>
+                </div>
+                <div class="card">
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>프로젝트명</th>
+                                        <th>유형</th>
+                                        <th>상태</th>
+                                        <th>진행률</th>
+                                        <th>시작일</th>
+                                        <th>종료일</th>
+                                        <th>데드라인</th>
+                                        <th>지연</th>
+                                        <th>멤버</th>
+                                        <th class="text-center">액션</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="projects-table">
+                                    <tr><td colspan="10" class="text-center text-muted">로딩 중...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="card">
+            <!-- 프로젝트 상세 뷰 -->
+            <div id="project-detail-view" style="display:none;">
+                <div class="section-header">
+                    <div class="d-flex align-items-center gap-3">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="showProjectList()">
+                            <i class="bi bi-arrow-left"></i> 목록
+                        </button>
+                        <h2 id="project-detail-title" class="mb-0"></h2>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-primary btn-sm" onclick="showProjectModal(currentDetailProjectId)">
+                            <i class="bi bi-pencil"></i> 수정
+                        </button>
+                    </div>
+                </div>
+                <ul class="nav nav-tabs mb-3" id="project-detail-tabs">
+                    <li class="nav-item">
+                        <a class="nav-link active" data-bs-toggle="tab" href="#tab-overview">개요</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#tab-tasks">태스크</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#tab-schedule">일정</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#tab-members">참여자</a>
+                    </li>
+                </ul>
+                <div class="tab-content">
+                    <div id="tab-overview" class="tab-pane fade show active">
+                        <div id="project-overview-content">로딩 중...</div>
+                    </div>
+                    <div id="tab-tasks" class="tab-pane fade">
+                        <div class="mb-3">
+                            <button class="btn btn-primary btn-sm" onclick="showTaskModal(null, currentDetailProjectId)">
+                                <i class="bi bi-plus-lg"></i> 태스크 추가
+                            </button>
+                        </div>
+                        <div id="project-tasks-content">로딩 중...</div>
+                    </div>
+                    <div id="tab-schedule" class="tab-pane fade">
+                        <div id="project-gantt-container" class="card">
+                            <div class="card-body p-0">
+                                <div id="project-gantt-chart"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="tab-members" class="tab-pane fade">
+                        <div id="project-members-content">로딩 중...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 태스크 섹션 (신규) ==================== -->
+        <div id="tasks-section" class="section" style="display:none;">
+            <div class="section-header">
+                <h2><i class="bi bi-list-task"></i> 태스크</h2>
+            </div>
+            <!-- 필터 영역 -->
+            <div class="card mb-3">
                 <div class="card-body">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-2">
+                            <label for="task-filter-project" class="form-label fw-bold">프로젝트</label>
+                            <select id="task-filter-project" class="form-select form-select-sm">
+                                <option value="">전체</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="task-filter-assignee" class="form-label fw-bold">담당자</label>
+                            <select id="task-filter-assignee" class="form-select form-select-sm">
+                                <option value="">전체</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="task-filter-status" class="form-label fw-bold">상태</label>
+                            <select id="task-filter-status" class="form-select form-select-sm">
+                                <option value="">전체</option>
+                                <option value="TODO">TODO</option>
+                                <option value="IN_PROGRESS">IN_PROGRESS</option>
+                                <option value="COMPLETED">COMPLETED</option>
+                                <option value="HOLD">HOLD</option>
+                                <option value="CANCELLED">CANCELLED</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="task-filter-priority" class="form-label fw-bold">우선순위</label>
+                            <select id="task-filter-priority" class="form-select form-select-sm">
+                                <option value="">전체</option>
+                                <option value="P0">P0 (긴급)</option>
+                                <option value="P1">P1 (높음)</option>
+                                <option value="P2">P2 (보통)</option>
+                                <option value="P3">P3 (낮음)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="task-filter-type" class="form-label fw-bold">유형</label>
+                            <select id="task-filter-type" class="form-select form-select-sm">
+                                <option value="">전체</option>
+                                <option value="FEATURE">FEATURE</option>
+                                <option value="DESIGN">DESIGN</option>
+                                <option value="BACKEND">BACKEND</option>
+                                <option value="INFRA">INFRA</option>
+                                <option value="QA">QA</option>
+                                <option value="RELEASE">RELEASE</option>
+                                <option value="OPS">OPS</option>
+                                <option value="TECH_DEBT">TECH_DEBT</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="task-filter-start-date" class="form-label fw-bold">시작일</label>
+                            <input type="date" class="form-control form-control-sm" id="task-filter-start-date">
+                        </div>
+                    </div>
+                    <div class="row g-2 align-items-end mt-1">
+                        <div class="col-md-2">
+                            <label for="task-filter-end-date" class="form-label fw-bold">종료일</label>
+                            <input type="date" class="form-control form-control-sm" id="task-filter-end-date">
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end gap-2">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="task-filter-delayed">
+                                <label class="form-check-label" for="task-filter-delayed">지연만</label>
+                            </div>
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end gap-2">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="task-filter-unordered">
+                                <label class="form-check-label" for="task-filter-unordered">순서미지정</label>
+                            </div>
+                        </div>
+                        <div class="col-md-2"></div>
+                        <div class="col-md-2">
+                            <button class="btn btn-primary btn-sm w-100" onclick="applyTasksFilter()">
+                                <i class="bi bi-search"></i> 조회
+                            </button>
+                        </div>
+                        <div class="col-md-2">
+                            <button class="btn btn-outline-secondary btn-sm w-100" onclick="resetTasksFilter()">
+                                <i class="bi bi-arrow-counterclockwise"></i> 초기화
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 태스크 테이블 -->
+            <div class="card">
+                <div class="card-body p-0">
                     <div class="table-responsive">
                         <table class="table table-hover mb-0">
                             <thead>
                                 <tr>
-                                    <th>프로젝트명</th>
+                                    <th>프로젝트</th>
+                                    <th>태스크명</th>
                                     <th>유형</th>
-                                    <th>상태</th>
+                                    <th>우선순위</th>
+                                    <th>담당자</th>
                                     <th>시작일</th>
                                     <th>종료일</th>
-                                    <th>데드라인</th>
-                                    <th>지연</th>
-                                    <th>멤버</th>
+                                    <th>MD</th>
+                                    <th>상태</th>
                                     <th class="text-center">액션</th>
                                 </tr>
                             </thead>
-                            <tbody id="projects-table">
-                                <tr><td colspan="9" class="text-center text-muted">로딩 중...</td></tr>
+                            <tbody id="tasks-table-body">
+                                <tr><td colspan="10" class="text-center text-muted">조회 버튼을 클릭하여 태스크를 로드하세요.</td></tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 담당자 스케줄 섹션 ==================== -->
+        <div id="assignee-schedule-section" class="section" style="display:none;">
+            <div class="section-header">
+                <h2><i class="bi bi-person-lines-fill"></i> 담당자 스케줄</h2>
+            </div>
+            <div class="d-flex gap-0" style="height: calc(100vh - 140px);">
+                <!-- 패널 1: 담당자 리스트 -->
+                <div id="schedule-member-panel" class="schedule-panel-left">
+                    <div class="p-2 border-bottom bg-light">
+                        <strong>담당자</strong>
+                    </div>
+                    <div id="schedule-member-list">
+                        <div class="text-center text-muted p-3">로딩 중...</div>
+                    </div>
+                </div>
+                <!-- 패널 2: 태스크 큐 -->
+                <div id="schedule-queue-panel" class="schedule-panel-middle">
+                    <div id="schedule-member-name" class="panel-title p-2 border-bottom bg-light">
+                        <strong>담당자를 선택하세요</strong>
+                    </div>
+                    <div class="p-2">
+                        <div id="schedule-ordered-tasks" class="sortable-list"></div>
+                        <div id="schedule-unordered-tasks"></div>
+                    </div>
+                </div>
+                <!-- 패널 3: 태스크 상세 -->
+                <div id="schedule-detail-panel" class="schedule-panel-right">
+                    <div class="p-2 border-bottom bg-light">
+                        <strong>태스크 상세</strong>
+                    </div>
+                    <div id="schedule-task-detail-content" class="p-3">
+                        <div class="text-center text-muted">담당자를 선택하고 태스크를 클릭하세요.</div>
                     </div>
                 </div>
             </div>
@@ -169,10 +444,11 @@
         <div id="gantt-section" class="section" style="display:none;">
             <div class="section-header">
                 <div class="d-flex align-items-center gap-3">
-                    <button class="btn btn-outline-secondary btn-sm" onclick="showSection('projects')">
-                        <i class="bi bi-arrow-left"></i> 프로젝트 목록
-                    </button>
-                    <h2 id="gantt-project-title" class="mb-0"></h2>
+                    <h2><i class="bi bi-bar-chart-gantt"></i> 간트차트</h2>
+                    <select id="gantt-project-select" class="form-select form-select-sm"
+                            style="width:250px" onchange="onGanttProjectChange(this.value)">
+                        <option value="">프로젝트 선택...</option>
+                    </select>
                 </div>
                 <div class="d-flex align-items-center gap-2">
                     <div class="btn-group" role="group">
@@ -180,7 +456,7 @@
                         <button class="btn btn-outline-secondary btn-sm active" onclick="changeGanttViewMode('Week')">Week</button>
                         <button class="btn btn-outline-secondary btn-sm" onclick="changeGanttViewMode('Month')">Month</button>
                     </div>
-                    <button class="btn btn-primary btn-sm" onclick="showTaskModal()">
+                    <button class="btn btn-primary btn-sm" onclick="showTaskModal()" id="gantt-add-task-btn" style="display:none;">
                         <i class="bi bi-plus-lg"></i> 태스크 추가
                     </button>
                 </div>
@@ -205,65 +481,204 @@
             <!-- 간트차트 컨테이너 -->
             <div id="gantt-container" class="card">
                 <div class="card-body p-0">
-                    <div id="gantt-chart"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ==================== Members 섹션 ==================== -->
-        <div id="members-section" class="section" style="display:none;">
-            <div class="section-header">
-                <h2><i class="bi bi-people"></i> Members</h2>
-                <button class="btn btn-primary" onclick="showMemberModal()">
-                    <i class="bi bi-plus-lg"></i> 멤버 추가
-                </button>
-            </div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0">
-                            <thead>
-                                <tr>
-                                    <th>이름</th>
-                                    <th>역할</th>
-                                    <th>이메일</th>
-                                    <th>캐파</th>
-                                    <th class="text-center">액션</th>
-                                </tr>
-                            </thead>
-                            <tbody id="members-table">
-                                <tr><td colspan="5" class="text-center text-muted">로딩 중...</td></tr>
-                            </tbody>
-                        </table>
+                    <div id="gantt-chart">
+                        <div class="empty-state">
+                            <i class="bi bi-bar-chart-steps"></i>
+                            <p>프로젝트를 선택하여 간트차트를 표시하세요.</p>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- ==================== Domain Systems 섹션 ==================== -->
-        <div id="domain-systems-section" class="section" style="display:none;">
+        <!-- ==================== 경고 센터 섹션 (신규) ==================== -->
+        <div id="warning-center-section" class="section" style="display:none;">
             <div class="section-header">
-                <h2><i class="bi bi-diagram-3"></i> Domain Systems</h2>
-                <button class="btn btn-primary" onclick="showDomainSystemModal()">
-                    <i class="bi bi-plus-lg"></i> 도메인 시스템 추가
+                <h2><i class="bi bi-exclamation-triangle"></i> 경고 센터</h2>
+                <button class="btn btn-outline-secondary btn-sm" onclick="loadWarningCenter()">
+                    <i class="bi bi-arrow-clockwise"></i> 새로고침
                 </button>
             </div>
-            <div class="card">
+
+            <!-- 요약 카드 -->
+            <div class="row mb-4" id="warning-summary-cards"></div>
+
+            <!-- 필터 -->
+            <div class="card mb-3">
                 <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0">
-                            <thead>
-                                <tr>
-                                    <th>이름</th>
-                                    <th>설명</th>
-                                    <th>색상</th>
-                                    <th class="text-center">액션</th>
-                                </tr>
-                            </thead>
-                            <tbody id="domain-systems-table">
-                                <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
-                            </tbody>
-                        </table>
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-3">
+                            <label for="wc-filter-project" class="form-label fw-bold">프로젝트</label>
+                            <select id="wc-filter-project" class="form-select form-select-sm" onchange="filterWarningList()">
+                                <option value="">전체 프로젝트</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="wc-filter-type" class="form-label fw-bold">경고 유형</label>
+                            <select id="wc-filter-type" class="form-select form-select-sm" onchange="filterWarningList()">
+                                <option value="">전체 유형</option>
+                                <option value="UNORDERED_TASK">순서미지정</option>
+                                <option value="MISSING_START_DATE">시작일미설정</option>
+                                <option value="SCHEDULE_CONFLICT">일정충돌</option>
+                                <option value="DEPENDENCY_ISSUE">의존관계문제</option>
+                                <option value="DEADLINE_EXCEEDED">마감초과</option>
+                                <option value="ORPHAN_TASK">고아태스크</option>
+                                <option value="DEPENDENCY_REMOVED">의존성비활성</option>
+                                <option value="UNAVAILABLE_DATE">비가용일배정</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 경고 목록 -->
+            <div id="warning-list-content">
+                <div class="empty-state">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <p>로딩 중...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 설정 섹션 (통합) ==================== -->
+        <div id="settings-section" class="section" style="display:none;">
+            <div class="section-header">
+                <h2><i class="bi bi-gear"></i> 설정</h2>
+            </div>
+            <ul class="nav nav-tabs mb-3" id="settings-tabs">
+                <li class="nav-item">
+                    <a class="nav-link active" data-bs-toggle="tab" href="#settings-holidays">공휴일</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#settings-leaves">개인 휴무</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#settings-members">담당자</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#settings-domains">도메인 시스템</a>
+                </li>
+            </ul>
+            <div class="tab-content">
+                <!-- 공휴일 탭 -->
+                <div id="settings-holidays" class="tab-pane fade show active">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="d-flex align-items-center gap-2">
+                            <label for="holiday-filter-year" class="form-label fw-bold mb-0">연도</label>
+                            <select id="holiday-filter-year" class="form-select form-select-sm" style="width:120px" onchange="loadHolidays()">
+                            </select>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="showHolidayModal()">
+                            <i class="bi bi-plus-lg"></i> 공휴일/회사휴무 추가
+                        </button>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>날짜</th>
+                                            <th>이름</th>
+                                            <th>유형</th>
+                                            <th class="text-center">액션</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="holidays-table">
+                                        <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 개인 휴무 탭 -->
+                <div id="settings-leaves" class="tab-pane fade">
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <label for="leave-member-select" class="form-label fw-bold">멤버 선택</label>
+                            <select id="leave-member-select" class="form-select form-select-sm" onchange="loadMemberLeaves()">
+                                <option value="">멤버를 선택하세요</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <button class="btn btn-primary btn-sm" onclick="showMemberLeaveModal()" id="add-leave-btn" disabled>
+                                <i class="bi bi-plus-lg"></i> 휴무 추가
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>날짜</th>
+                                            <th>사유</th>
+                                            <th class="text-center">액션</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="member-leaves-table">
+                                        <tr><td colspan="3" class="text-center text-muted">멤버를 선택해주세요.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 담당자 탭 -->
+                <div id="settings-members" class="tab-pane fade">
+                    <div class="d-flex justify-content-end mb-3">
+                        <button class="btn btn-primary btn-sm" onclick="showMemberModal()">
+                            <i class="bi bi-plus-lg"></i> 멤버 추가
+                        </button>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>이름</th>
+                                            <th>역할</th>
+                                            <th>이메일</th>
+                                            <th>캐파</th>
+                                            <th class="text-center">액션</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="members-table">
+                                        <tr><td colspan="5" class="text-center text-muted">로딩 중...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 도메인 시스템 탭 -->
+                <div id="settings-domains" class="tab-pane fade">
+                    <div class="d-flex justify-content-end mb-3">
+                        <button class="btn btn-primary btn-sm" onclick="showDomainSystemModal()">
+                            <i class="bi bi-plus-lg"></i> 도메인 시스템 추가
+                        </button>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>이름</th>
+                                            <th>설명</th>
+                                            <th>색상</th>
+                                            <th class="text-center">액션</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="domain-systems-table">
+                                        <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -306,196 +721,6 @@
                 </div>
                 <div class="card-body">
                     <div id="ai-result-content"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ==================== Team Board 섹션 ==================== -->
-        <div id="team-board-section" class="section" style="display:none;">
-            <div class="section-header">
-                <h2><i class="bi bi-kanban"></i> Team Board</h2>
-            </div>
-
-            <!-- 필터 영역 -->
-            <div class="card mb-3">
-                <div class="card-body">
-                    <div class="row g-2 align-items-end">
-                        <div class="col-md-2">
-                            <label for="tb-filter-project" class="form-label fw-bold">프로젝트</label>
-                            <select id="tb-filter-project" class="form-select form-select-sm">
-                                <option value="">전체</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <label for="tb-filter-assignee" class="form-label fw-bold">담당자</label>
-                            <select id="tb-filter-assignee" class="form-select form-select-sm">
-                                <option value="">전체</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <label for="tb-filter-status" class="form-label fw-bold">상태</label>
-                            <select id="tb-filter-status" class="form-select form-select-sm">
-                                <option value="">전체</option>
-                                <option value="PENDING">PENDING</option>
-                                <option value="IN_PROGRESS">IN_PROGRESS</option>
-                                <option value="COMPLETED">COMPLETED</option>
-                                <option value="HOLD">HOLD</option>
-                                <option value="CANCELLED">CANCELLED</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <label for="tb-filter-priority" class="form-label fw-bold">우선순위</label>
-                            <select id="tb-filter-priority" class="form-select form-select-sm">
-                                <option value="">전체</option>
-                                <option value="P0">P0 (긴급)</option>
-                                <option value="P1">P1 (높음)</option>
-                                <option value="P2">P2 (보통)</option>
-                                <option value="P3">P3 (낮음)</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <label for="tb-filter-type" class="form-label fw-bold">유형</label>
-                            <select id="tb-filter-type" class="form-select form-select-sm">
-                                <option value="">전체</option>
-                                <option value="FEATURE">FEATURE</option>
-                                <option value="DESIGN">DESIGN</option>
-                                <option value="BACKEND">BACKEND</option>
-                                <option value="INFRA">INFRA</option>
-                                <option value="QA">QA</option>
-                                <option value="RELEASE">RELEASE</option>
-                                <option value="OPS">OPS</option>
-                                <option value="TECH_DEBT">TECH_DEBT</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <label for="tb-filter-start-date" class="form-label fw-bold">시작일</label>
-                            <input type="date" class="form-control form-control-sm" id="tb-filter-start-date">
-                        </div>
-                    </div>
-                    <div class="row g-2 align-items-end mt-1">
-                        <div class="col-md-2">
-                            <label for="tb-filter-end-date" class="form-label fw-bold">종료일</label>
-                            <input type="date" class="form-control form-control-sm" id="tb-filter-end-date">
-                        </div>
-                        <div class="col-md-2 d-flex align-items-end gap-2">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="tb-filter-delayed">
-                                <label class="form-check-label" for="tb-filter-delayed">지연만</label>
-                            </div>
-                        </div>
-                        <div class="col-md-2 d-flex align-items-end gap-2">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="tb-filter-unordered">
-                                <label class="form-check-label" for="tb-filter-unordered">순서미지정</label>
-                            </div>
-                        </div>
-                        <div class="col-md-2"></div>
-                        <div class="col-md-2">
-                            <button class="btn btn-primary btn-sm w-100" onclick="applyTeamBoardFilter()">
-                                <i class="bi bi-search"></i> 조회
-                            </button>
-                        </div>
-                        <div class="col-md-2">
-                            <button class="btn btn-outline-secondary btn-sm w-100" onclick="resetTeamBoardFilter()">
-                                <i class="bi bi-arrow-counterclockwise"></i> 초기화
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 뷰 모드 전환 -->
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div class="btn-group" role="group" id="tb-view-mode-group">
-                    <button class="btn btn-outline-secondary btn-sm active" onclick="changeTeamBoardViewMode('assignee', this)">
-                        <i class="bi bi-person"></i> 담당자 > 태스크
-                    </button>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="changeTeamBoardViewMode('project-assignee', this)">
-                        <i class="bi bi-folder"></i> 프로젝트 > 담당자 > 태스크
-                    </button>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="changeTeamBoardViewMode('assignee-project', this)">
-                        <i class="bi bi-people"></i> 담당자 > 프로젝트 > 태스크
-                    </button>
-                </div>
-            </div>
-
-            <!-- 멤버별 태스크 목록 -->
-            <div id="team-board-content">
-                <div class="empty-state">
-                    <i class="bi bi-kanban"></i>
-                    <p>조회 버튼을 클릭하여 팀 보드를 로드하세요.</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- ==================== Holidays 섹션 ==================== -->
-        <div id="holidays-section" class="section" style="display:none;">
-            <div class="section-header">
-                <h2><i class="bi bi-calendar-event"></i> Holidays</h2>
-                <button class="btn btn-primary" onclick="showHolidayModal()">
-                    <i class="bi bi-plus-lg"></i> 공휴일/회사휴무 추가
-                </button>
-            </div>
-            <div class="row mb-3">
-                <div class="col-md-3">
-                    <label for="holiday-filter-year" class="form-label fw-bold">연도</label>
-                    <select id="holiday-filter-year" class="form-select form-select-sm" onchange="loadHolidays()">
-                    </select>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0">
-                            <thead>
-                                <tr>
-                                    <th>날짜</th>
-                                    <th>이름</th>
-                                    <th>유형</th>
-                                    <th class="text-center">액션</th>
-                                </tr>
-                            </thead>
-                            <tbody id="holidays-table">
-                                <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 멤버 개인 휴무 관리 -->
-            <div class="section-header mt-4">
-                <h3><i class="bi bi-person-dash"></i> 개인 휴무 관리</h3>
-            </div>
-            <div class="row mb-3">
-                <div class="col-md-3">
-                    <label for="leave-member-select" class="form-label fw-bold">멤버 선택</label>
-                    <select id="leave-member-select" class="form-select form-select-sm" onchange="loadMemberLeaves()">
-                        <option value="">멤버를 선택하세요</option>
-                    </select>
-                </div>
-                <div class="col-md-2 d-flex align-items-end">
-                    <button class="btn btn-primary btn-sm" onclick="showMemberLeaveModal()" id="add-leave-btn" disabled>
-                        <i class="bi bi-plus-lg"></i> 휴무 추가
-                    </button>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0">
-                            <thead>
-                                <tr>
-                                    <th>날짜</th>
-                                    <th>사유</th>
-                                    <th class="text-center">액션</th>
-                                </tr>
-                            </thead>
-                            <tbody id="member-leaves-table">
-                                <tr><td colspan="3" class="text-center text-muted">멤버를 선택해주세요.</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             </div>
         </div>
@@ -651,12 +876,13 @@
                             <input type="text" class="form-control" id="project-name" required>
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label for="project-type" class="form-label">유형 <span class="text-danger">*</span></label>
-                            <select class="form-select" id="project-type">
-                                <option value="SKU_SYSTEM">SKU_SYSTEM</option>
-                                <option value="BUSINESS">BUSINESS</option>
-                                <option value="MUKIE">MUKIE</option>
-                            </select>
+                            <label for="project-type" class="form-label">유형</label>
+                            <input type="text" class="form-control" id="project-type"
+                                   list="project-type-list" maxlength="100"
+                                   placeholder="예: SKU_SYSTEM, BUSINESS (자유 입력 가능)">
+                            <datalist id="project-type-list">
+                                <!-- JS에서 동적으로 채움 -->
+                            </datalist>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -765,7 +991,7 @@
                         <div class="col-md-4 mb-3">
                             <label for="task-status" class="form-label">상태</label>
                             <select class="form-select" id="task-status">
-                                <option value="PENDING">PENDING</option>
+                                <option value="TODO">TODO</option>
                                 <option value="IN_PROGRESS">IN_PROGRESS</option>
                                 <option value="COMPLETED">COMPLETED</option>
                                 <option value="HOLD">HOLD</option>
@@ -876,6 +1102,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/frappe-gantt/dist/frappe-gantt.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-    <script src="/js/app.js?v=20260412b"></script>
+    <script src="/js/app.js?v=20260411e"></script>
 </body>
 </html>

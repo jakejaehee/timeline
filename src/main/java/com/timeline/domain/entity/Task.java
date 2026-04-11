@@ -60,7 +60,7 @@ public class Task {
     @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private TaskStatus status = TaskStatus.PENDING;
+    private TaskStatus status = TaskStatus.TODO;
 
     @Builder.Default
     @Enumerated(EnumType.STRING)

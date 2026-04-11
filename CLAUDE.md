@@ -48,6 +48,10 @@ exception/           Custom exceptions + GlobalExceptionHandler
 - `js/app.js` — All UI logic in vanilla JS, fetches REST APIs with `fetch()`
 - `css/styles.css` — Custom styles on top of Bootstrap 5.3
 
+## Schema Sync Rule
+
+- When JPA entities (`domain/entity/`) are modified (add/remove/rename fields, change types, add new entities), **always update `docs/schema.sql`** to reflect the current schema.
+
 ## Conventions
 
 - **Lombok**: `@Data`, `@Builder`, `@RequiredArgsConstructor` used throughout entities and services

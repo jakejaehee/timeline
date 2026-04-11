@@ -1,7 +1,9 @@
 package com.timeline.controller;
 
 import com.timeline.dto.MemberDto;
+import com.timeline.dto.MemberLeaveDto;
 import com.timeline.dto.TeamBoardDto;
+import com.timeline.service.MemberLeaveService;
 import com.timeline.service.MemberService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +23,7 @@ import java.util.Map;
 public class MemberController {
 
     private final MemberService memberService;
+    private final MemberLeaveService memberLeaveService;
 
     /**
      * 전체 멤버 목록 조회
@@ -89,6 +92,44 @@ public class MemberController {
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "data", taskItems
+        ));
+    }
+
+    // ---- 개인 휴무 API ----
+
+    /**
+     * 특정 멤버의 개인 휴무 목록 조회
+     */
+    @GetMapping("/{id}/leaves")
+    public ResponseEntity<?> getMemberLeaves(@PathVariable Long id) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", memberLeaveService.getMemberLeaves(id)
+        ));
+    }
+
+    /**
+     * 개인 휴무 등록
+     */
+    @PostMapping("/{id}/leaves")
+    public ResponseEntity<?> createMemberLeave(@PathVariable Long id,
+                                                @RequestBody MemberLeaveDto.Request request) {
+        MemberLeaveDto.Response created = memberLeaveService.createMemberLeave(id, request);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", created
+        ));
+    }
+
+    /**
+     * 개인 휴무 삭제
+     */
+    @DeleteMapping("/{id}/leaves/{leaveId}")
+    public ResponseEntity<?> deleteMemberLeave(@PathVariable Long id,
+                                                @PathVariable Long leaveId) {
+        memberLeaveService.deleteMemberLeave(id, leaveId);
+        return ResponseEntity.ok(Map.of(
+                "success", true
         ));
     }
 }

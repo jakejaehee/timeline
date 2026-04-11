@@ -1,7 +1,9 @@
 package com.timeline.service;
 
 import com.timeline.domain.entity.Task;
+import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
+import com.timeline.domain.enums.TaskType;
 import com.timeline.domain.repository.TaskRepository;
 import com.timeline.dto.TeamBoardDto;
 import lombok.RequiredArgsConstructor;
@@ -31,15 +33,21 @@ public class TeamBoardService {
 
     /**
      * 팀 보드 데이터 조회
-     * - 필터(status, projectId, startDate, endDate) 적용
+     * - 필터(status, projectId, startDate, endDate, assigneeId, priority, type, unordered, isDelayed) 적용
      * - 담당자가 있는 태스크: 멤버별 그룹핑
      * - 담당자가 없는 태스크: unassigned 목록
      */
     public TeamBoardDto.Response getTeamBoard(TaskStatus status,
                                                Long projectId,
                                                LocalDate startDate,
-                                               LocalDate endDate) {
-        List<Task> allTasks = taskRepository.findAllForTeamBoard(status, projectId, startDate, endDate);
+                                               LocalDate endDate,
+                                               Long assigneeId,
+                                               TaskPriority priority,
+                                               TaskType type,
+                                               Boolean unordered,
+                                               Boolean isDelayed) {
+        List<Task> allTasks = taskRepository.findAllForTeamBoard(status, projectId, startDate, endDate,
+                assigneeId, priority, type, unordered, isDelayed);
 
         // 담당자 유무로 분리
         List<Task> assignedTasks = new ArrayList<>();

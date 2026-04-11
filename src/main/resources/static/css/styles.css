@@ -288,6 +288,12 @@ body {
     stroke-dasharray: 8,4;
 }
 
+.gantt-deadline-label {
+    font-size: 10px;
+    fill: #e65100;
+    font-weight: bold;
+}
+
 /* ---- 색상 프리뷰 ---- */
 .color-preview {
     display: inline-block;
@@ -546,6 +552,65 @@ body {
 #task-links-container {
     max-height: 300px;
     overflow-y: auto;
+}
+
+/* ---- 드래그 & 드롭 ---- */
+.drag-handle {
+    color: #adb5bd;
+    cursor: grab;
+    font-size: 1.1rem;
+}
+
+.drag-handle:hover {
+    color: #495057;
+}
+
+.sortable-ghost {
+    opacity: 0.4;
+    background-color: #e3f2fd !important;
+}
+
+.sortable-chosen {
+    background-color: #f1f3ff !important;
+}
+
+/* ---- 간트차트 경고 패널 ---- */
+#gantt-warnings .card {
+    font-size: 0.85rem;
+}
+
+#gantt-warnings ul {
+    padding-left: 20px;
+}
+
+#gantt-warnings li {
+    margin-bottom: 2px;
+}
+
+/* ---- Dashboard 경고 카드 ---- */
+#dashboard-warnings-card .card-header {
+    background-color: #fff3cd;
+}
+
+/* ---- 비가용일 유형 배지 ---- */
+.badge-holiday-NATIONAL { background-color: #e3f2fd; color: #1565c0; }
+.badge-holiday-COMPANY { background-color: #e0f7fa; color: #006064; }
+
+/* ---- 뷰 모드 토글 ---- */
+#tb-view-mode-group .btn {
+    font-size: 0.78rem;
+    padding: 4px 10px;
+}
+
+/* ---- 간트차트 도메인 필터 ---- */
+#gantt-domain-filter .form-check-inline {
+    margin-right: 8px;
+}
+
+#gantt-domain-filter .form-check-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 /* ---- 반응형 ---- */

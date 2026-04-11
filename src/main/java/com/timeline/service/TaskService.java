@@ -35,6 +35,8 @@ public class TaskService {
     private final DomainSystemRepository domainSystemRepository;
     private final MemberRepository memberRepository;
     private final BusinessDayCalculator businessDayCalculator;
+    private final HolidayService holidayService;
+    private final MemberLeaveService memberLeaveService;
 
     /** Hold/Cancelled 상태 목록 (스케줄링 제외용) */
     private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
@@ -182,17 +184,20 @@ public class TaskService {
                 throw new IllegalArgumentException("SEQUENTIAL 모드에서 담당자가 없으면 시작일을 직접 입력해야 합니다.");
             }
 
+            // 비가용일 조회 (공휴일 + 회사휴무 + 개인휴무)
+            Set<LocalDate> unavailableDates = getUnavailableDates(request.getAssigneeId());
+
             if (startDate == null) {
                 // 후속 태스크: 시작일 자동 계산 (전역 큐 + Same-Day Rule + Hold/Cancelled 제외)
                 startDate = calculateAutoStartDate(projectId, request.getAssigneeId(),
-                        List.of(), null);
+                        List.of(), null, unavailableDates);
             } else {
-                // 첫 번째 태스크: 시작일이 영업일인지 보정
-                startDate = businessDayCalculator.ensureBusinessDay(startDate);
+                // 첫 번째 태스크: 시작일이 영업일인지 보정 (비가용일 반영)
+                startDate = businessDayCalculator.ensureBusinessDay(startDate, unavailableDates);
             }
 
-            // 종료일 자동 계산 (capacity 반영)
-            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays(), capacity);
+            // 종료일 자동 계산 (capacity + 비가용일 반영)
+            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays(), capacity, unavailableDates);
         } else {
             // PARALLEL 모드: 기존 방식
             if (startDate == null || endDate == null) {
@@ -303,17 +308,20 @@ public class TaskService {
                     .map(td -> td.getDependsOnTask().getId())
                     .collect(Collectors.toList());
 
+            // 비가용일 조회 (공휴일 + 회사휴무 + 개인휴무)
+            Set<LocalDate> unavailableDates = getUnavailableDates(request.getAssigneeId());
+
             if (startDate == null) {
                 // 후속 태스크: 시작일 자동 계산
                 startDate = calculateAutoStartDate(projectId, request.getAssigneeId(),
-                        dependsOnTaskIds, taskId);
+                        dependsOnTaskIds, taskId, unavailableDates);
             } else {
-                // 첫 번째 태스크: 시작일이 영업일인지 보정
-                startDate = businessDayCalculator.ensureBusinessDay(startDate);
+                // 첫 번째 태스크: 시작일이 영업일인지 보정 (비가용일 반영)
+                startDate = businessDayCalculator.ensureBusinessDay(startDate, unavailableDates);
             }
 
-            // 종료일 자동 계산 (capacity 반영)
-            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays(), capacity);
+            // 종료일 자동 계산 (capacity + 비가용일 반영)
+            endDate = businessDayCalculator.calculateEndDate(startDate, request.getManDays(), capacity, unavailableDates);
         } else {
             // PARALLEL 모드: 기존 방식
             if (startDate == null || endDate == null) {
@@ -459,15 +467,18 @@ public class TaskService {
         LocalDate endDate = null;
 
         if (assigneeId != null && !isFirstTask) {
+            // 비가용일 조회
+            Set<LocalDate> unavailableDates = getUnavailableDates(assigneeId);
+
             startDate = calculateAutoStartDate(projectId, assigneeId,
-                    dependsOnTaskIds != null ? dependsOnTaskIds : List.of(), excludeTaskId);
+                    dependsOnTaskIds != null ? dependsOnTaskIds : List.of(), excludeTaskId, unavailableDates);
 
             if (manDays != null && manDays.compareTo(BigDecimal.ZERO) > 0) {
-                // capacity 반영
+                // capacity + 비가용일 반영
                 Member assignee = memberRepository.findById(assigneeId).orElse(null);
                 BigDecimal capacity = (assignee != null && assignee.getCapacity() != null)
                         ? assignee.getCapacity() : BigDecimal.ONE;
-                endDate = businessDayCalculator.calculateEndDate(startDate, manDays, capacity);
+                endDate = businessDayCalculator.calculateEndDate(startDate, manDays, capacity, unavailableDates);
             }
         }
 
@@ -549,15 +560,25 @@ public class TaskService {
     // ---- 자동 날짜 계산 Private 메서드 ----
 
     /**
-     * 자동 시작일 계산 (Phase 1 개선)
+     * 자동 시작일 계산 (비가용일 미반영 하위호환 오버로드)
+     */
+    private LocalDate calculateAutoStartDate(Long projectId, Long assigneeId,
+                                              List<Long> dependsOnTaskIds, Long excludeTaskId) {
+        return calculateAutoStartDate(projectId, assigneeId, dependsOnTaskIds, excludeTaskId, null);
+    }
+
+    /**
+     * 자동 시작일 계산 (Phase 2 개선 - 비가용일 반영)
      * 1. 선행 태스크(의존관계)의 종료일 중 최댓값 조회 — HOLD/CANCELLED 제외 (GAP-14)
      * 2. 동일 담당자의 전체 프로젝트 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것 조회 (GAP-07 전역 큐)
      * 3. 두 값 중 더 늦은 날짜를 후보 기준일로 결정
      * 4. Same-Day Rule 적용 (GAP-06): 선행 MD가 fractional이면 당일 시작
      * 5. 아니면 후보 기준일의 다음 영업일을 최종 시작일로 반환
+     * 6. 비가용일(공휴일/회사휴무/개인휴무) 반영 (GAP-A)
      */
     private LocalDate calculateAutoStartDate(Long projectId, Long assigneeId,
-                                              List<Long> dependsOnTaskIds, Long excludeTaskId) {
+                                              List<Long> dependsOnTaskIds, Long excludeTaskId,
+                                              Set<LocalDate> unavailableDates) {
         LocalDate latestEndDate = null;
         boolean latestIsFractional = false;
 
@@ -593,19 +614,19 @@ public class TaskService {
             }
         }
 
-        // 3. Same-Day Rule (GAP-06) + 다음 영업일 결정
+        // 3. Same-Day Rule (GAP-06) + 다음 영업일 결정 (비가용일 반영)
         if (latestEndDate != null) {
             if (latestIsFractional) {
                 // 선행 태스크가 fractional MD로 끝나면 같은 날 시작 가능
-                return businessDayCalculator.ensureBusinessDay(latestEndDate);
+                return businessDayCalculator.ensureBusinessDay(latestEndDate, unavailableDates);
             } else {
                 // full-day로 끝나면 다음 영업일
-                return businessDayCalculator.getNextBusinessDay(latestEndDate);
+                return businessDayCalculator.getNextBusinessDay(latestEndDate, unavailableDates);
             }
         }
 
         // 선행 태스크도 없고 동일 담당자 태스크도 없으면 오늘 기준 다음 영업일
-        return businessDayCalculator.ensureBusinessDay(LocalDate.now());
+        return businessDayCalculator.ensureBusinessDay(LocalDate.now(), unavailableDates);
     }
 
     /**
@@ -671,18 +692,21 @@ public class TaskService {
                 Long assigneeId = fullTask.getAssignee() != null ? fullTask.getAssignee().getId() : null;
                 Long projectIdForCalc = fullTask.getProject().getId();
 
-                // 시작일 재계산
-                LocalDate newStartDate = calculateAutoStartDate(
-                        projectIdForCalc, assigneeId, depTaskIds, dependentTaskId);
+                // 비가용일 조회
+                Set<LocalDate> taskUnavailableDates = getUnavailableDates(assigneeId);
 
-                // 종료일 재계산 (capacity 반영)
+                // 시작일 재계산 (비가용일 반영)
+                LocalDate newStartDate = calculateAutoStartDate(
+                        projectIdForCalc, assigneeId, depTaskIds, dependentTaskId, taskUnavailableDates);
+
+                // 종료일 재계산 (capacity + 비가용일 반영)
                 LocalDate newEndDate = fullTask.getEndDate();
                 if (fullTask.getManDays() != null && fullTask.getManDays().compareTo(BigDecimal.ZERO) > 0) {
                     BigDecimal capacity = BigDecimal.ONE;
                     if (fullTask.getAssignee() != null && fullTask.getAssignee().getCapacity() != null) {
                         capacity = fullTask.getAssignee().getCapacity();
                     }
-                    newEndDate = businessDayCalculator.calculateEndDate(newStartDate, fullTask.getManDays(), capacity);
+                    newEndDate = businessDayCalculator.calculateEndDate(newStartDate, fullTask.getManDays(), capacity, taskUnavailableDates);
                 }
 
                 // 변경이 있을 때만 저장 (불필요한 UPDATE 방지)
@@ -700,6 +724,32 @@ public class TaskService {
                 queue.add(dependentTaskId);
             }
         }
+    }
+
+    // ---- 비가용일 조회 Private 메서드 ----
+
+    /**
+     * 비가용일 Set 조회 (공휴일 + 회사휴무 + 개인휴무)
+     * - 넓은 범위로 미리 조회하여 BusinessDayCalculator에 전달
+     */
+    private Set<LocalDate> getUnavailableDates(Long assigneeId) {
+        // 넓은 범위로 조회 (현재 날짜 기준 -1년 ~ +3년)
+        LocalDate rangeStart = LocalDate.now().minusYears(1);
+        LocalDate rangeEnd = LocalDate.now().plusYears(3);
+
+        Set<LocalDate> unavailableDates = new HashSet<>();
+
+        // 공휴일 + 회사휴무
+        Set<LocalDate> holidays = holidayService.getHolidayDatesBetween(rangeStart, rangeEnd);
+        unavailableDates.addAll(holidays);
+
+        // 개인휴무
+        if (assigneeId != null) {
+            Set<LocalDate> leaves = memberLeaveService.getMemberLeaveDatesBetween(assigneeId, rangeStart, rangeEnd);
+            unavailableDates.addAll(leaves);
+        }
+
+        return unavailableDates;
     }
 
     // ---- Other Private 메서드 ----

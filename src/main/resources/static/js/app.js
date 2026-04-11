@@ -1,6 +1,6 @@
 // ========================================
 // Timeline Application JavaScript
-// Version: 20260412a
+// Version: 20260412b
 // ========================================
 
 // ---- 전역 상태 ----
@@ -14,6 +14,9 @@ var currentModalProjectId = null; // 태스크 모달에서 사용 중인 프로
 var isFirstTask = true;          // 현재 모달의 태스크가 첫 번째 태스크인지
 var previewDebounceTimer = null; // 프리뷰 API 호출 디바운스 타이머
 var currentProjectMembers = [];  // 태스크 모달에서 사용 중인 프로젝트 멤버 목록 (capacity 조회용)
+var currentTeamBoardViewMode = 'assignee'; // Team Board 뷰 모드
+var currentTeamBoardData = null; // Team Board 원본 데이터 (뷰 모드 전환 시 재사용)
+var ganttDomainVisibility = {};  // 간트차트 도메인 시스템 표시/숨김 상태
 
 // ========================================
 // 유틸리티 함수
@@ -171,6 +174,9 @@ function showSection(sectionName, linkEl) {
         case 'team-board':
             loadTeamBoard();
             break;
+        case 'holidays':
+            loadHolidaysSection();
+            break;
     }
 }
 
@@ -216,6 +222,9 @@ async function loadDashboard() {
             }
         });
         document.getElementById('stat-tasks').textContent = totalTasks;
+
+        // 경고 요약 로드
+        loadDashboardWarnings();
 
         // 최근 프로젝트 목록
         var tbody = document.getElementById('dashboard-projects-table');
@@ -834,12 +843,38 @@ function renderGantt(data) {
     legendHtml += '<span class="legend-item"><span class="legend-color" style="background-color:#dc3545;opacity:0.4"></span>CANCELLED</span>';
     document.getElementById('gantt-legend').innerHTML = legendHtml;
 
+    // 도메인 시스템 접기/펼치기 체크박스 렌더링
+    var domainFilterEl = document.getElementById('gantt-domain-filter');
+    var domainCheckboxesEl = document.getElementById('gantt-domain-checkboxes');
+    if (data.domainSystems && data.domainSystems.length > 0) {
+        var cbHtml = '';
+        data.domainSystems.forEach(function(ds) {
+            var dsKey = 'ds-' + ds.name;
+            var checked = ganttDomainVisibility[dsKey] !== false ? 'checked' : '';
+            cbHtml += '<div class="form-check form-check-inline">';
+            cbHtml += '<input class="form-check-input gantt-domain-cb" type="checkbox" value="' + escapeHtml(ds.name) + '" id="gcb-' + escapeHtml(ds.name) + '" ' + checked + ' onchange="applyGanttDomainFilter()">';
+            cbHtml += '<label class="form-check-label" for="gcb-' + escapeHtml(ds.name) + '" style="font-size:0.8rem;">';
+            cbHtml += '<span class="color-preview" style="background-color:' + sanitizeColor(ds.color) + ';width:10px;height:10px;"></span>';
+            cbHtml += escapeHtml(ds.name);
+            cbHtml += '</label>';
+            cbHtml += '</div>';
+        });
+        domainCheckboxesEl.innerHTML = cbHtml;
+        domainFilterEl.style.display = '';
+    } else {
+        domainFilterEl.style.display = 'none';
+    }
+
     // frappe-gantt 데이터 변환
     var tasks = [];
     var hasTasks = false;
 
     if (data.domainSystems) {
         data.domainSystems.forEach(function(ds) {
+            // 도메인 시스템 필터 적용 (접기/펼치기)
+            var dsKey = 'ds-' + ds.name;
+            if (ganttDomainVisibility[dsKey] === false) return;
+
             if (ds.tasks && ds.tasks.length > 0) {
                 hasTasks = true;
                 ds.tasks.forEach(function(task) {
@@ -912,9 +947,201 @@ function renderGantt(data) {
                 onTaskDateChange(task, start, end);
             }
         });
+        // 오늘 날짜 수직선 및 마감선 삽입
+        setTimeout(function() {
+            addGanttTodayMarker();
+            addGanttDeadlineMarker(data.project);
+        }, 100);
     } catch (e) {
         console.error('간트차트 렌더링 실패:', e);
         chartContainer.innerHTML = '<div class="empty-state"><i class="bi bi-exclamation-triangle"></i><p>간트차트 렌더링에 실패했습니다.</p></div>';
+    }
+
+    // 간트차트 경고 로드
+    loadGanttWarnings(data.project.id);
+}
+
+/**
+ * 간트차트 오늘 날짜 수직선 삽입
+ */
+function addGanttTodayMarker() {
+    try {
+        var svg = document.querySelector('#gantt-chart svg');
+        if (!svg || !ganttInstance) return;
+
+        // 기존 마커 제거
+        var existing = svg.querySelectorAll('.gantt-today-marker-group');
+        existing.forEach(function(el) { el.remove(); });
+
+        // frappe-gantt에서 날짜 위치 계산
+        var todayStr = formatDateObj(new Date());
+        var todayEl = svg.querySelector('.today-highlight');
+        if (todayEl) {
+            // frappe-gantt에는 today-highlight 클래스로 오늘 열이 있을 수 있음
+            var rect = todayEl.getBoundingClientRect();
+            var svgRect = svg.getBoundingClientRect();
+            var x = rect.left - svgRect.left + rect.width / 2;
+            var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', 'gantt-today-marker-group');
+            var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', x);
+            line.setAttribute('x2', x);
+            line.setAttribute('y1', 0);
+            line.setAttribute('y2', svg.getAttribute('height') || '500');
+            line.setAttribute('class', 'gantt-today-marker');
+            g.appendChild(line);
+            svg.appendChild(g);
+        }
+    } catch (e) {
+        console.error('오늘 마커 삽입 실패:', e);
+    }
+}
+
+/**
+ * 간트차트 마감선 삽입
+ * - frappe-gantt 내부 grid column 너비를 역산하여 deadline 날짜의 x 좌표를 계산
+ * - 빨간색 수직선으로 표시
+ */
+function addGanttDeadlineMarker(project) {
+    try {
+        if (!project || !project.deadline) return;
+        var svg = document.querySelector('#gantt-chart svg');
+        if (!svg || !ganttInstance) return;
+
+        // 기존 마감선 마커 제거
+        var existing = svg.querySelectorAll('.gantt-deadline-marker-group');
+        existing.forEach(function(el) { el.remove(); });
+
+        // grid-header의 lower-text 요소들에서 날짜 텍스트를 파싱하여 x 좌표 계산
+        // lower-text 요소들은 각 column(날짜)에 대응되며 x 속성으로 위치를 가짐
+        var lowerTexts = svg.querySelectorAll('.lower-text');
+        if (lowerTexts.length < 2) return;
+
+        // column 너비 계산 (인접한 두 lower-text의 x 차이)
+        var x0 = parseFloat(lowerTexts[0].getAttribute('x'));
+        var x1 = parseFloat(lowerTexts[1].getAttribute('x'));
+        var colWidth = x1 - x0;
+        if (colWidth <= 0) return;
+
+        // 첫 번째 lower-text의 날짜를 기준으로 offset 계산
+        // frappe-gantt는 view_mode에 따라 lower-text에 일/주/월 숫자를 표시
+        // 정확한 날짜를 얻기 어려우므로, today-highlight 위치를 기준점으로 활용
+        var todayHighlight = svg.querySelector('.today-highlight');
+        if (!todayHighlight) return;
+
+        var todayX = parseFloat(todayHighlight.getAttribute('x'));
+        var todayWidth = parseFloat(todayHighlight.getAttribute('width'));
+        var todayCenterX = todayX + todayWidth / 2;
+
+        // 오늘과 deadline 사이의 날짜 차이 계산
+        var today = new Date();
+        today.setHours(0, 0, 0, 0);
+        var deadlineDate = new Date(project.deadline + 'T00:00:00');
+        var diffDays = Math.round((deadlineDate - today) / (1000 * 60 * 60 * 24));
+
+        // x 좌표 = 오늘 위치 + (일수 차이 * column 너비)
+        // column 너비는 view_mode에 따라 1일/1주/1월 단위
+        var dayPixels = colWidth; // Day 모드: 1 column = 1일
+        if (currentViewMode === 'Week') {
+            dayPixels = colWidth / 7;
+        } else if (currentViewMode === 'Month') {
+            dayPixels = colWidth / 30;
+        } else if (currentViewMode === 'Quarter Day') {
+            dayPixels = colWidth * 4;
+        } else if (currentViewMode === 'Half Day') {
+            dayPixels = colWidth * 2;
+        }
+
+        var deadlineX = todayCenterX + (diffDays * dayPixels);
+
+        // SVG 범위 확인
+        var svgWidth = parseFloat(svg.getAttribute('width') || svg.getBoundingClientRect().width);
+        if (deadlineX < 0 || deadlineX > svgWidth) return;
+
+        var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'gantt-deadline-marker-group');
+        var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', deadlineX);
+        line.setAttribute('x2', deadlineX);
+        line.setAttribute('y1', 0);
+        line.setAttribute('y2', svg.getAttribute('height') || '500');
+        line.setAttribute('class', 'gantt-deadline-marker');
+        g.appendChild(line);
+
+        // 마감선 라벨 추가
+        var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', deadlineX + 4);
+        text.setAttribute('y', 15);
+        text.setAttribute('class', 'gantt-deadline-label');
+        text.textContent = 'Deadline ' + project.deadline;
+        g.appendChild(text);
+
+        svg.appendChild(g);
+    } catch (e) {
+        console.error('마감선 마커 삽입 실패:', e);
+    }
+}
+
+/**
+ * 간트차트 도메인 시스템 필터 적용 (접기/펼치기)
+ */
+function applyGanttDomainFilter() {
+    var checkboxes = document.querySelectorAll('.gantt-domain-cb');
+    checkboxes.forEach(function(cb) {
+        var dsKey = 'ds-' + cb.value;
+        ganttDomainVisibility[dsKey] = cb.checked;
+    });
+    // 간트차트 재렌더링
+    if (currentGanttData) {
+        renderGantt(currentGanttData);
+    }
+}
+
+/**
+ * 간트차트 프로젝트 경고 로드
+ */
+async function loadGanttWarnings(projectId) {
+    var warningsEl = document.getElementById('gantt-warnings');
+    try {
+        var res = await apiCall('/api/v1/projects/' + projectId + '/warnings');
+        if (res.success && res.data && res.data.warnings && res.data.warnings.length > 0) {
+            var warnings = res.data.warnings;
+            var html = '<div class="card border-warning">';
+            html += '<div class="card-header bg-warning bg-opacity-10 py-2 px-3">';
+            html += '<strong><i class="bi bi-exclamation-triangle"></i> 경고 (' + warnings.length + '건)</strong>';
+            html += '</div>';
+            html += '<div class="card-body py-2 px-3">';
+            html += '<ul class="mb-0" style="font-size:0.8rem;">';
+            warnings.forEach(function(w) {
+                var icon = getWarningIcon(w.type);
+                html += '<li>' + icon + ' ' + escapeHtml(w.message) + '</li>';
+            });
+            html += '</ul>';
+            html += '</div></div>';
+            warningsEl.innerHTML = html;
+            warningsEl.style.display = '';
+        } else {
+            warningsEl.style.display = 'none';
+        }
+    } catch (e) {
+        warningsEl.style.display = 'none';
+    }
+}
+
+/**
+ * 경고 유형별 아이콘
+ */
+function getWarningIcon(type) {
+    switch (type) {
+        case 'UNORDERED_TASK': return '<i class="bi bi-sort-numeric-down text-warning"></i>';
+        case 'MISSING_START_DATE': return '<i class="bi bi-calendar-x text-danger"></i>';
+        case 'SCHEDULE_CONFLICT': return '<i class="bi bi-exclamation-triangle text-danger"></i>';
+        case 'DEPENDENCY_ISSUE': return '<i class="bi bi-link-45deg text-warning"></i>';
+        case 'DEADLINE_EXCEEDED': return '<i class="bi bi-alarm text-danger"></i>';
+        case 'ORPHAN_TASK': return '<i class="bi bi-person-x text-warning"></i>';
+        case 'DEPENDENCY_REMOVED': return '<i class="bi bi-trash text-secondary"></i>';
+        case 'UNAVAILABLE_DATE': return '<i class="bi bi-calendar-event text-info"></i>';
+        default: return '<i class="bi bi-info-circle text-secondary"></i>';
     }
 }
 
@@ -1571,17 +1798,28 @@ async function saveParsedTasks() {
  * Team Board 초기 로드
  */
 async function loadTeamBoard() {
-    // 프로젝트 필터 드롭다운 로드
+    // 프로젝트 + 멤버 드롭다운 병렬 로드
     try {
-        var res = await apiCall('/api/v1/projects');
-        var projects = (res.success && res.data) ? res.data : [];
-        var select = document.getElementById('tb-filter-project');
-        select.innerHTML = '<option value="">전체</option>';
+        var results = await Promise.all([
+            apiCall('/api/v1/projects'),
+            apiCall('/api/v1/members')
+        ]);
+        var projects = (results[0].success && results[0].data) ? results[0].data : [];
+        var members = (results[1].success && results[1].data) ? results[1].data : [];
+
+        var projectSelect = document.getElementById('tb-filter-project');
+        projectSelect.innerHTML = '<option value="">전체</option>';
         projects.forEach(function(p) {
-            select.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
+            projectSelect.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
+        });
+
+        var assigneeSelect = document.getElementById('tb-filter-assignee');
+        assigneeSelect.innerHTML = '<option value="">전체</option>';
+        members.forEach(function(m) {
+            assigneeSelect.innerHTML += '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.role + ')</option>';
         });
     } catch (e) {
-        console.error('Team Board 프로젝트 목록 로드 실패:', e);
+        console.error('Team Board 필터 드롭다운 로드 실패:', e);
     }
 
     // 데이터 로드
@@ -1596,12 +1834,22 @@ async function applyTeamBoardFilter() {
     var status = document.getElementById('tb-filter-status').value;
     var startDate = document.getElementById('tb-filter-start-date').value;
     var endDate = document.getElementById('tb-filter-end-date').value;
+    var assigneeId = document.getElementById('tb-filter-assignee').value;
+    var priority = document.getElementById('tb-filter-priority').value;
+    var type = document.getElementById('tb-filter-type').value;
+    var isDelayed = document.getElementById('tb-filter-delayed').checked;
+    var unordered = document.getElementById('tb-filter-unordered').checked;
 
     var params = [];
     if (projectId) params.push('projectId=' + encodeURIComponent(projectId));
     if (status) params.push('status=' + encodeURIComponent(status));
     if (startDate) params.push('startDate=' + encodeURIComponent(startDate));
     if (endDate) params.push('endDate=' + encodeURIComponent(endDate));
+    if (assigneeId) params.push('assigneeId=' + encodeURIComponent(assigneeId));
+    if (priority) params.push('priority=' + encodeURIComponent(priority));
+    if (type) params.push('type=' + encodeURIComponent(type));
+    if (isDelayed) params.push('isDelayed=true');
+    if (unordered) params.push('unordered=true');
 
     var url = '/api/v1/team-board/tasks';
     if (params.length > 0) {
@@ -1615,7 +1863,8 @@ async function applyTeamBoardFilter() {
     try {
         var res = await apiCall(url);
         if (res.success && res.data) {
-            renderTeamBoard(res.data);
+            currentTeamBoardData = res.data;
+            renderTeamBoardByViewMode(res.data);
         } else {
             showToast(res.message || 'Team Board 로드에 실패했습니다.', 'error');
             container.innerHTML = '<div class="empty-state"><i class="bi bi-exclamation-circle"></i><p>데이터를 불러오지 못했습니다.</p></div>';
@@ -1635,7 +1884,49 @@ function resetTeamBoardFilter() {
     document.getElementById('tb-filter-status').value = '';
     document.getElementById('tb-filter-start-date').value = '';
     document.getElementById('tb-filter-end-date').value = '';
+    document.getElementById('tb-filter-assignee').value = '';
+    document.getElementById('tb-filter-priority').value = '';
+    document.getElementById('tb-filter-type').value = '';
+    document.getElementById('tb-filter-delayed').checked = false;
+    document.getElementById('tb-filter-unordered').checked = false;
     applyTeamBoardFilter();
+}
+
+/**
+ * Team Board 뷰 모드 전환
+ */
+function changeTeamBoardViewMode(mode, btnEl) {
+    currentTeamBoardViewMode = mode;
+    // 버튼 활성화 표시
+    var buttons = document.querySelectorAll('#tb-view-mode-group .btn');
+    buttons.forEach(function(btn) {
+        btn.classList.remove('active');
+    });
+    if (btnEl) {
+        btnEl.classList.add('active');
+    }
+    // 데이터가 이미 있으면 재렌더링
+    if (currentTeamBoardData) {
+        renderTeamBoardByViewMode(currentTeamBoardData);
+    }
+}
+
+/**
+ * Team Board 뷰 모드에 따라 렌더링 분기
+ */
+function renderTeamBoardByViewMode(data) {
+    switch (currentTeamBoardViewMode) {
+        case 'project-assignee':
+            renderTeamBoardProjectAssignee(data);
+            break;
+        case 'assignee-project':
+            renderTeamBoardAssigneeProject(data);
+            break;
+        case 'assignee':
+        default:
+            renderTeamBoard(data);
+            break;
+    }
 }
 
 /**
@@ -1668,13 +1959,16 @@ function renderTeamBoard(data) {
             html += '<div class="table-responsive">';
             html += '<table class="table table-hover mb-0">';
             html += '<thead><tr>';
-            html += '<th>프로젝트</th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
+            html += '<th style="width:30px;"></th><th>프로젝트</th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
             html += '</tr></thead>';
-            html += '<tbody>';
+            html += '<tbody class="tb-sortable-group" data-assignee-id="' + member.id + '">';
             member.tasks.forEach(function(task) {
-                html += '<tr class="cursor-pointer" onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')">';
-                html += '<td><span class="text-muted">' + escapeHtml(task.projectName) + '</span></td>';
-                html += '<td><strong>' + escapeHtml(task.name) + '</strong></td>';
+                var dragHandle = (task.executionMode === 'SEQUENTIAL') ?
+                    '<i class="bi bi-grip-vertical drag-handle cursor-pointer" title="드래그하여 순서 변경"></i>' : '';
+                html += '<tr class="cursor-pointer" data-task-id="' + task.id + '" data-execution-mode="' + (task.executionMode || 'SEQUENTIAL') + '">';
+                html += '<td>' + dragHandle + '</td>';
+                html += '<td onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')"><span class="text-muted">' + escapeHtml(task.projectName) + '</span></td>';
+                html += '<td onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')"><strong>' + escapeHtml(task.name) + '</strong></td>';
                 html += '<td>' + priorityBadge(task.priority) + '</td>';
                 html += '<td>' + taskTypeBadge(task.type) + '</td>';
                 html += '<td>' + statusBadge(task.status) + '</td>';
@@ -1706,11 +2000,12 @@ function renderTeamBoard(data) {
         html += '<div class="table-responsive">';
         html += '<table class="table table-hover mb-0">';
         html += '<thead><tr>';
-        html += '<th>프로젝트</th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
+        html += '<th style="width:30px;"></th><th>프로젝트</th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th>';
         html += '</tr></thead>';
         html += '<tbody>';
         data.unassigned.forEach(function(task) {
             html += '<tr class="cursor-pointer" onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')">';
+            html += '<td></td>';
             html += '<td><span class="text-muted">' + escapeHtml(task.projectName) + '</span></td>';
             html += '<td><strong>' + escapeHtml(task.name) + '</strong></td>';
             html += '<td>' + priorityBadge(task.priority) + '</td>';
@@ -1731,6 +2026,9 @@ function renderTeamBoard(data) {
     }
 
     container.innerHTML = html;
+
+    // 드래그 & 드롭 초기화
+    initTeamBoardDragDrop();
 }
 
 /**
@@ -2143,6 +2441,558 @@ function initColorPicker() {
         colorInput.addEventListener('input', function() {
             document.getElementById('ds-color-label').textContent = this.value;
         });
+    }
+}
+
+// ========================================
+// Team Board 뷰 모드 2: 프로젝트 > 담당자 > 태스크
+// ========================================
+
+function renderTeamBoardProjectAssignee(data) {
+    var container = document.getElementById('team-board-content');
+    var allTasks = [];
+
+    // 모든 태스크를 플랫 리스트로 수집
+    if (data.members) {
+        data.members.forEach(function(member) {
+            member.tasks.forEach(function(task) {
+                task._assigneeName = member.name;
+                task._assigneeRole = member.role;
+                task._assigneeId = member.id;
+                allTasks.push(task);
+            });
+        });
+    }
+    if (data.unassigned) {
+        data.unassigned.forEach(function(task) {
+            task._assigneeName = '미지정';
+            task._assigneeRole = null;
+            task._assigneeId = null;
+            allTasks.push(task);
+        });
+    }
+
+    if (allTasks.length === 0) {
+        container.innerHTML = '<div class="empty-state"><i class="bi bi-kanban"></i><p>표시할 태스크가 없습니다.</p></div>';
+        return;
+    }
+
+    // 프로젝트별 그룹핑
+    var byProject = {};
+    allTasks.forEach(function(task) {
+        var key = task.projectId + '|' + task.projectName;
+        if (!byProject[key]) byProject[key] = [];
+        byProject[key].push(task);
+    });
+
+    var html = '';
+    Object.keys(byProject).forEach(function(key) {
+        var parts = key.split('|');
+        var projectName = parts[1];
+        var projectTasks = byProject[key];
+
+        html += '<div class="card mb-3">';
+        html += '<div class="card-header bg-primary bg-opacity-10">';
+        html += '<strong><i class="bi bi-folder"></i> ' + escapeHtml(projectName) + '</strong>';
+        html += ' <span class="badge bg-secondary">' + projectTasks.length + '개 태스크</span>';
+        html += '</div>';
+        html += '<div class="card-body p-0">';
+
+        // 프로젝트 내 담당자별 그룹핑
+        var byAssignee = {};
+        projectTasks.forEach(function(task) {
+            var aKey = (task._assigneeId || 'unassigned') + '|' + task._assigneeName;
+            if (!byAssignee[aKey]) byAssignee[aKey] = [];
+            byAssignee[aKey].push(task);
+        });
+
+        Object.keys(byAssignee).sort().forEach(function(aKey) {
+            var aParts = aKey.split('|');
+            var aName = aParts[1];
+            var aTasks = byAssignee[aKey];
+
+            html += '<div class="px-3 py-2 bg-light border-bottom"><strong>' + escapeHtml(aName) + '</strong>';
+            if (aTasks[0]._assigneeRole) html += ' ' + roleBadge(aTasks[0]._assigneeRole);
+            html += ' <span class="badge bg-secondary">' + aTasks.length + '</span>';
+            html += '</div>';
+            html += '<div class="table-responsive"><table class="table table-hover mb-0">';
+            html += '<thead><tr><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th></tr></thead>';
+            html += '<tbody>';
+            aTasks.forEach(function(task) {
+                html += '<tr class="cursor-pointer" onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')">';
+                html += '<td><strong>' + escapeHtml(task.name) + '</strong></td>';
+                html += '<td>' + priorityBadge(task.priority) + '</td>';
+                html += '<td>' + taskTypeBadge(task.type) + '</td>';
+                html += '<td>' + statusBadge(task.status) + '</td>';
+                html += '<td class="text-nowrap">' + formatDate(task.startDate) + ' ~ ' + formatDate(task.endDate) + '</td>';
+                html += '<td>' + (task.manDays != null ? task.manDays + ' MD' : '-') + '</td>';
+                html += '<td>';
+                if (task.domainSystemColor) html += '<span class="color-preview" style="background-color:' + sanitizeColor(task.domainSystemColor) + ';width:12px;height:12px;"></span>';
+                html += escapeHtml(task.domainSystemName || '-');
+                html += '</td></tr>';
+            });
+            html += '</tbody></table></div>';
+        });
+
+        html += '</div></div>';
+    });
+
+    container.innerHTML = html;
+}
+
+// ========================================
+// Team Board 뷰 모드 3: 담당자 > 프로젝트 > 태스크
+// ========================================
+
+function renderTeamBoardAssigneeProject(data) {
+    var container = document.getElementById('team-board-content');
+    var hasMembers = data.members && data.members.length > 0;
+    var hasUnassigned = data.unassigned && data.unassigned.length > 0;
+
+    if (!hasMembers && !hasUnassigned) {
+        container.innerHTML = '<div class="empty-state"><i class="bi bi-kanban"></i><p>표시할 태스크가 없습니다.</p></div>';
+        return;
+    }
+
+    var html = '';
+
+    // 멤버별 카드 (프로젝트 내 그룹핑)
+    if (hasMembers) {
+        data.members.forEach(function(member) {
+            html += '<div class="card mb-3">';
+            html += '<div class="card-header d-flex justify-content-between align-items-center">';
+            html += '<div><strong>' + escapeHtml(member.name) + '</strong> ' + roleBadge(member.role) + '</div>';
+            html += '<span class="badge bg-secondary">' + member.tasks.length + '개 태스크</span>';
+            html += '</div>';
+            html += '<div class="card-body p-0">';
+
+            // 프로젝트별 그룹핑
+            var byProject = {};
+            member.tasks.forEach(function(task) {
+                var key = task.projectId + '|' + task.projectName;
+                if (!byProject[key]) byProject[key] = [];
+                byProject[key].push(task);
+            });
+
+            Object.keys(byProject).forEach(function(pKey) {
+                var pParts = pKey.split('|');
+                var pName = pParts[1];
+                var pTasks = byProject[pKey];
+
+                html += '<div class="px-3 py-2 bg-light border-bottom">';
+                html += '<i class="bi bi-folder"></i> <strong>' + escapeHtml(pName) + '</strong>';
+                html += ' <span class="badge bg-secondary">' + pTasks.length + '</span>';
+                html += '</div>';
+
+                // 드래그 & 드롭 가능한 태스크 목록 (SEQUENTIAL만)
+                html += '<div class="table-responsive"><table class="table table-hover mb-0">';
+                html += '<thead><tr><th style="width:30px;"></th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th><th>도메인 시스템</th></tr></thead>';
+                html += '<tbody class="tb-sortable-group" data-assignee-id="' + member.id + '">';
+                pTasks.forEach(function(task) {
+                    var dragHandle = (task.executionMode === 'SEQUENTIAL') ?
+                        '<i class="bi bi-grip-vertical drag-handle cursor-pointer" title="드래그하여 순서 변경"></i>' : '';
+                    html += '<tr class="cursor-pointer" data-task-id="' + task.id + '" data-execution-mode="' + (task.executionMode || 'SEQUENTIAL') + '">';
+                    html += '<td>' + dragHandle + '</td>';
+                    html += '<td onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')"><strong>' + escapeHtml(task.name) + '</strong></td>';
+                    html += '<td>' + priorityBadge(task.priority) + '</td>';
+                    html += '<td>' + taskTypeBadge(task.type) + '</td>';
+                    html += '<td>' + statusBadge(task.status) + '</td>';
+                    html += '<td class="text-nowrap">' + formatDate(task.startDate) + ' ~ ' + formatDate(task.endDate) + '</td>';
+                    html += '<td>' + (task.manDays != null ? task.manDays + ' MD' : '-') + '</td>';
+                    html += '<td>';
+                    if (task.domainSystemColor) html += '<span class="color-preview" style="background-color:' + sanitizeColor(task.domainSystemColor) + ';width:12px;height:12px;"></span>';
+                    html += escapeHtml(task.domainSystemName || '-');
+                    html += '</td></tr>';
+                });
+                html += '</tbody></table></div>';
+            });
+
+            html += '</div></div>';
+        });
+    }
+
+    // 미지정 태스크
+    if (hasUnassigned) {
+        html += '<div class="card mb-3">';
+        html += '<div class="card-header d-flex justify-content-between align-items-center">';
+        html += '<div><strong><i class="bi bi-person-dash"></i> 담당자 미지정</strong></div>';
+        html += '<span class="badge bg-warning text-dark">' + data.unassigned.length + '개 태스크</span>';
+        html += '</div>';
+        html += '<div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0">';
+        html += '<thead><tr><th style="width:30px;"></th><th>프로젝트</th><th>태스크명</th><th>우선순위</th><th>유형</th><th>상태</th><th>기간</th><th>공수</th></tr></thead>';
+        html += '<tbody>';
+        data.unassigned.forEach(function(task) {
+            html += '<tr class="cursor-pointer" onclick="showTeamBoardTaskDetail(' + task.id + ', ' + task.projectId + ')">';
+            html += '<td></td>';
+            html += '<td><span class="text-muted">' + escapeHtml(task.projectName) + '</span></td>';
+            html += '<td><strong>' + escapeHtml(task.name) + '</strong></td>';
+            html += '<td>' + priorityBadge(task.priority) + '</td>';
+            html += '<td>' + taskTypeBadge(task.type) + '</td>';
+            html += '<td>' + statusBadge(task.status) + '</td>';
+            html += '<td class="text-nowrap">' + formatDate(task.startDate) + ' ~ ' + formatDate(task.endDate) + '</td>';
+            html += '<td>' + (task.manDays != null ? task.manDays + ' MD' : '-') + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table></div></div></div>';
+    }
+
+    container.innerHTML = html;
+
+    // 드래그 & 드롭 초기화 (SortableJS)
+    initTeamBoardDragDrop();
+}
+
+// ========================================
+// Drag & Drop 담당자 큐 (SortableJS)
+// ========================================
+
+/**
+ * Team Board 드래그 & 드롭 초기화
+ * - SEQUENTIAL 태스크만 드래그 가능
+ * - 순서 변경 후 PATCH /api/v1/tasks/assignee-order 호출
+ */
+function initTeamBoardDragDrop() {
+    if (typeof Sortable === 'undefined') return;
+
+    var sortableGroups = document.querySelectorAll('.tb-sortable-group');
+    sortableGroups.forEach(function(tbody) {
+        var assigneeId = tbody.getAttribute('data-assignee-id');
+        if (!assigneeId) return;
+
+        new Sortable(tbody, {
+            handle: '.drag-handle',
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            chosenClass: 'sortable-chosen',
+            filter: function(evt, el) {
+                // PARALLEL 태스크는 드래그 불가
+                return el.getAttribute('data-execution-mode') === 'PARALLEL';
+            },
+            onEnd: function(evt) {
+                // 드래그 완료 시 순서 변경 API 호출
+                var rows = tbody.querySelectorAll('tr[data-task-id]');
+                var taskIds = [];
+                rows.forEach(function(row) {
+                    if (row.getAttribute('data-execution-mode') === 'SEQUENTIAL') {
+                        taskIds.push(parseInt(row.getAttribute('data-task-id')));
+                    }
+                });
+
+                if (taskIds.length > 0) {
+                    reorderAssigneeTasks(parseInt(assigneeId), taskIds);
+                }
+            }
+        });
+    });
+}
+
+/**
+ * 담당자 태스크 순서 변경 API 호출
+ */
+async function reorderAssigneeTasks(assigneeId, taskIds) {
+    try {
+        var res = await apiCall('/api/v1/tasks/assignee-order', 'PATCH', {
+            assigneeId: assigneeId,
+            taskIds: taskIds
+        });
+
+        if (res.success) {
+            showToast('태스크 순서가 변경되었습니다. 날짜가 재계산됩니다.', 'success');
+            // 데이터 새로고침
+            await applyTeamBoardFilter();
+        } else {
+            showToast(res.message || '순서 변경에 실패했습니다.', 'error');
+            await applyTeamBoardFilter();
+        }
+    } catch (e) {
+        console.error('태스크 순서 변경 실패:', e);
+        showToast('태스크 순서 변경에 실패했습니다.', 'error');
+        await applyTeamBoardFilter();
+    }
+}
+
+// ========================================
+// Dashboard 경고 요약
+// ========================================
+
+async function loadDashboardWarnings() {
+    try {
+        var res = await apiCall('/api/v1/warnings/summary');
+        if (res.success && res.data) {
+            var data = res.data;
+            var card = document.getElementById('dashboard-warnings-card');
+            var totalEl = document.getElementById('dashboard-warning-total');
+            var contentEl = document.getElementById('dashboard-warnings-content');
+
+            if (data.totalWarnings > 0) {
+                totalEl.textContent = data.totalWarnings;
+                var html = '<div class="row g-2">';
+                var items = [
+                    { label: '순서 미지정', count: data.unorderedCount, icon: 'bi-sort-numeric-down', color: 'warning' },
+                    { label: '시작일 누락', count: data.missingStartDateCount, icon: 'bi-calendar-x', color: 'danger' },
+                    { label: '일정 충돌', count: data.scheduleConflictCount, icon: 'bi-exclamation-triangle', color: 'danger' },
+                    { label: '의존성 문제', count: data.dependencyIssueCount, icon: 'bi-link-45deg', color: 'warning' },
+                    { label: '마감 지연', count: data.deadlineExceededCount, icon: 'bi-alarm', color: 'danger' },
+                    { label: '담당자 미지정', count: data.orphanTaskCount, icon: 'bi-person-x', color: 'warning' },
+                    { label: '의존성 비활성', count: data.dependencyRemovedCount, icon: 'bi-trash', color: 'secondary' },
+                    { label: '비가용일 충돌', count: data.unavailableDateCount, icon: 'bi-calendar-event', color: 'info' }
+                ];
+                items.forEach(function(item) {
+                    if (item.count > 0) {
+                        html += '<div class="col-md-3">';
+                        html += '<div class="d-flex align-items-center gap-2 p-2 border rounded">';
+                        html += '<i class="bi ' + item.icon + ' text-' + item.color + '"></i>';
+                        html += '<span style="font-size:0.85rem;">' + item.label + '</span>';
+                        html += '<span class="badge bg-' + item.color + ' ms-auto">' + item.count + '</span>';
+                        html += '</div></div>';
+                    }
+                });
+                html += '</div>';
+                contentEl.innerHTML = html;
+                card.style.display = '';
+            } else {
+                card.style.display = 'none';
+            }
+        }
+    } catch (e) {
+        console.error('경고 요약 로드 실패:', e);
+    }
+}
+
+// ========================================
+// Holidays (공휴일/회사휴무) 관리
+// ========================================
+
+/**
+ * 비가용일 섹션 초기 로드
+ */
+async function loadHolidaysSection() {
+    // 연도 필터 초기화
+    var yearSelect = document.getElementById('holiday-filter-year');
+    var currentYear = new Date().getFullYear();
+    yearSelect.innerHTML = '';
+    for (var y = currentYear - 1; y <= currentYear + 2; y++) {
+        var selected = (y === currentYear) ? 'selected' : '';
+        yearSelect.innerHTML += '<option value="' + y + '" ' + selected + '>' + y + '년</option>';
+    }
+
+    // 멤버 드롭다운 로드
+    try {
+        var res = await apiCall('/api/v1/members');
+        var members = (res.success && res.data) ? res.data : [];
+        var select = document.getElementById('leave-member-select');
+        select.innerHTML = '<option value="">멤버를 선택하세요</option>';
+        members.forEach(function(m) {
+            select.innerHTML += '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.role + ')</option>';
+        });
+    } catch (e) {
+        console.error('멤버 목록 로드 실패:', e);
+    }
+
+    await loadHolidays();
+}
+
+/**
+ * 공휴일/회사휴무 목록 조회
+ */
+async function loadHolidays() {
+    var year = document.getElementById('holiday-filter-year').value;
+    var tbody = document.getElementById('holidays-table');
+
+    try {
+        var url = '/api/v1/holidays';
+        if (year) url += '?year=' + year;
+        var res = await apiCall(url);
+        var holidays = (res.success && res.data) ? res.data : [];
+
+        if (holidays.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">등록된 공휴일/회사휴무가 없습니다.</td></tr>';
+            return;
+        }
+
+        var html = '';
+        holidays.forEach(function(h) {
+            var typeLabel = h.type === 'NATIONAL' ? '<span class="badge bg-primary">국가공휴일</span>' : '<span class="badge bg-info">회사휴무</span>';
+            html += '<tr>';
+            html += '<td>' + formatDate(h.date) + '</td>';
+            html += '<td>' + escapeHtml(h.name) + '</td>';
+            html += '<td>' + typeLabel + '</td>';
+            html += '<td class="text-center">';
+            html += '<button class="btn btn-outline-danger btn-sm" onclick="deleteHoliday(' + h.id + ')" title="삭제"><i class="bi bi-trash"></i></button>';
+            html += '</td>';
+            html += '</tr>';
+        });
+        tbody.innerHTML = html;
+    } catch (e) {
+        console.error('공휴일 목록 로드 실패:', e);
+        showToast('공휴일 목록을 불러오는데 실패했습니다.', 'error');
+    }
+}
+
+/**
+ * 공휴일/회사휴무 추가 모달 표시
+ */
+function showHolidayModal() {
+    document.getElementById('holiday-date').value = '';
+    document.getElementById('holiday-name').value = '';
+    document.getElementById('holiday-type').value = 'NATIONAL';
+    var modal = new bootstrap.Modal(document.getElementById('holidayModal'));
+    modal.show();
+}
+
+/**
+ * 공휴일/회사휴무 저장
+ */
+async function saveHoliday() {
+    var date = document.getElementById('holiday-date').value;
+    var name = document.getElementById('holiday-name').value.trim();
+    var type = document.getElementById('holiday-type').value;
+
+    if (!date || !name) {
+        showToast('날짜와 이름을 입력해주세요.', 'warning');
+        return;
+    }
+
+    try {
+        var res = await apiCall('/api/v1/holidays', 'POST', { date: date, name: name, type: type });
+        if (res.success) {
+            showToast('공휴일/회사휴무가 추가되었습니다.', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('holidayModal')).hide();
+            loadHolidays();
+        } else {
+            showToast(res.message || '저장에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        console.error('공휴일 저장 실패:', e);
+        showToast('공휴일 저장에 실패했습니다.', 'error');
+    }
+}
+
+/**
+ * 공휴일/회사휴무 삭제
+ */
+async function deleteHoliday(id) {
+    if (!confirmAction('이 공휴일/회사휴무를 삭제하시겠습니까?')) return;
+
+    try {
+        var res = await apiCall('/api/v1/holidays/' + id, 'DELETE');
+        if (res.success) {
+            showToast('삭제되었습니다.', 'success');
+            loadHolidays();
+        } else {
+            showToast(res.message || '삭제에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        console.error('공휴일 삭제 실패:', e);
+        showToast('삭제에 실패했습니다.', 'error');
+    }
+}
+
+// ========================================
+// Member Leave (개인 휴무) 관리
+// ========================================
+
+/**
+ * 개인 휴무 목록 조회
+ */
+async function loadMemberLeaves() {
+    var memberId = document.getElementById('leave-member-select').value;
+    var tbody = document.getElementById('member-leaves-table');
+    var addBtn = document.getElementById('add-leave-btn');
+
+    if (!memberId) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">멤버를 선택해주세요.</td></tr>';
+        addBtn.disabled = true;
+        return;
+    }
+
+    addBtn.disabled = false;
+
+    try {
+        var res = await apiCall('/api/v1/members/' + memberId + '/leaves');
+        var leaves = (res.success && res.data) ? res.data : [];
+
+        if (leaves.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">등록된 개인 휴무가 없습니다.</td></tr>';
+            return;
+        }
+
+        var html = '';
+        leaves.forEach(function(l) {
+            html += '<tr>';
+            html += '<td>' + formatDate(l.date) + '</td>';
+            html += '<td>' + escapeHtml(l.reason || '-') + '</td>';
+            html += '<td class="text-center">';
+            html += '<button class="btn btn-outline-danger btn-sm" onclick="deleteMemberLeave(' + memberId + ', ' + l.id + ')" title="삭제"><i class="bi bi-trash"></i></button>';
+            html += '</td>';
+            html += '</tr>';
+        });
+        tbody.innerHTML = html;
+    } catch (e) {
+        console.error('개인 휴무 목록 로드 실패:', e);
+        showToast('개인 휴무 목록을 불러오는데 실패했습니다.', 'error');
+    }
+}
+
+/**
+ * 개인 휴무 추가 모달 표시
+ */
+function showMemberLeaveModal() {
+    document.getElementById('leave-date').value = '';
+    document.getElementById('leave-reason').value = '';
+    var modal = new bootstrap.Modal(document.getElementById('memberLeaveModal'));
+    modal.show();
+}
+
+/**
+ * 개인 휴무 저장
+ */
+async function saveMemberLeave() {
+    var memberId = document.getElementById('leave-member-select').value;
+    var date = document.getElementById('leave-date').value;
+    var reason = document.getElementById('leave-reason').value.trim();
+
+    if (!memberId) {
+        showToast('멤버를 선택해주세요.', 'warning');
+        return;
+    }
+    if (!date) {
+        showToast('날짜를 입력해주세요.', 'warning');
+        return;
+    }
+
+    try {
+        var res = await apiCall('/api/v1/members/' + memberId + '/leaves', 'POST', { date: date, reason: reason });
+        if (res.success) {
+            showToast('개인 휴무가 추가되었습니다.', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('memberLeaveModal')).hide();
+            loadMemberLeaves();
+        } else {
+            showToast(res.message || '저장에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        console.error('개인 휴무 저장 실패:', e);
+        showToast('개인 휴무 저장에 실패했습니다.', 'error');
+    }
+}
+
+/**
+ * 개인 휴무 삭제
+ */
+async function deleteMemberLeave(memberId, leaveId) {
+    if (!confirmAction('이 개인 휴무를 삭제하시겠습니까?')) return;
+
+    try {
+        var res = await apiCall('/api/v1/members/' + memberId + '/leaves/' + leaveId, 'DELETE');
+        if (res.success) {
+            showToast('삭제되었습니다.', 'success');
+            loadMemberLeaves();
+        } else {
+            showToast(res.message || '삭제에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        console.error('개인 휴무 삭제 실패:', e);
+        showToast('삭제에 실패했습니다.', 'error');
     }
 }
 

@@ -1,6 +1,8 @@
 package com.timeline.controller;
 
+import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
+import com.timeline.domain.enums.TaskType;
 import com.timeline.dto.TeamBoardDto;
 import com.timeline.service.TeamBoardService;
 import lombok.RequiredArgsConstructor;
@@ -26,17 +28,24 @@ public class TeamBoardController {
 
     /**
      * 팀 보드 태스크 조회
-     * - 필터: status, projectId, startDate, endDate
+     * - 필터: status, projectId, startDate, endDate, assigneeId, priority, type, unordered, isDelayed
      */
     @GetMapping("/tasks")
     public ResponseEntity<?> getTeamBoardTasks(
             @RequestParam(required = false) TaskStatus status,
             @RequestParam(required = false) Long projectId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long assigneeId,
+            @RequestParam(required = false) TaskPriority priority,
+            @RequestParam(required = false) TaskType type,
+            @RequestParam(required = false) Boolean unordered,
+            @RequestParam(required = false) Boolean isDelayed) {
 
-        log.debug("Team Board 조회 - status={}, projectId={}, startDate={}, endDate={}", status, projectId, startDate, endDate);
-        TeamBoardDto.Response response = teamBoardService.getTeamBoard(status, projectId, startDate, endDate);
+        log.debug("Team Board 조회 - status={}, projectId={}, startDate={}, endDate={}, assigneeId={}, priority={}, type={}, unordered={}, isDelayed={}",
+                status, projectId, startDate, endDate, assigneeId, priority, type, unordered, isDelayed);
+        TeamBoardDto.Response response = teamBoardService.getTeamBoard(status, projectId, startDate, endDate,
+                assigneeId, priority, type, unordered, isDelayed);
 
         return ResponseEntity.ok(Map.of(
                 "success", true,

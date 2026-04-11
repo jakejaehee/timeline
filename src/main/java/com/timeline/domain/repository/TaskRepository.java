@@ -2,7 +2,9 @@ package com.timeline.domain.repository;
 
 import com.timeline.domain.entity.Task;
 import com.timeline.domain.enums.TaskExecutionMode;
+import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
+import com.timeline.domain.enums.TaskType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -76,7 +78,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     /**
      * 전체 태스크 조회 (팀 보드용) - 필터 조건 적용
      * - project, domainSystem, assignee JOIN FETCH
-     * - 동적 필터: status, projectId, startDate/endDate 범위
+     * - 동적 필터: status, projectId, startDate/endDate 범위, assigneeId, priority, type, unordered, isDelayed
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
@@ -86,12 +88,31 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             "AND (:projectId IS NULL OR t.project.id = :projectId) " +
             "AND (:startDate IS NULL OR t.endDate >= :startDate) " +
             "AND (:endDate IS NULL OR t.startDate <= :endDate) " +
+            "AND (:assigneeId IS NULL OR t.assignee.id = :assigneeId) " +
+            "AND (:priority IS NULL OR t.priority = :priority) " +
+            "AND (:type IS NULL OR t.type = :type) " +
+            "AND (:unordered IS NULL OR :unordered = false OR t.assigneeOrder IS NULL) " +
+            "AND (:isDelayed IS NULL OR :isDelayed = false OR (t.endDate < CURRENT_DATE AND t.status <> com.timeline.domain.enums.TaskStatus.COMPLETED)) " +
             "ORDER BY t.startDate ASC")
     List<Task> findAllForTeamBoard(
             @Param("status") TaskStatus status,
             @Param("projectId") Long projectId,
             @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate);
+            @Param("endDate") LocalDate endDate,
+            @Param("assigneeId") Long assigneeId,
+            @Param("priority") TaskPriority priority,
+            @Param("type") TaskType type,
+            @Param("unordered") Boolean unordered,
+            @Param("isDelayed") Boolean isDelayed);
+
+    /**
+     * 전체 태스크 조회 (팀 보드용) - 기존 하위호환 메서드
+     */
+    default List<Task> findAllForTeamBoard(TaskStatus status, Long projectId,
+                                            LocalDate startDate, LocalDate endDate) {
+        return findAllForTeamBoard(status, projectId, startDate, endDate,
+                null, null, null, null, null);
+    }
 
     /**
      * 동일 프로젝트 + 담당자의 SEQUENTIAL 태스크 중 종료일이 가장 늦은 것부터 조회

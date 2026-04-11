@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -284,5 +285,123 @@ class BusinessDayCalculatorTest {
     @DisplayName("null MD는 fractional이 아니다")
     void isFractionalMd_null_returnsFalse() {
         assertThat(calculator.isFractionalMd(null)).isFalse();
+    }
+
+    // ---- Phase 2: isBusinessDay with unavailableDates ----
+
+    @Test
+    @DisplayName("비가용일에 해당하는 평일은 영업일이 아니다")
+    void isBusinessDay_unavailableDate_returnsFalse() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        Set<LocalDate> unavailable = Set.of(monday);
+        assertThat(calculator.isBusinessDay(monday, unavailable)).isFalse();
+    }
+
+    @Test
+    @DisplayName("비가용일이 아닌 평일은 영업일이다")
+    void isBusinessDay_notUnavailableDate_returnsTrue() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        LocalDate tuesday = LocalDate.of(2026, 4, 14);
+        Set<LocalDate> unavailable = Set.of(monday);
+        assertThat(calculator.isBusinessDay(tuesday, unavailable)).isTrue();
+    }
+
+    @Test
+    @DisplayName("비가용일 Set이 null이면 기본 동작 (주말만 제외)")
+    void isBusinessDay_nullUnavailable_defaultBehavior() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        assertThat(calculator.isBusinessDay(monday, null)).isTrue();
+    }
+
+    // ---- Phase 2: ensureBusinessDay with unavailableDates ----
+
+    @Test
+    @DisplayName("비가용일인 평일은 다음 영업일로 보정 (비가용일 반영)")
+    void ensureBusinessDay_unavailableWeekday_skips() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        Set<LocalDate> unavailable = Set.of(monday);
+        // 월요일이 비가용일이면 화요일 반환
+        LocalDate expected = LocalDate.of(2026, 4, 14);
+        assertThat(calculator.ensureBusinessDay(monday, unavailable)).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("연속 비가용일은 모두 건너뜀")
+    void ensureBusinessDay_consecutiveUnavailable_skipsAll() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        LocalDate tuesday = LocalDate.of(2026, 4, 14);
+        Set<LocalDate> unavailable = Set.of(monday, tuesday);
+        // 월, 화 모두 비가용일이면 수요일 반환
+        LocalDate expected = LocalDate.of(2026, 4, 15);
+        assertThat(calculator.ensureBusinessDay(monday, unavailable)).isEqualTo(expected);
+    }
+
+    // ---- Phase 2: getNextBusinessDay with unavailableDates ----
+
+    @Test
+    @DisplayName("다음 영업일이 비가용일이면 그 다음 영업일 반환")
+    void getNextBusinessDay_unavailableNext_skips() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        LocalDate tuesday = LocalDate.of(2026, 4, 14);
+        Set<LocalDate> unavailable = Set.of(tuesday);
+        // 월요일 다음 영업일이 화요일인데 비가용이면 수요일
+        LocalDate expected = LocalDate.of(2026, 4, 15);
+        assertThat(calculator.getNextBusinessDay(monday, unavailable)).isEqualTo(expected);
+    }
+
+    // ---- Phase 2: calculateEndDate with unavailableDates ----
+
+    @Test
+    @DisplayName("비가용일이 기간 중에 있으면 건너뜀 (3MD, 수요일 비가용)")
+    void calculateEndDate_withUnavailable_skipsDay() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        // 월(1), 화(2), 수(비가용-skip), 목(3)
+        Set<LocalDate> unavailable = Set.of(LocalDate.of(2026, 4, 15)); // 수요일
+        LocalDate expected = LocalDate.of(2026, 4, 16); // 목요일
+        LocalDate result = calculator.calculateEndDate(monday, new BigDecimal("3"), BigDecimal.ONE, unavailable);
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("시작일이 비가용일이면 다음 영업일부터 시작")
+    void calculateEndDate_startDateUnavailable_adjustsStart() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        Set<LocalDate> unavailable = Set.of(monday);
+        // 시작일 보정: 월(비가용) -> 화(1) = 1MD
+        LocalDate expected = LocalDate.of(2026, 4, 14); // 화요일
+        LocalDate result = calculator.calculateEndDate(monday, BigDecimal.ONE, BigDecimal.ONE, unavailable);
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("비가용일 + capacity 결합 테스트")
+    void calculateEndDate_unavailableAndCapacity() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        // capacity 0.5 + 1MD = ceil(1/0.5) = 2영업일
+        // 월(1), 화(비가용-skip), 수(2)
+        Set<LocalDate> unavailable = Set.of(LocalDate.of(2026, 4, 14)); // 화요일
+        LocalDate expected = LocalDate.of(2026, 4, 15); // 수요일
+        LocalDate result = calculator.calculateEndDate(monday, BigDecimal.ONE, new BigDecimal("0.5"), unavailable);
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("비가용일이 null이면 기존과 동일 (주말만 제외)")
+    void calculateEndDate_nullUnavailable_defaultBehavior() {
+        LocalDate monday = LocalDate.of(2026, 4, 13);
+        LocalDate result = calculator.calculateEndDate(monday, new BigDecimal("3"), BigDecimal.ONE, null);
+        LocalDate expected = LocalDate.of(2026, 4, 15); // 수요일
+        assertThat(result).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("비가용일 + 주말 결합: 금요일이 비가용이면 건너뛰고 주말도 건너뜀")
+    void calculateEndDate_unavailableFriday_crossWeekend() {
+        LocalDate thursday = LocalDate.of(2026, 4, 16);
+        // 목(1), 금(비가용-skip), [토일 skip], 월(2), 화(3)
+        Set<LocalDate> unavailable = Set.of(LocalDate.of(2026, 4, 17)); // 금요일
+        LocalDate expected = LocalDate.of(2026, 4, 21); // 화요일
+        LocalDate result = calculator.calculateEndDate(thursday, new BigDecimal("3"), BigDecimal.ONE, unavailable);
+        assertThat(result).isEqualTo(expected);
     }
 }

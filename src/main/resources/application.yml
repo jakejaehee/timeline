@@ -36,6 +36,17 @@ spring:
     locations: classpath:db/migration
     validate-on-migrate: true
 
+  # Multipart (Import 파일 업로드 제한)
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  # Jackson
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
   # Cache
   cache:
     type: caffeine

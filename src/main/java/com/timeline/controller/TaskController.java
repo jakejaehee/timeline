@@ -148,6 +148,10 @@ public class TaskController {
                 : List.of();
 
         assigneeOrderService.reorderTasks(assigneeId, taskIds);
+
+        // 큐 날짜 연쇄 재계산 (담당자의 queueStartDate 기반)
+        taskService.recalculateQueueDates(assigneeId);
+
         return ResponseEntity.ok(Map.of(
                 "success", true
         ));
@@ -155,9 +159,12 @@ public class TaskController {
 
     /**
      * 담당자별 정렬된 SEQUENTIAL 태스크 목록 조회
+     * 큐 순서 기반으로 날짜를 재계산한 후 반환한다.
+     * NOTE: GET이지만 recalculateQueueDates로 DB 갱신이 발생함 (최신 날짜 보장 목적)
      */
     @GetMapping("/api/v1/members/{assigneeId}/ordered-tasks")
     public ResponseEntity<?> getOrderedTasks(@PathVariable Long assigneeId) {
+        taskService.recalculateQueueDates(assigneeId);
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "data", assigneeOrderService.getOrderedTasksByAssignee(assigneeId)

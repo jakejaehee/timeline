@@ -96,15 +96,14 @@ public class WarningService {
                 }
             }
 
-            // 8. UNAVAILABLE_DATE: 비가용일 충돌 (태스크 기간 중 비가용일 포함)
-            if (!isInactive && task.getStartDate() != null && task.getEndDate() != null) {
+            // 8. UNAVAILABLE_DATE: 비가용일 충돌 (가용 영업일 < 공수인 경우만 경고)
+            if (!isInactive && task.getStartDate() != null && task.getEndDate() != null
+                    && task.getManDays() != null && task.getManDays().signum() > 0) {
                 Set<LocalDate> memberLeaves = new HashSet<>();
                 if (task.getAssignee() != null) {
                     Long assigneeId = task.getAssignee().getId();
-                    // 캐시에서 조회, 없으면 넓은 범위로 한 번만 조회
                     Set<LocalDate> allMemberLeaves = memberLeavesCache.computeIfAbsent(assigneeId,
                             id -> memberLeaveService.getMemberLeaveDatesBetween(id, rangeStart, rangeEnd));
-                    // 태스크 기간에 해당하는 개인 휴무만 필터링
                     for (LocalDate ld : allMemberLeaves) {
                         if (!ld.isBefore(task.getStartDate()) && !ld.isAfter(task.getEndDate())) {
                             memberLeaves.add(ld);
@@ -112,7 +111,6 @@ public class WarningService {
                     }
                 }
                 Set<LocalDate> taskUnavailable = new HashSet<>();
-                // 공휴일/회사휴무 중 태스크 기간과 겹치는 날짜만 추가
                 for (LocalDate hd : holidayDates) {
                     if (!hd.isBefore(task.getStartDate()) && !hd.isAfter(task.getEndDate())) {
                         taskUnavailable.add(hd);
@@ -120,15 +118,29 @@ public class WarningService {
                 }
                 taskUnavailable.addAll(memberLeaves);
 
-                // 태스크 기간 내 비가용일 확인 (주말은 정상이므로 평일인 비가용일만 체크)
+                // 태스크 기간 내 가용 영업일 수 계산
+                int availableBusinessDays = 0;
+                int unavailableCount = 0;
                 LocalDate d = task.getStartDate();
                 while (!d.isAfter(task.getEndDate())) {
-                    if (businessDayCalculator.isBusinessDay(d) && taskUnavailable.contains(d)) {
-                        warnings.add(buildWarning(WarningType.UNAVAILABLE_DATE, task, project,
-                                "비가용일 충돌: '" + task.getName() + "' 태스크 기간 중 " + d + "이(가) 비가용일입니다."));
-                        break; // 한 태스크에 하나의 경고만
+                    if (businessDayCalculator.isBusinessDay(d)) {
+                        if (taskUnavailable.contains(d)) {
+                            unavailableCount++;
+                        } else {
+                            availableBusinessDays++;
+                        }
                     }
                     d = d.plusDays(1);
+                }
+
+                // 가용 영업일이 공수(MD)보다 적을 때만 경고
+                if (unavailableCount > 0 && availableBusinessDays < task.getManDays().intValue()) {
+                    String assigneeName = task.getAssignee() != null ? task.getAssignee().getName() : "미지정";
+                    warnings.add(buildWarning(WarningType.UNAVAILABLE_DATE, task, project,
+                            "'" + task.getName() + "' (" + task.getStartDate() + " ~ " + task.getEndDate()
+                                    + ") — " + assigneeName + ", 비가용일 " + unavailableCount
+                                    + "일, 가용일 " + availableBusinessDays + "일 < 공수 "
+                                    + task.getManDays() + "MD"));
                 }
             }
         }
@@ -237,6 +249,8 @@ public class WarningService {
                 .projectId(project.getId())
                 .projectName(project.getName())
                 .message(message)
+                .assigneeId(task.getAssignee() != null ? task.getAssignee().getId() : null)
+                .assigneeName(task.getAssignee() != null ? task.getAssignee().getName() : null)
                 .build();
     }
 }

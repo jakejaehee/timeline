@@ -5,6 +5,7 @@ import com.timeline.dto.MemberLeaveDto;
 import com.timeline.dto.TeamBoardDto;
 import com.timeline.service.MemberLeaveService;
 import com.timeline.service.MemberService;
+import com.timeline.service.TaskService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +25,7 @@ public class MemberController {
 
     private final MemberService memberService;
     private final MemberLeaveService memberLeaveService;
+    private final TaskService taskService;
 
     /**
      * 전체 멤버 목록 조회
@@ -92,6 +94,20 @@ public class MemberController {
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "data", taskItems
+        ));
+    }
+
+    /**
+     * 담당자 큐 착수일 변경
+     */
+    @PatchMapping("/{id}/queue-start-date")
+    public ResponseEntity<?> updateQueueStartDate(@PathVariable Long id,
+                                                   @RequestBody Map<String, String> body) {
+        String dateStr = body.get("queueStartDate");
+        memberService.updateQueueStartDate(id, dateStr);
+        taskService.recalculateQueueDates(id);
+        return ResponseEntity.ok(Map.of(
+                "success", true
         ));
     }
 

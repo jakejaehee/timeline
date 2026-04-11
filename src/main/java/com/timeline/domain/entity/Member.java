@@ -8,6 +8,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -39,6 +40,9 @@ public class Member {
     @Builder.Default
     @Column(nullable = false, precision = 3, scale = 1)
     private BigDecimal capacity = BigDecimal.ONE;
+
+    @Column(name = "queue_start_date")
+    private LocalDate queueStartDate;
 
     @Builder.Default
     @Column(nullable = false)

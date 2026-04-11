@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 /**
  * 멤버 요청/응답 DTO
@@ -23,6 +24,7 @@ public class MemberDto {
         private MemberRole role;
         private String email;
         private BigDecimal capacity;
+        private LocalDate queueStartDate;
     }
 
     @Data
@@ -36,6 +38,7 @@ public class MemberDto {
         private String email;
         private BigDecimal capacity;
         private Boolean active;
+        private LocalDate queueStartDate;
 
         public static Response from(Member member) {
             return Response.builder()
@@ -45,6 +48,7 @@ public class MemberDto {
                     .email(member.getEmail())
                     .capacity(member.getCapacity())
                     .active(member.getActive())
+                    .queueStartDate(member.getQueueStartDate())
                     .build();
         }
     }

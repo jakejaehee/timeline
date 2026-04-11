@@ -28,11 +28,20 @@ body {
     color: #fff;
     z-index: 1001;
     overflow-y: auto;
+    overflow-x: hidden;
+    transition: width 0.25s ease;
+}
+
+#sidebar.collapsed {
+    width: 60px;
 }
 
 .sidebar-header {
     padding: 16px 16px 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 
 .sidebar-header h4 {
@@ -40,10 +49,52 @@ body {
     font-weight: 600;
     color: #fff;
     font-size: 1.15rem;
+    white-space: nowrap;
+    overflow: hidden;
 }
 
 .sidebar-header h4 i {
     margin-right: 8px;
+}
+
+/* 사이드바 토글 버튼 */
+.sidebar-toggle-btn {
+    background: none;
+    border: none;
+    color: #adb5bd;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.sidebar-toggle-btn:hover {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+#sidebar.collapsed .sidebar-toggle-btn i {
+    transform: rotate(180deg);
+}
+
+#sidebar.collapsed .sidebar-header {
+    justify-content: center;
+    padding: 16px 8px 12px;
+}
+
+#sidebar.collapsed .sidebar-header h4 i {
+    margin-right: 0;
+}
+
+/* 접힌 상태에서 텍스트 라벨 숨기기 */
+#sidebar.collapsed .sidebar-label {
+    display: none;
+}
+
+#sidebar.collapsed .sidebar-toggle-btn {
+    position: static;
 }
 
 .sidebar-nav {
@@ -56,6 +107,10 @@ body {
     margin: 2px 8px;
 }
 
+#sidebar.collapsed .sidebar-nav li {
+    margin: 2px 4px;
+}
+
 .sidebar-nav .nav-link {
     display: flex;
     align-items: center;
@@ -66,6 +121,13 @@ body {
     transition: all 0.2s ease;
     font-weight: 500;
     font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+#sidebar.collapsed .sidebar-nav .nav-link {
+    padding: 10px 0;
+    justify-content: center;
 }
 
 .sidebar-nav .nav-link i {
@@ -73,6 +135,12 @@ body {
     font-size: 1rem;
     width: 20px;
     text-align: center;
+    flex-shrink: 0;
+}
+
+#sidebar.collapsed .sidebar-nav .nav-link i {
+    margin-right: 0;
+    font-size: 1.15rem;
 }
 
 .sidebar-nav .nav-link:hover {
@@ -91,6 +159,10 @@ body {
     line-height: 1.4;
 }
 
+#sidebar.collapsed .sidebar-nav .nav-link .badge {
+    display: none;
+}
+
 /* ---- 글로벌 상단 바 ---- */
 #topbar {
     position: fixed;
@@ -105,6 +177,11 @@ body {
     align-items: center;
     padding: 0 24px;
     gap: 12px;
+    transition: left 0.25s ease;
+}
+
+body.sidebar-collapsed #topbar {
+    left: 60px;
 }
 
 .topbar-brand {
@@ -124,6 +201,11 @@ body {
     margin-top: 56px;
     padding: 16px 24px;
     min-height: calc(100vh - 56px);
+    transition: margin-left 0.25s ease;
+}
+
+body.sidebar-collapsed #main-content {
+    margin-left: 60px;
 }
 
 /* ---- 섹션 헤더 ---- */
@@ -442,21 +524,82 @@ body {
 /* frappe-gantt 커스텀 */
 #gantt-chart {
     overflow-x: auto;
+    overflow-y: hidden;
 }
 
 #gantt-chart .gantt .bar-label {
-    font-size: 11px !important;
+    font-size: 10px !important;
     fill: #fff !important;
     font-weight: 500;
 }
 
 #gantt-chart .gantt .bar-label.big {
-    font-size: 11px !important;
+    font-size: 10px !important;
     fill: #333 !important;
 }
 
 #gantt-chart svg {
-    width: 100%;
+    min-width: 100%;
+}
+
+/* 간트차트 바 드래그 비활성화 */
+#gantt-chart .gantt .bar-wrapper .handle-group {
+    display: none !important;
+}
+
+#gantt-chart .gantt .bar-wrapper {
+    cursor: pointer;
+}
+
+/* 간트차트 세로선(tick) 진하게 */
+#gantt-chart .gantt .tick {
+    stroke: #c0c0c0;
+    stroke-width: 0.8;
+}
+
+#gantt-chart .gantt .tick.thick {
+    stroke: #999;
+    stroke-width: 1.2;
+}
+
+/* 전체 프로젝트 간트차트 */
+#gantt-all-projects-wrapper {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+}
+
+.gantt-project-chart {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.gantt-project-chart .gantt .bar-label {
+    font-size: 10px !important;
+    fill: #fff !important;
+    font-weight: 500;
+}
+
+.gantt-project-chart .gantt .bar-label.big {
+    font-size: 10px !important;
+    fill: #333 !important;
+}
+
+.gantt-project-chart .gantt .bar-wrapper .handle-group {
+    display: none !important;
+}
+
+.gantt-project-chart .gantt .bar-wrapper {
+    cursor: pointer;
+}
+
+.gantt-project-chart .gantt .tick {
+    stroke: #c0c0c0;
+    stroke-width: 0.8;
+}
+
+.gantt-project-chart .gantt .tick.thick {
+    stroke: #999;
+    stroke-width: 1.2;
 }
 
 /* 프로젝트 상세 간트 */
@@ -612,6 +755,10 @@ body {
     color: #495057;
 }
 
+.sortable-list, #schedule-unordered-items {
+    min-height: 40px;
+}
+
 .sortable-ghost {
     opacity: 0.4;
     background-color: #e3f2fd !important;
@@ -762,13 +909,25 @@ body {
         width: 200px;
     }
 
+    #sidebar.collapsed {
+        width: 60px;
+    }
+
     #topbar {
         left: 200px;
+    }
+
+    body.sidebar-collapsed #topbar {
+        left: 60px;
     }
 
     #main-content {
         margin-left: 200px;
         padding: 12px 16px;
+    }
+
+    body.sidebar-collapsed #main-content {
+        margin-left: 60px;
     }
 
     .section-header {
@@ -789,4 +948,12 @@ body {
     .schedule-panel-right {
         width: 30%;
     }
+}
+
+/* ---- flatpickr 비활성 날짜 스타일 ---- */
+.flatpickr-day.flatpickr-disabled,
+.flatpickr-day.flatpickr-disabled:hover {
+    color: #d0d0d0 !important;
+    text-decoration: line-through;
+    background: #f8f8f8 !important;
 }

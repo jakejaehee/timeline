@@ -61,6 +61,7 @@ public class TaskDto {
     public static class Response {
         private Long id;
         private String name;
+        private ProjectSummary project;
         private DomainSystemDto.Response domainSystem;
         private MemberDto.Response assignee;
         private LocalDate startDate;
@@ -70,6 +71,7 @@ public class TaskDto {
         private Integer sortOrder;
         private String description;
         private List<Long> dependencies;
+        private List<DependencyInfo> dependencyTasks;
         private TaskExecutionMode executionMode;
         private TaskPriority priority;
         private TaskType type;
@@ -91,6 +93,11 @@ public class TaskDto {
             return Response.builder()
                     .id(task.getId())
                     .name(task.getName())
+                    .project(task.getProject() != null
+                            ? ProjectSummary.builder()
+                                    .id(task.getProject().getId())
+                                    .name(task.getProject().getName())
+                                    .build() : null)
                     .domainSystem(task.getDomainSystem() != null
                             ? DomainSystemDto.Response.from(task.getDomainSystem()) : null)
                     .assignee(task.getAssignee() != null
@@ -110,6 +117,18 @@ public class TaskDto {
                     .links(linkResponses)
                     .build();
         }
+    }
+
+    /**
+     * 프로젝트 요약 (태스크 응답에 포함)
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ProjectSummary {
+        private Long id;
+        private String name;
     }
 
     /**
@@ -133,6 +152,18 @@ public class TaskDto {
                     .createdAt(taskLink.getCreatedAt())
                     .build();
         }
+    }
+
+    /**
+     * 선행 태스크 정보 (id + name)
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DependencyInfo {
+        private Long id;
+        private String name;
     }
 
     /**

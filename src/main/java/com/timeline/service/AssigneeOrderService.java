@@ -12,6 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -79,7 +81,9 @@ public class AssigneeOrderService {
     }
 
     /**
-     * 담당자별 정렬된 SEQUENTIAL 태스크 목록 조회
+     * 담당자별 정렬된 태스크 목록 조회 (SEQUENTIAL + PARALLEL)
+     * - SEQUENTIAL 태스크: assigneeOrder 순 (미지정은 뒤로)
+     * - PARALLEL 태스크: startDate 순으로 SEQUENTIAL 태스크 사이에 병합
      */
     public List<TaskDto.Response> getOrderedTasksByAssignee(Long assigneeId) {
         if (assigneeId == null) {
@@ -89,10 +93,22 @@ public class AssigneeOrderService {
             throw new EntityNotFoundException("멤버를 찾을 수 없습니다. id=" + assigneeId);
         }
 
-        List<Task> tasks = taskRepository.findSequentialTasksByAssigneeOrdered(
+        List<Task> sequentialTasks = taskRepository.findSequentialTasksByAssigneeOrdered(
                 assigneeId, TaskExecutionMode.SEQUENTIAL, INACTIVE_STATUSES);
 
-        return tasks.stream()
+        List<Task> parallelTasks = taskRepository.findParallelTasksByAssigneeOrdered(
+                assigneeId, TaskExecutionMode.PARALLEL, INACTIVE_STATUSES);
+
+        // SEQUENTIAL + PARALLEL 병합 후 startDate 순 정렬
+        List<Task> allTasks = new ArrayList<>(sequentialTasks);
+        allTasks.addAll(parallelTasks);
+
+        // 순서 있는 SEQUENTIAL 먼저, 그 다음 startDate 기준 정렬
+        allTasks.sort(Comparator
+                .<Task, Integer>comparing(t -> t.getAssigneeOrder() != null && t.getAssigneeOrder() > 0 ? 0 : 1)
+                .thenComparing(t -> t.getStartDate() != null ? t.getStartDate() : java.time.LocalDate.MAX));
+
+        return allTasks.stream()
                 .map(task -> TaskDto.Response.from(task, List.of()))
                 .collect(Collectors.toList());
     }

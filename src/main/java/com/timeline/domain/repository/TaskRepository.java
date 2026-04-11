@@ -196,6 +196,21 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             @Param("excludeStatuses") List<TaskStatus> excludeStatuses);
 
     /**
+     * 담당자의 PARALLEL 태스크 조회 (startDate 정렬)
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "JOIN FETCH t.domainSystem " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.executionMode = :parallelMode " +
+            "AND t.status NOT IN :excludeStatuses " +
+            "ORDER BY t.startDate ASC")
+    List<Task> findParallelTasksByAssigneeOrdered(
+            @Param("assigneeId") Long assigneeId,
+            @Param("parallelMode") TaskExecutionMode parallelMode,
+            @Param("excludeStatuses") List<TaskStatus> excludeStatuses);
+
+    /**
      * 프로젝트 내 최대 endDate 조회 (expectedEndDate 계산용)
      */
     @Query("SELECT MAX(t.endDate) FROM Task t " +

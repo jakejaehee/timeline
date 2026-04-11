@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -68,6 +69,10 @@ public class MemberService {
             builder.capacity(request.getCapacity());
         }
 
+        if (request.getQueueStartDate() != null) {
+            builder.queueStartDate(request.getQueueStartDate());
+        }
+
         Member saved = memberRepository.save(builder.build());
         log.info("멤버 생성 완료: id={}, name={}, capacity={}", saved.getId(), saved.getName(), saved.getCapacity());
         return MemberDto.Response.from(saved);
@@ -95,6 +100,8 @@ public class MemberService {
             member.setCapacity(request.getCapacity());
         }
 
+        member.setQueueStartDate(request.getQueueStartDate());
+
         Member updated = memberRepository.save(member);
         log.info("멤버 수정 완료: id={}, name={}, capacity={}", updated.getId(), updated.getName(), updated.getCapacity());
         return MemberDto.Response.from(updated);
@@ -121,6 +128,25 @@ public class MemberService {
         return tasks.stream()
                 .map(TeamBoardDto.TaskItem::from)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 큐 착수일 변경
+     */
+    @Transactional
+    public void updateQueueStartDate(Long id, String dateStr) {
+        Member member = findMemberById(id);
+        LocalDate queueStartDate = null;
+        if (dateStr != null && !dateStr.isBlank()) {
+            try {
+                queueStartDate = LocalDate.parse(dateStr.trim());
+            } catch (java.time.format.DateTimeParseException e) {
+                throw new IllegalArgumentException("올바른 날짜 형식이 아닙니다: " + dateStr);
+            }
+        }
+        member.setQueueStartDate(queueStartDate);
+        memberRepository.save(member);
+        log.info("멤버 큐 착수일 변경: id={}, queueStartDate={}", id, queueStartDate);
     }
 
     /**

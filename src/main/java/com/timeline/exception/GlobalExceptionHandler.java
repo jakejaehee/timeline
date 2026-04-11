@@ -7,12 +7,23 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.Map;
 
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
+        log.warn("File upload size exceeded: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                Map.of("success", false,
+                        "error", "FILE_TOO_LARGE",
+                        "message", "업로드 파일 크기가 제한을 초과했습니다 (최대 50MB).")
+        );
+    }
 
     @ExceptionHandler(AssigneeConflictException.class)
     public ResponseEntity<Map<String, Object>> handleAssigneeConflict(AssigneeConflictException ex) {

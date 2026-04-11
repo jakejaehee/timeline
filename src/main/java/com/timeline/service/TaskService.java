@@ -84,6 +84,7 @@ public class TaskService {
                                                     .id(task.getAssignee().getId())
                                                     .name(task.getAssignee().getName())
                                                     .role(task.getAssignee().getRole())
+                                                    .queueStartDate(task.getAssignee().getQueueStartDate())
                                                     .build()
                                             : null)
                                     .startDate(task.getStartDate())
@@ -127,13 +128,22 @@ public class TaskService {
         Task task = taskRepository.findByIdWithDetails(taskId)
                 .orElseThrow(() -> new EntityNotFoundException("태스크를 찾을 수 없습니다. id=" + taskId));
 
-        List<Long> dependencies = taskDependencyRepository.findByTaskIdWithDependsOnTask(taskId).stream()
+        List<TaskDependency> deps = taskDependencyRepository.findByTaskIdWithDependsOnTask(taskId);
+        List<Long> dependencies = deps.stream()
                 .map(td -> td.getDependsOnTask().getId())
+                .collect(Collectors.toList());
+        List<TaskDto.DependencyInfo> dependencyTasks = deps.stream()
+                .map(td -> TaskDto.DependencyInfo.builder()
+                        .id(td.getDependsOnTask().getId())
+                        .name(td.getDependsOnTask().getName())
+                        .build())
                 .collect(Collectors.toList());
 
         List<TaskLink> links = taskLinkRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
 
-        return TaskDto.Response.from(task, dependencies, links);
+        TaskDto.Response response = TaskDto.Response.from(task, dependencies, links);
+        response.setDependencyTasks(dependencyTasks);
+        return response;
     }
 
     /**
@@ -214,9 +224,9 @@ public class TaskService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
 
-        // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증
+        // PARALLEL 모드인 경우 프로젝트 기간 내 검증 (다른 태스크와 충돌 검증 안 함)
         if (assignee != null && executionMode == TaskExecutionMode.PARALLEL) {
-            validateAssigneeConflict(assignee, startDate, endDate, null);
+            validateParallelTaskDateRange(assignee, project, startDate, endDate);
         }
 
         Task.TaskBuilder taskBuilder = Task.builder()
@@ -335,9 +345,9 @@ public class TaskService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
 
-        // PARALLEL 모드인 경우에만 담당자 일정 충돌 검증 (자기 자신 제외)
+        // PARALLEL 모드인 경우 프로젝트 기간 내 검증 (다른 태스크와 충돌 검증 안 함)
         if (assignee != null && executionMode == TaskExecutionMode.PARALLEL) {
-            validateAssigneeConflict(assignee, startDate, endDate, taskId);
+            validateParallelTaskDateRange(assignee, task.getProject(), startDate, endDate);
         }
 
         task.setDomainSystem(domainSystem);
@@ -486,6 +496,73 @@ public class TaskService {
                 .endDate(endDate)
                 .isFirstTask(isFirstTask)
                 .build();
+    }
+
+    // ---- 담당자 큐 날짜 연쇄 재계산 ----
+
+    /**
+     * 담당자 큐의 순서에 따라 날짜를 연쇄 재계산한다.
+     * - 1번 태스크: 담당자의 queueStartDate를 시작일로 사용
+     * - 2번 이후: 이전 태스크 종료일 다음 영업일이 시작일
+     * - 각 태스크의 종료일은 시작일 + 공수(capacity 반영)로 재계산
+     */
+    @Transactional
+    public void recalculateQueueDates(Long assigneeId) {
+        if (assigneeId == null) return;
+
+        List<Task> allTasks = taskRepository.findSequentialTasksByAssigneeOrdered(
+                assigneeId, TaskExecutionMode.SEQUENTIAL, INACTIVE_STATUSES);
+
+        List<Task> orderedTasks = allTasks.stream()
+                .filter(t -> t.getAssigneeOrder() != null)
+                .sorted(Comparator.comparingInt(Task::getAssigneeOrder))
+                .collect(Collectors.toList());
+
+        if (orderedTasks.isEmpty()) return;
+
+        Set<LocalDate> unavailableDates = getUnavailableDates(assigneeId);
+        Member assignee = memberRepository.findById(assigneeId).orElse(null);
+        BigDecimal capacity = (assignee != null && assignee.getCapacity() != null)
+                ? assignee.getCapacity() : BigDecimal.ONE;
+
+        // 1번 태스크: 담당자의 queueStartDate를 시작일로 사용
+        Task firstTask = orderedTasks.get(0);
+        LocalDate queueStartDate = (assignee != null) ? assignee.getQueueStartDate() : null;
+        if (queueStartDate != null) {
+            LocalDate adjustedStart = businessDayCalculator.ensureBusinessDay(queueStartDate, unavailableDates);
+            firstTask.setStartDate(adjustedStart);
+            if (firstTask.getManDays() != null && firstTask.getManDays().compareTo(BigDecimal.ZERO) > 0) {
+                firstTask.setEndDate(businessDayCalculator.calculateEndDate(
+                        adjustedStart, firstTask.getManDays(), capacity, unavailableDates));
+            }
+        }
+
+        // 2번 이후 태스크: 이전 태스크 종료일 기준으로 시작일 계산
+        for (int i = 1; i < orderedTasks.size(); i++) {
+            Task prevTask = orderedTasks.get(i - 1);
+            Task currTask = orderedTasks.get(i);
+
+            if (prevTask.getEndDate() == null) break;
+
+            // 이전 태스크 종료일 다음 영업일 (Same-Day Rule 적용)
+            LocalDate newStartDate;
+            if (businessDayCalculator.isFractionalMd(prevTask.getManDays())) {
+                newStartDate = businessDayCalculator.ensureBusinessDay(prevTask.getEndDate(), unavailableDates);
+            } else {
+                newStartDate = businessDayCalculator.getNextBusinessDay(prevTask.getEndDate(), unavailableDates);
+            }
+
+            currTask.setStartDate(newStartDate);
+
+            // 종료일 재계산
+            if (currTask.getManDays() != null && currTask.getManDays().compareTo(BigDecimal.ZERO) > 0) {
+                currTask.setEndDate(businessDayCalculator.calculateEndDate(
+                        newStartDate, currTask.getManDays(), capacity, unavailableDates));
+            }
+        }
+
+        taskRepository.saveAllAndFlush(orderedTasks);
+        log.info("큐 날짜 연쇄 재계산 완료: assigneeId={}, orderedTasks={}", assigneeId, orderedTasks.size());
     }
 
     // ---- 링크 전용 API 메서드 ----
@@ -775,6 +852,30 @@ public class TaskService {
                             conflict.getEndDate(),
                             conflict.getProject().getName(),
                             conflict.getName()));
+        }
+    }
+
+    /**
+     * PARALLEL 태스크 날짜 범위 검증
+     * - 담당자 착수 가능일(queueStartDate) 이후인지
+     * - 프로젝트 론치일(endDate) 이전인지
+     */
+    private void validateParallelTaskDateRange(Member assignee, Project project,
+                                                LocalDate startDate, LocalDate endDate) {
+        if (startDate == null || endDate == null) return;
+
+        // 담당자 착수 가능일 검증
+        if (assignee.getQueueStartDate() != null && startDate.isBefore(assignee.getQueueStartDate())) {
+            throw new IllegalArgumentException(
+                    String.format("%s님의 착수 가능일(%s) 이전에는 태스크를 배치할 수 없습니다.",
+                            assignee.getName(), assignee.getQueueStartDate()));
+        }
+
+        // 프로젝트 론치일 검증
+        if (project.getEndDate() != null && endDate.isAfter(project.getEndDate())) {
+            throw new IllegalArgumentException(
+                    String.format("프로젝트 론치일(%s) 이후에는 태스크를 배치할 수 없습니다.",
+                            project.getEndDate()));
         }
     }
 

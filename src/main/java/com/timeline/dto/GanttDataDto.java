@@ -80,5 +80,6 @@ public class GanttDataDto {
         private Long id;
         private String name;
         private MemberRole role;
+        private LocalDate queueStartDate;
     }
 }

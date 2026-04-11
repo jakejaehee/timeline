@@ -115,7 +115,6 @@ public class TaskService {
                         .name(project.getName())
                         .startDate(project.getStartDate())
                         .endDate(project.getEndDate())
-                        .deadline(project.getDeadline())
                         .build())
                 .domainSystems(domainSystemGroups)
                 .build();

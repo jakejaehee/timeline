@@ -65,7 +65,6 @@ CREATE TABLE project (
     status character varying(20),
     start_date date,
     end_date date,
-    deadline date,
     created_at timestamp(6) NOT NULL,
     updated_at timestamp(6),
     CONSTRAINT project_pkey PRIMARY KEY (id),

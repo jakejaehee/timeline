@@ -175,15 +175,15 @@ public class WarningService {
         }
 
         // 5. DEADLINE_EXCEEDED: 프로젝트 마감 지연
-        if (project.getDeadline() != null) {
+        if (project.getEndDate() != null) {
             LocalDate maxEndDate = taskRepository.findMaxEndDateByProjectId(projectId, INACTIVE_STATUSES);
-            if (maxEndDate != null && maxEndDate.isAfter(project.getDeadline())) {
+            if (maxEndDate != null && maxEndDate.isAfter(project.getEndDate())) {
                 warnings.add(WarningDto.Warning.builder()
                         .type(WarningType.DEADLINE_EXCEEDED)
                         .projectId(project.getId())
                         .projectName(project.getName())
                         .message("마감 지연: 프로젝트 '" + project.getName()
-                                + "'의 예상 종료일(" + maxEndDate + ")이 데드라인(" + project.getDeadline() + ")을 초과합니다.")
+                                + "'의 예상 종료일(" + maxEndDate + ")이 종료일(" + project.getEndDate() + ")을 초과합니다.")
                         .build());
             }
         }

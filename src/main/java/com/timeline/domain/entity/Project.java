@@ -42,9 +42,6 @@ public class Project {
     @Column(name = "end_date")
     private LocalDate endDate;
 
-    @Column(name = "deadline")
-    private LocalDate deadline;
-
     @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(length = 20)

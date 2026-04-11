@@ -38,7 +38,6 @@ public class GanttDataDto {
         private String name;
         private LocalDate startDate;
         private LocalDate endDate;
-        private LocalDate deadline;
     }
 
     @Data

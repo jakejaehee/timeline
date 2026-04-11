@@ -25,7 +25,6 @@ public class ProjectDto {
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
-        private LocalDate deadline;
         private ProjectStatus status;
     }
 
@@ -40,9 +39,8 @@ public class ProjectDto {
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
-        private LocalDate deadline;
         private LocalDate expectedEndDate;    // 계산값: 프로젝트 내 모든 태스크의 최대 endDate
-        private Boolean isDelayed;            // 계산값: expectedEndDate > deadline
+        private Boolean isDelayed;            // 계산값: expectedEndDate > endDate
         private ProjectStatus status;
         private Integer memberCount;
         private List<MemberDto.Response> members;
@@ -56,7 +54,6 @@ public class ProjectDto {
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
-                    .deadline(project.getDeadline())
                     .status(project.getStatus())
                     .build();
         }
@@ -71,7 +68,6 @@ public class ProjectDto {
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
-                    .deadline(project.getDeadline())
                     .status(project.getStatus())
                     .members(members)
                     .domainSystems(domainSystems)
@@ -83,8 +79,8 @@ public class ProjectDto {
          */
         public static Response from(Project project, long memberCount, LocalDate expectedEndDate) {
             Boolean delayed = null;
-            if (expectedEndDate != null && project.getDeadline() != null) {
-                delayed = expectedEndDate.isAfter(project.getDeadline());
+            if (expectedEndDate != null && project.getEndDate() != null) {
+                delayed = expectedEndDate.isAfter(project.getEndDate());
             }
             return Response.builder()
                     .id(project.getId())
@@ -93,7 +89,6 @@ public class ProjectDto {
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
-                    .deadline(project.getDeadline())
                     .expectedEndDate(expectedEndDate)
                     .isDelayed(delayed)
                     .status(project.getStatus())
@@ -106,8 +101,8 @@ public class ProjectDto {
                                      List<DomainSystemDto.Response> domainSystems,
                                      LocalDate expectedEndDate) {
             Boolean delayed = null;
-            if (expectedEndDate != null && project.getDeadline() != null) {
-                delayed = expectedEndDate.isAfter(project.getDeadline());
+            if (expectedEndDate != null && project.getEndDate() != null) {
+                delayed = expectedEndDate.isAfter(project.getEndDate());
             }
             return Response.builder()
                     .id(project.getId())
@@ -116,7 +111,6 @@ public class ProjectDto {
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
-                    .deadline(project.getDeadline())
                     .expectedEndDate(expectedEndDate)
                     .isDelayed(delayed)
                     .status(project.getStatus())

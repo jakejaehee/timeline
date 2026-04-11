@@ -264,17 +264,17 @@ async function loadDashboard() {
         var threshold = new Date(today);
         threshold.setDate(threshold.getDate() + 14);
         var upcomingDeadlines = projects.filter(function(p) {
-            if (!p.deadline) return false;
-            var dl = new Date(p.deadline + 'T00:00:00');
+            if (!p.endDate) return false;
+            var dl = new Date(p.endDate + 'T00:00:00');
             return dl >= today && dl <= threshold;
         });
         if (upcomingDeadlines.length > 0) {
             var dlHtml = '<div class="table-responsive"><table class="table table-sm mb-0">';
-            dlHtml += '<thead><tr><th>프로젝트</th><th>데드라인</th><th>상태</th></tr></thead><tbody>';
+            dlHtml += '<thead><tr><th>프로젝트</th><th>종료일</th><th>상태</th></tr></thead><tbody>';
             upcomingDeadlines.forEach(function(p) {
                 dlHtml += '<tr class="cursor-pointer" onclick="showProjectDetail(' + p.id + ')">';
                 dlHtml += '<td>' + escapeHtml(p.name) + '</td>';
-                dlHtml += '<td>' + formatDate(p.deadline) + '</td>';
+                dlHtml += '<td>' + formatDate(p.endDate) + '</td>';
                 dlHtml += '<td>' + statusBadge(p.status) + '</td>';
                 dlHtml += '</tr>';
             });
@@ -591,7 +591,6 @@ async function loadProjects() {
             html += '<td>-</td>'; // 진행률은 상세에서
             html += '<td>' + formatDate(p.startDate) + '</td>';
             html += '<td>' + formatDate(p.endDate) + '</td>';
-            html += '<td>' + formatDate(p.deadline) + '</td>';
             html += '<td>' + delayHtml + '</td>';
             html += '<td>' + memberCount + '명</td>';
             html += '<td class="text-center">';
@@ -706,7 +705,6 @@ async function loadProjectOverview(projectId) {
         html += '<tr><th>상태</th><td>' + statusBadge(p.status) + '</td></tr>';
         html += '<tr><th>시작일</th><td>' + formatDate(p.startDate) + '</td></tr>';
         html += '<tr><th>종료일</th><td>' + formatDate(p.endDate) + '</td></tr>';
-        html += '<tr><th>데드라인</th><td>' + formatDate(p.deadline) + '</td></tr>';
         html += '<tr><th>설명</th><td>' + escapeHtml(p.description || '-') + '</td></tr>';
         html += '</table>';
         html += '</div></div>';
@@ -723,7 +721,7 @@ async function loadProjectOverview(projectId) {
         // 지연 표시
         if (p.isDelayed === true) {
             html += '<div class="alert alert-danger mt-3 mb-0 py-2 px-3" style="font-size:0.85rem;">';
-            html += '<i class="bi bi-exclamation-triangle-fill"></i> 예상 종료일(' + formatDate(p.expectedEndDate) + ')이 데드라인(' + formatDate(p.deadline) + ')을 초과합니다.';
+            html += '<i class="bi bi-exclamation-triangle-fill"></i> 예상 종료일(' + formatDate(p.expectedEndDate) + ')이 종료일(' + formatDate(p.endDate) + ')을 초과합니다.';
             html += '</div>';
         } else if (p.isDelayed === false) {
             html += '<div class="alert alert-success mt-3 mb-0 py-2 px-3" style="font-size:0.85rem;">';
@@ -890,7 +888,6 @@ async function showProjectModal(projectId) {
     document.getElementById('project-description').value = '';
     document.getElementById('project-start-date').value = '';
     document.getElementById('project-end-date').value = '';
-    document.getElementById('project-deadline').value = '';
     document.getElementById('project-status').value = 'PLANNING';
     document.getElementById('project-delay-warning').style.display = 'none';
     document.getElementById('project-delay-warning').innerHTML = '';
@@ -930,7 +927,6 @@ async function showProjectModal(projectId) {
                 document.getElementById('project-description').value = p.description || '';
                 document.getElementById('project-start-date').value = p.startDate || '';
                 document.getElementById('project-end-date').value = p.endDate || '';
-                document.getElementById('project-deadline').value = p.deadline || '';
                 document.getElementById('project-status').value = p.status || 'PLANNING';
                 currentMembers = p.members ? p.members.map(function(m) { return m.id; }) : [];
                 currentDs = p.domainSystems ? p.domainSystems.map(function(d) { return d.id; }) : [];
@@ -940,12 +936,12 @@ async function showProjectModal(projectId) {
                 if (p.isDelayed === true) {
                     delayWarning.innerHTML = '<div class="alert alert-danger mb-0 py-2 px-3" style="font-size:0.85rem;">'
                         + '<i class="bi bi-exclamation-triangle-fill"></i> <strong>지연 경고:</strong> '
-                        + '예상 종료일(' + formatDate(p.expectedEndDate) + ')이 데드라인(' + formatDate(p.deadline) + ')을 초과합니다.'
+                        + '예상 종료일(' + formatDate(p.expectedEndDate) + ')이 종료일(' + formatDate(p.endDate) + ')을 초과합니다.'
                         + '</div>';
                     delayWarning.style.display = 'block';
                 } else if (p.isDelayed === false) {
                     delayWarning.innerHTML = '<div class="alert alert-success mb-0 py-2 px-3" style="font-size:0.85rem;">'
-                        + '<i class="bi bi-check-circle-fill"></i> 예상 종료일(' + formatDate(p.expectedEndDate) + ')이 데드라인 내에 있습니다.'
+                        + '<i class="bi bi-check-circle-fill"></i> 예상 종료일(' + formatDate(p.expectedEndDate) + ')이 종료일 내에 있습니다.'
                         + '</div>';
                     delayWarning.style.display = 'block';
                 } else {
@@ -1007,15 +1003,12 @@ async function saveProject() {
         return;
     }
 
-    var deadline = document.getElementById('project-deadline').value;
-
     var body = {
         name: name,
         projectType: type,
         description: description,
         startDate: startDate,
         endDate: endDate,
-        deadline: deadline || null,
         status: status
     };
 
@@ -1394,28 +1387,22 @@ function addGanttTodayMarker() {
  */
 function addGanttDeadlineMarker(project) {
     try {
-        if (!project || !project.deadline) return;
+        if (!project || !project.endDate) return;
         var svg = document.querySelector('#gantt-chart svg');
         if (!svg || !ganttInstance) return;
 
-        // 기존 마감선 마커 제거
+        // 기존 종료일 마커 제거
         var existing = svg.querySelectorAll('.gantt-deadline-marker-group');
         existing.forEach(function(el) { el.remove(); });
 
-        // grid-header의 lower-text 요소들에서 날짜 텍스트를 파싱하여 x 좌표 계산
-        // lower-text 요소들은 각 column(날짜)에 대응되며 x 속성으로 위치를 가짐
         var lowerTexts = svg.querySelectorAll('.lower-text');
         if (lowerTexts.length < 2) return;
 
-        // column 너비 계산 (인접한 두 lower-text의 x 차이)
         var x0 = parseFloat(lowerTexts[0].getAttribute('x'));
         var x1 = parseFloat(lowerTexts[1].getAttribute('x'));
         var colWidth = x1 - x0;
         if (colWidth <= 0) return;
 
-        // 첫 번째 lower-text의 날짜를 기준으로 offset 계산
-        // frappe-gantt는 view_mode에 따라 lower-text에 일/주/월 숫자를 표시
-        // 정확한 날짜를 얻기 어려우므로, today-highlight 위치를 기준점으로 활용
         var todayHighlight = svg.querySelector('.today-highlight');
         if (!todayHighlight) return;
 
@@ -1423,15 +1410,12 @@ function addGanttDeadlineMarker(project) {
         var todayWidth = parseFloat(todayHighlight.getAttribute('width'));
         var todayCenterX = todayX + todayWidth / 2;
 
-        // 오늘과 deadline 사이의 날짜 차이 계산
         var today = new Date();
         today.setHours(0, 0, 0, 0);
-        var deadlineDate = new Date(project.deadline + 'T00:00:00');
-        var diffDays = Math.round((deadlineDate - today) / (1000 * 60 * 60 * 24));
+        var endDateDate = new Date(project.endDate + 'T00:00:00');
+        var diffDays = Math.round((endDateDate - today) / (1000 * 60 * 60 * 24));
 
-        // x 좌표 = 오늘 위치 + (일수 차이 * column 너비)
-        // column 너비는 view_mode에 따라 1일/1주/1월 단위
-        var dayPixels = colWidth; // Day 모드: 1 column = 1일
+        var dayPixels = colWidth;
         if (currentViewMode === 'Week') {
             dayPixels = colWidth / 7;
         } else if (currentViewMode === 'Month') {
@@ -1442,33 +1426,31 @@ function addGanttDeadlineMarker(project) {
             dayPixels = colWidth * 2;
         }
 
-        var deadlineX = todayCenterX + (diffDays * dayPixels);
+        var markerX = todayCenterX + (diffDays * dayPixels);
 
-        // SVG 범위 확인
         var svgWidth = parseFloat(svg.getAttribute('width') || svg.getBoundingClientRect().width);
-        if (deadlineX < 0 || deadlineX > svgWidth) return;
+        if (markerX < 0 || markerX > svgWidth) return;
 
         var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'gantt-deadline-marker-group');
         var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', deadlineX);
-        line.setAttribute('x2', deadlineX);
+        line.setAttribute('x1', markerX);
+        line.setAttribute('x2', markerX);
         line.setAttribute('y1', 0);
         line.setAttribute('y2', svg.getAttribute('height') || '500');
         line.setAttribute('class', 'gantt-deadline-marker');
         g.appendChild(line);
 
-        // 마감선 라벨 추가
         var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', deadlineX + 4);
+        text.setAttribute('x', markerX + 4);
         text.setAttribute('y', 15);
         text.setAttribute('class', 'gantt-deadline-label');
-        text.textContent = 'Deadline ' + project.deadline;
+        text.textContent = '종료일 ' + project.endDate;
         g.appendChild(text);
 
         svg.appendChild(g);
     } catch (e) {
-        console.error('마감선 마커 삽입 실패:', e);
+        console.error('종료일 마커 삽입 실패:', e);
     }
 }
 

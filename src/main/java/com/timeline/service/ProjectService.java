@@ -94,8 +94,7 @@ public class ProjectService {
                 .projectType(normalizeProjectType(request.getProjectType()))
                 .description(request.getDescription())
                 .startDate(request.getStartDate())
-                .endDate(request.getEndDate())
-                .deadline(request.getDeadline());
+                .endDate(request.getEndDate());
 
         // status가 null이면 @Builder.Default(PLANNING)가 적용됨
         if (request.getStatus() != null) {
@@ -123,7 +122,6 @@ public class ProjectService {
         project.setDescription(request.getDescription());
         project.setStartDate(request.getStartDate());
         project.setEndDate(request.getEndDate());
-        project.setDeadline(request.getDeadline());
         if (request.getStatus() != null) {
             project.setStatus(request.getStatus());
         }

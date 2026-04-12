@@ -19,6 +19,8 @@ public interface TaskLinkRepository extends JpaRepository<TaskLink, Long> {
      */
     void deleteByTaskId(Long taskId);
 
+    void deleteByTaskIdIn(List<Long> taskIds);
+
     /**
      * 태스크의 링크 개수 조회 (10개 제한 검증용)
      */

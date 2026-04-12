@@ -1,6 +1,6 @@
 // ========================================
 // Timeline Application JavaScript
-// Version: 20260412b
+// Version: 20260413d
 // ========================================
 
 // ---- 전역 상태 ----
@@ -25,6 +25,20 @@ var taskStartDatePicker = null;  // 태스크 시작일 flatpickr 인스턴스
 var projectTaskViewMode = 'grouped'; // 프로젝트 태스크 뷰 모드: 'grouped' (멤버별) or 'flat' (전체)
 var ganttWeekendsRemoved = false; // 간트차트 주말 제거 여부
 var pendingImportFile = null;    // Import 대기 중인 파일
+var cachedJiraBaseUrl = null;    // Jira 베이스 URL 캐시 (태스크 링크 렌더링용)
+var jiraImportProjectId = null;  // Jira Import 모달에서 사용 중인 프로젝트 ID
+var jiraPreviewCreatedAfter = null; // Jira Import 미리보기에서 사용한 생성일자 필터
+var jiraPreviewStatusFilter = [];  // Jira Import 미리보기에서 사용한 상태 필터
+var projectTaskStatusFilter = 'TODO';  // 프로젝트 태스크 상태 필터 (기본값: TODO)
+var scheduleTaskStatusFilter = 'TODO'; // 스케줄 태스크 상태 필터 (기본값: TODO)
+var VALID_PROJECT_LIST_STATUS_FILTERS = ['ALL', 'EXCLUDE_COMPLETED', 'PLANNING', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'];
+var _savedProjectListFilter = localStorage.getItem('projectListStatusFilter');
+var projectListStatusFilter = VALID_PROJECT_LIST_STATUS_FILTERS.indexOf(_savedProjectListFilter) !== -1
+    ? _savedProjectListFilter
+    : 'EXCLUDE_COMPLETED';
+var ganttShowJiraKey = false;  // 간트차트 티켓번호 표시 여부
+var ganttShowDomain = false;   // 간트차트 도메인명 표시 여부
+var taskDepSearchBound = false; // 선행 태스크 검색 이벤트 바인딩 여부
 
 // ========================================
 // 사이드바 토글
@@ -461,18 +475,24 @@ async function loadDashboard() {
             var wHtml = '<div class="table-responsive"><table class="table table-sm mb-0">';
             wHtml += '<thead><tr><th>멤버</th><th>역할</th><th>활성 태스크</th><th>공수 합계</th></tr></thead><tbody>';
             tbData.members.forEach(function(m) {
-                var activeTasks = m.tasks ? m.tasks.filter(function(t) {
-                    return t.status !== 'COMPLETED' && t.status !== 'CANCELLED';
+                var allTasks = m.tasks ? m.tasks.filter(function(t) {
+                    return t.status !== 'CANCELLED';
                 }) : [];
+                var activeTasks = allTasks.filter(function(t) {
+                    return t.status !== 'COMPLETED';
+                });
                 var activeCount = activeTasks.length;
-                var totalMd = activeTasks.reduce(function(sum, t) {
+                var totalMd = allTasks.reduce(function(sum, t) {
+                    return sum + (t.manDays ? parseFloat(t.manDays) : 0);
+                }, 0);
+                var remainingMd = activeTasks.reduce(function(sum, t) {
                     return sum + (t.manDays ? parseFloat(t.manDays) : 0);
                 }, 0);
                 wHtml += '<tr>';
                 wHtml += '<td>' + escapeHtml(m.name) + '</td>';
                 wHtml += '<td>' + roleBadge(m.role) + '</td>';
                 wHtml += '<td><span class="badge bg-' + (activeCount > 5 ? 'danger' : activeCount > 3 ? 'warning' : 'success') + '">' + activeCount + '</span></td>';
-                wHtml += '<td><strong>' + totalMd + '</strong> MD</td>';
+                wHtml += '<td><strong>' + remainingMd + '</strong>/' + totalMd + ' MD</td>';
                 wHtml += '</tr>';
             });
             wHtml += '</tbody></table></div>';
@@ -511,7 +531,7 @@ async function loadDashboard() {
         // 최근 프로젝트 목록
         var tbody = document.getElementById('dashboard-projects-table');
         if (projects.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">등록된 프로젝트가 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">등록된 프로젝트가 없습니다.</td></tr>';
         } else {
             var html = '';
             var recentProjects = projects.slice(0, 5);
@@ -528,7 +548,8 @@ async function loadDashboard() {
                 html += '<td>' + escapeHtml(p.name) + '</td>';
                 html += '<td>' + typeBadge(p.projectType) + '</td>';
                 html += '<td>' + statusBadge(p.status) + '</td>';
-                html += '<td>' + formatDateWithDay(p.startDate) + ' ~ ' + formatDateWithDay(p.endDate) + '</td>';
+                html += '<td>' + formatDateWithDay(p.startDate) + '</td>';
+                html += '<td>' + formatDateWithDay(p.endDate) + '</td>';
                 html += '<td>' + delayHtml + '</td>';
                 html += '</tr>';
             });
@@ -785,51 +806,121 @@ async function deleteDomainSystem(id) {
 // Projects
 // ========================================
 
+/**
+ * 프로젝트 목록 상태 필터 적용
+ * (프로젝트 상세 태스크 필터 applyProjectStatusFilter와 별개)
+ */
+function applyProjectListStatusFilter(projects) {
+    if (projectListStatusFilter === 'ALL') return projects;
+    if (projectListStatusFilter === 'EXCLUDE_COMPLETED') {
+        return projects.filter(function(p) { return p.status !== 'COMPLETED'; });
+    }
+    return projects.filter(function(p) { return p.status === projectListStatusFilter; });
+}
+
+/**
+ * 프로젝트 목록 상태 필터 변경
+ * (프로젝트 상세 태스크 필터 setProjectStatusFilter(status, projectId)와 별개)
+ */
+function setProjectListStatusFilter(status) {
+    if (VALID_PROJECT_LIST_STATUS_FILTERS.indexOf(status) === -1) return;
+    projectListStatusFilter = status;
+    localStorage.setItem('projectListStatusFilter', status);
+    renderProjectListFilterButtons();
+    renderProjectsTable(window._cachedProjects || []);
+}
+
+/**
+ * 프로젝트 목록 상태 필터 버튼 렌더링
+ */
+function renderProjectListFilterButtons() {
+    var group = document.getElementById('project-list-status-filter-group');
+    if (!group) return;
+    var sf = projectListStatusFilter;
+    group.innerHTML =
+        '<button type="button" class="btn btn-sm '
+            + (sf==='EXCLUDE_COMPLETED' ? 'btn-secondary' : 'btn-outline-secondary')
+            + '" onclick="setProjectListStatusFilter(\'EXCLUDE_COMPLETED\')">완료 제외</button>'
+        + '<button type="button" class="btn btn-sm '
+            + (sf==='ALL' ? 'btn-dark' : 'btn-outline-dark')
+            + '" onclick="setProjectListStatusFilter(\'ALL\')">전체</button>'
+        + '<button type="button" class="btn btn-sm '
+            + (sf==='PLANNING' ? 'btn-info' : 'btn-outline-info')
+            + '" onclick="setProjectListStatusFilter(\'PLANNING\')">플래닝</button>'
+        + '<button type="button" class="btn btn-sm '
+            + (sf==='IN_PROGRESS' ? 'btn-primary' : 'btn-outline-primary')
+            + '" onclick="setProjectListStatusFilter(\'IN_PROGRESS\')">진행중</button>'
+        + '<button type="button" class="btn btn-sm '
+            + (sf==='COMPLETED' ? 'btn-success' : 'btn-outline-success')
+            + '" onclick="setProjectListStatusFilter(\'COMPLETED\')">완료</button>'
+        + '<button type="button" class="btn btn-sm '
+            + (sf==='ON_HOLD' ? 'btn-warning' : 'btn-outline-warning')
+            + '" onclick="setProjectListStatusFilter(\'ON_HOLD\')">보류</button>';
+}
+
+/**
+ * 프로젝트 목록 테이블 렌더링 (필터 적용)
+ */
+function renderProjectsTable(projects) {
+    var tbody = document.getElementById('projects-table');
+    var filtered = applyProjectListStatusFilter(projects);
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">해당 상태의 프로젝트가 없습니다.</td></tr>';
+        return;
+    }
+
+    var html = '';
+    filtered.forEach(function(p) {
+        var memberCount = p.memberCount != null ? p.memberCount : 0;
+        var delayHtml = '';
+        if (p.isDelayed === true) {
+            delayHtml = '<span class="delay-indicator delayed"><i class="bi bi-exclamation-triangle-fill"></i> 지연</span>';
+        } else if (p.isDelayed === false) {
+            delayHtml = '<span class="delay-indicator on-track"><i class="bi bi-check-circle-fill"></i> 정상</span>';
+        } else {
+            delayHtml = '-';
+        }
+        html += '<tr>';
+        html += '<td class="cursor-pointer" onclick="showProjectDetail(' + p.id + ')"><strong>' + escapeHtml(p.name) + '</strong></td>';
+        html += '<td>' + typeBadge(p.projectType) + '</td>';
+        html += '<td>' + statusBadge(p.status) + '</td>';
+        html += '<td>-</td>';
+        html += '<td>' + formatDateWithDay(p.startDate) + '</td>';
+        html += '<td>' + formatDateWithDay(p.endDate) + '</td>';
+        html += '<td>' + delayHtml + '</td>';
+        html += '<td>' + memberCount + '명</td>';
+        html += '<td class="text-center">';
+        html += '<div class="action-buttons">';
+        html += '<button class="btn btn-outline-info btn-sm" onclick="event.stopPropagation(); showGanttChart(' + p.id + ')" title="간트차트"><i class="bi bi-bar-chart-steps"></i></button>';
+        html += '<button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); showProjectModal(' + p.id + ')" title="수정"><i class="bi bi-pencil"></i></button>';
+        html += '<button class="btn btn-outline-danger btn-sm" onclick="event.stopPropagation(); deleteProject(' + p.id + ')" title="삭제"><i class="bi bi-trash"></i></button>';
+        html += '</div>';
+        html += '</td>';
+        html += '</tr>';
+    });
+    tbody.innerHTML = html;
+}
+
 async function loadProjects() {
     // 목록 뷰 표시, 상세 뷰 숨김
     document.getElementById('project-list-view').style.display = '';
     document.getElementById('project-detail-view').style.display = 'none';
 
+    renderProjectListFilterButtons();
+
     try {
         var res = await apiCall('/api/v1/projects');
         var projects = (res.success && res.data) ? res.data : [];
-        var tbody = document.getElementById('projects-table');
+        window._cachedProjects = projects;
 
         if (projects.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">등록된 프로젝트가 없습니다.</td></tr>';
+            document.getElementById('projects-table').innerHTML =
+                '<tr><td colspan="10" class="text-center text-muted">등록된 프로젝트가 없습니다.</td></tr>';
             return;
         }
 
-        var html = '';
-        projects.forEach(function(p) {
-            var memberCount = p.memberCount != null ? p.memberCount : 0;
-            var delayHtml = '';
-            if (p.isDelayed === true) {
-                delayHtml = '<span class="delay-indicator delayed"><i class="bi bi-exclamation-triangle-fill"></i> 지연</span>';
-            } else if (p.isDelayed === false) {
-                delayHtml = '<span class="delay-indicator on-track"><i class="bi bi-check-circle-fill"></i> 정상</span>';
-            } else {
-                delayHtml = '-';
-            }
-            html += '<tr>';
-            html += '<td class="cursor-pointer" onclick="showProjectDetail(' + p.id + ')"><strong>' + escapeHtml(p.name) + '</strong></td>';
-            html += '<td>' + typeBadge(p.projectType) + '</td>';
-            html += '<td>' + statusBadge(p.status) + '</td>';
-            html += '<td>-</td>'; // 진행률은 상세에서
-            html += '<td>' + formatDateWithDay(p.startDate) + '</td>';
-            html += '<td>' + formatDateWithDay(p.endDate) + '</td>';
-            html += '<td>' + delayHtml + '</td>';
-            html += '<td>' + memberCount + '명</td>';
-            html += '<td class="text-center">';
-            html += '<div class="action-buttons">';
-            html += '<button class="btn btn-outline-info btn-sm" onclick="event.stopPropagation(); showGanttChart(' + p.id + ')" title="간트차트"><i class="bi bi-bar-chart-steps"></i></button>';
-            html += '<button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); showProjectModal(' + p.id + ')" title="수정"><i class="bi bi-pencil"></i></button>';
-            html += '<button class="btn btn-outline-danger btn-sm" onclick="event.stopPropagation(); deleteProject(' + p.id + ')" title="삭제"><i class="bi bi-trash"></i></button>';
-            html += '</div>';
-            html += '</td>';
-            html += '</tr>';
-        });
-        tbody.innerHTML = html;
+        renderProjectsTable(projects);
     } catch (e) {
         console.error('프로젝트 목록 로드 실패:', e);
         showToast('프로젝트 목록을 불러오는데 실패했습니다.', 'error');
@@ -947,10 +1038,30 @@ function renderProjectDetailHeader(p) {
     var delayEl = document.getElementById('project-detail-delay-warning');
     delayEl.style.display = 'none';
     delayEl.innerHTML = '';
+
+    // Jira 가져오기 버튼 표시/숨김
+    var jiraBtn = document.getElementById('jira-import-btn');
+    if (jiraBtn) {
+        jiraBtn.style.display = (p.jiraBoardId) ? '' : 'none';
+    }
 }
 
 async function loadProjectTasks(projectId) {
     var contentEl = document.getElementById('project-tasks-content');
+
+    // 아코디언 접기/펼치기 상태 저장 (DOM 재생성 전)
+    var collapseStates = {};
+    var collapseEls = contentEl.querySelectorAll('[id^="assignee-collapse-"]');
+    collapseEls.forEach(function(el) {
+        collapseStates[el.id] = el.classList.contains('show');
+    });
+
+    // 기존 flatpickr 인스턴스 정리 (메모리 누수 방지)
+    var oldDateInputs = contentEl.querySelectorAll('.project-task-queue-start-date');
+    oldDateInputs.forEach(function(el) {
+        if (el._flatpickr) el._flatpickr.destroy();
+    });
+
     try {
         var res = await apiCall('/api/v1/projects/' + projectId + '/tasks');
         if (!res.success || !res.data) {
@@ -980,30 +1091,55 @@ async function loadProjectTasks(projectId) {
         }
 
         // 뷰 모드 토글 버튼
-        var toggleHtml = '<div class="d-flex align-items-center mb-3">';
+        var toggleHtml = '<div class="d-flex align-items-center flex-wrap gap-2 mb-3">';
         toggleHtml += '<div class="btn-group btn-group-sm" role="group">';
         toggleHtml += '<button type="button" class="btn ' + (projectTaskViewMode === 'grouped' ? 'btn-primary' : 'btn-outline-primary') + '" onclick="switchProjectTaskView(\'grouped\', ' + projectId + ')"><i class="bi bi-people-fill"></i> 멤버별</button>';
         toggleHtml += '<button type="button" class="btn ' + (projectTaskViewMode === 'flat' ? 'btn-primary' : 'btn-outline-primary') + '" onclick="switchProjectTaskView(\'flat\', ' + projectId + ')"><i class="bi bi-list-ul"></i> 전체</button>';
         toggleHtml += '</div>';
+        // 상태 필터 버튼 그룹
+        var af = projectTaskStatusFilter;
+        toggleHtml += '<div class="btn-group btn-group-sm" id="project-status-filter-group">';
+        toggleHtml += '<button type="button" class="btn btn-sm ' + (af==='TODO' ? 'btn-warning' : 'btn-outline-warning') + '" onclick="setProjectStatusFilter(\'TODO\',' + projectId + ')">TODO</button>';
+        toggleHtml += '<button type="button" class="btn btn-sm ' + (af==='IN_PROGRESS' ? 'btn-primary' : 'btn-outline-primary') + '" onclick="setProjectStatusFilter(\'IN_PROGRESS\',' + projectId + ')">진행중</button>';
+        toggleHtml += '<button type="button" class="btn btn-sm ' + (af==='COMPLETED' ? 'btn-success' : 'btn-outline-success') + '" onclick="setProjectStatusFilter(\'COMPLETED\',' + projectId + ')">완료</button>';
+        toggleHtml += '<button type="button" class="btn btn-sm ' + (af==='HOLD' ? 'btn-secondary' : 'btn-outline-secondary') + '" onclick="setProjectStatusFilter(\'HOLD\',' + projectId + ')">홀드</button>';
+        toggleHtml += '<button type="button" class="btn btn-sm ' + (af==='CANCELLED' ? 'btn-danger' : 'btn-outline-danger') + '" onclick="setProjectStatusFilter(\'CANCELLED\',' + projectId + ')">취소</button>';
+        toggleHtml += '<button type="button" class="btn btn-sm ' + (af==='ALL' ? 'btn-dark' : 'btn-outline-dark') + '" onclick="setProjectStatusFilter(\'ALL\',' + projectId + ')">전체</button>';
+        toggleHtml += '</div>';
         var totalCount = allTasks.length + inactiveTasks.length;
-        toggleHtml += '<span class="text-muted ms-2" style="font-size:0.8rem;">' + totalCount + '건' + (inactiveTasks.length > 0 ? ' (비활성 ' + inactiveTasks.length + ')' : '') + '</span>';
+        toggleHtml += '<span class="text-muted" style="font-size:0.8rem;">' + totalCount + '건' + (inactiveTasks.length > 0 ? ' (비활성 ' + inactiveTasks.length + ')' : '') + '</span>';
+        toggleHtml += '<button class="btn btn-primary btn-sm" onclick="showTaskModal(null, ' + projectId + ')"><i class="bi bi-plus-lg"></i> 태스크 추가</button>';
+        // grouped 뷰: 상단 전체선택 toolbar 없음 (멤버별 카드 헤더에 배치)
+        // flat 뷰: 기존 전역 toolbar 유지
+        if (projectTaskViewMode === 'flat') {
+            toggleHtml += '<div id="project-batch-delete-toolbar" class="d-flex align-items-center gap-2">';
+            toggleHtml += '<input type="checkbox" id="project-select-all" title="전체 선택">';
+            toggleHtml += '<label for="project-select-all" class="mb-0" style="font-size:0.8rem;">전체 선택</label>';
+            toggleHtml += '<button class="btn btn-danger btn-sm ms-2" id="project-batch-delete-btn" disabled>';
+            toggleHtml += '<i class="bi bi-trash"></i> 선택 삭제 (<span id="project-selected-count">0</span>)';
+            toggleHtml += '</button>';
+            toggleHtml += '</div>';
+        }
         toggleHtml += '</div>';
 
         var html = '';
 
+        // 상태 필터 적용
+        var filteredAllTasks = applyProjectStatusFilter(allTasks);
+
         if (projectTaskViewMode === 'flat') {
             // 전체 목록: 시작일 기준 정렬
-            allTasks.sort(function(a, b) {
+            filteredAllTasks.sort(function(a, b) {
                 return (a.startDate || '9999').localeCompare(b.startDate || '9999');
             });
-            allTasks.forEach(function(t) {
+            filteredAllTasks.forEach(function(t) {
                 html += renderProjectTaskItem(t, null, projectId, false, true);
             });
         } else {
             // 멤버별 그룹화
             var assigneeGroups = {};
             var assigneeNames = {};
-            allTasks.forEach(function(t) {
+            filteredAllTasks.forEach(function(t) {
                 var key = (t.assignee && t.assignee.id) ? t.assignee.id : 'unassigned';
                 var name = (t.assignee && t.assignee.name) ? t.assignee.name : '미배정';
                 if (!assigneeGroups[key]) {
@@ -1038,21 +1174,40 @@ async function loadProjectTasks(projectId) {
                 });
                 ordered.sort(function(a, b) { return (a.assigneeOrder || 0) - (b.assigneeOrder || 0); });
 
+                var collapseId = 'assignee-collapse-' + key;
                 html += '<div class="card mb-3">';
-                html += '<div class="card-header py-2">';
+                html += '<div class="card-header py-2 assignee-collapse-header" style="cursor:pointer;" '
+                      + 'data-collapse-target="#' + collapseId + '" '
+                      + 'aria-expanded="true" aria-controls="' + collapseId + '">';
                 html += '<div class="d-flex align-items-center gap-2">';
                 html += '<i class="bi bi-person-fill"></i> <strong>' + escapeHtml(name) + '</strong>';
                 if (!isUnassigned) {
                     var assigneeData = tasks[0] && tasks[0].assignee ? tasks[0].assignee : null;
                     var qsd = assigneeData && assigneeData.queueStartDate ? assigneeData.queueStartDate : '';
-                    html += '<span class="text-muted ms-2" style="font-size:0.8rem;">착수일:</span>';
-                    html += '<input type="text" class="form-control form-control-sm project-task-queue-start-date" data-member-id="' + key + '" value="' + escapeHtml(qsd) + '" placeholder="미지정" style="width:120px; font-size:0.8rem;">';
-                    html += '<button class="btn btn-sm btn-outline-primary project-task-queue-start-save" data-member-id="' + key + '" data-member-name="' + escapeHtml(name) + '" style="padding:2px 6px;">저장</button>';
-                    html += '<button class="btn btn-sm btn-outline-secondary project-task-unavailable-btn" data-member-id="' + key + '" data-member-name="' + escapeHtml(name) + '" style="padding:2px 6px;" title="비가용일 조회"><i class="bi bi-calendar-x"></i></button>';
+                    html += '<span class="text-muted ms-2" style="font-size:0.8rem;" onclick="event.stopPropagation()">착수일:</span>';
+                    html += '<input type="text" class="form-control form-control-sm project-task-queue-start-date" data-member-id="' + key + '" data-member-name="' + escapeHtml(name) + '" value="' + escapeHtml(qsd) + '" placeholder="미지정" style="width:120px; font-size:0.8rem;" onclick="event.stopPropagation()">';
+                    html += '<button class="btn btn-sm btn-outline-success project-task-queue-start-recalculate" data-member-id="' + key + '" data-member-name="' + escapeHtml(name) + '" style="padding:2px 6px;" title="TODO 태스크 일정 최적화" onclick="event.stopPropagation()"><i class="bi bi-arrow-repeat"></i> 일정 최적화</button>';
+                    html += '<button class="btn btn-sm btn-outline-secondary project-task-unavailable-btn" data-member-id="' + key + '" data-member-name="' + escapeHtml(name) + '" style="padding:2px 6px;" title="비가용일 조회" onclick="event.stopPropagation()"><i class="bi bi-calendar-x"></i></button>';
                 }
-                html += '<span class="badge bg-secondary ms-auto">' + tasks.length + '건</span>';
+                // 멤버 카드 헤더에 멤버별 전체선택 추가
+                var memberSelectId = 'member-select-all-' + key;
+                var memberDeleteBtnId = 'member-batch-delete-btn-' + key;
+                var memberCountId = 'member-selected-count-' + key;
+                html += '<input type="checkbox" id="' + memberSelectId + '" class="member-select-all-cb" '
+                    + 'data-member-key="' + key + '" title="이 멤버 태스크 전체 선택" style="cursor:pointer;" onclick="event.stopPropagation()">';
+                html += '<button class="btn btn-danger btn-sm" id="' + memberDeleteBtnId + '" '
+                    + 'data-member-key="' + key + '" disabled style="padding:2px 8px; font-size:0.78rem;" onclick="event.stopPropagation()">'
+                    + '<i class="bi bi-trash"></i> 선택삭제(<span id="' + memberCountId + '">0</span>)'
+                    + '</button>';
+
+                var aTotalMd = tasks.reduce(function(s, t) { return s + (t.status !== 'CANCELLED' && t.manDays ? parseFloat(t.manDays) : 0); }, 0);
+                var aRemainMd = tasks.reduce(function(s, t) { return s + (t.status !== 'CANCELLED' && t.status !== 'COMPLETED' && t.manDays ? parseFloat(t.manDays) : 0); }, 0);
+                html += '<span class="text-muted ms-auto" style="font-size:0.8rem;">' + aRemainMd + '/' + aTotalMd + ' MD</span>';
+                html += '<span class="badge bg-secondary ms-1">' + tasks.length + '건</span>';
+                html += '<i class="bi bi-chevron-down ms-1 toggle-icon" style="transition: transform 0.2s;"></i>';
                 html += '</div>';
                 html += '</div>';
+                html += '<div id="' + collapseId + '" class="collapse show">';
                 html += '<div class="card-body p-2">';
 
                 if (!isUnassigned && ordered.length > 0) {
@@ -1088,33 +1243,109 @@ async function loadProjectTasks(projectId) {
                     });
                 }
 
-                html += '</div></div>';
+                html += '</div></div></div>';  // card-body, collapse, card
             });
         }
 
-        // HOLD/CANCELLED 태스크 별도 표시
-        if (inactiveTasks.length > 0) {
-            html += '<div class="card mb-3 border-secondary" style="opacity:0.7;">';
-            html += '<div class="card-header py-2 bg-light">';
-            html += '<strong class="text-secondary" style="font-size:0.85rem;"><i class="bi bi-pause-circle"></i> 비활성 태스크 (' + inactiveTasks.length + '건)</strong>';
-            html += '</div>';
-            html += '<div class="card-body p-2">';
-            inactiveTasks.forEach(function(t) {
-                html += renderProjectTaskItem(t, null, projectId, false, true);
-            });
-            html += '</div></div>';
+        // HOLD/CANCELLED 태스크 별도 표시 (상태 필터에 따라 표시 여부 결정)
+        var showInactive = (af === 'HOLD' || af === 'CANCELLED' || af === 'ALL');
+        if (showInactive && inactiveTasks.length > 0) {
+            // HOLD/CANCELLED 선택 시 해당 status만 필터링, ALL이면 전체
+            var filteredInactive = (af === 'ALL') ? inactiveTasks : inactiveTasks.filter(function(t) { return t.status === af; });
+            if (filteredInactive.length > 0) {
+                html += '<div class="card mb-3 border-secondary" style="opacity:0.7;">';
+                html += '<div class="card-header py-2 bg-light">';
+                html += '<strong class="text-secondary" style="font-size:0.85rem;"><i class="bi bi-pause-circle"></i> 비활성 태스크 (' + filteredInactive.length + '건)</strong>';
+                html += '</div>';
+                html += '<div class="card-body p-2">';
+                filteredInactive.forEach(function(t) {
+                    html += renderProjectTaskItem(t, null, projectId, false, true);
+                });
+                html += '</div></div>';
+            }
         }
 
         contentEl.innerHTML = toggleHtml + html;
+
+        // 아코디언 접기/펼치기 상태 복원
+        if (Object.keys(collapseStates).length > 0) {
+            Object.keys(collapseStates).forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) {
+                    if (!collapseStates[id]) {
+                        // 이전에 접혀있었으면 접기
+                        el.classList.remove('show');
+                        // aria-expanded도 동기화
+                        var trigger = contentEl.querySelector('[data-collapse-target="#' + id + '"]');
+                        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+                    }
+                }
+            });
+        }
+
+        // 배치 삭제 툴바 이벤트 바인딩 (flat/grouped 뷰 공통 동작)
+        var selectAllCb = document.getElementById('project-select-all');
+        if (selectAllCb) {
+            selectAllCb.addEventListener('change', function() {
+                var cbs = document.querySelectorAll('#project-tasks-content .project-task-checkbox');
+                cbs.forEach(function(cb) { cb.checked = selectAllCb.checked; });
+                updateProjectSelectedCount();
+            });
+        }
+        var batchDeleteBtn = document.getElementById('project-batch-delete-btn');
+        if (batchDeleteBtn) {
+            batchDeleteBtn.addEventListener('click', function() {
+                batchDeleteSelectedProjectTasks(projectId);
+            });
+        }
 
         // SortableJS 초기화 (멤버별 뷰에서만)
         if (projectTaskViewMode === 'grouped') {
             initProjectTaskDragDrop(projectId);
         }
 
+        // 멤버별 전체선택 + 삭제 버튼 이벤트 바인딩 (grouped 뷰에서만)
+        if (projectTaskViewMode === 'grouped') {
+            document.querySelectorAll('.member-select-all-cb').forEach(function(cb) {
+                cb.addEventListener('change', function() {
+                    var key = this.getAttribute('data-member-key');
+                    var memberCbs = document.querySelectorAll(
+                        '#project-tasks-content .project-task-checkbox[data-member-key="' + key + '"]');
+                    memberCbs.forEach(function(c) { c.checked = cb.checked; });
+                    updateProjectSelectedCount();
+                });
+            });
+            document.querySelectorAll('[id^="member-batch-delete-btn-"]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var key = btn.getAttribute('data-member-key');
+                    batchDeleteSelectedProjectTasks(projectId, key);
+                });
+            });
+        }
+
         // 담당자 태스크 착수일 flatpickr 초기화 (멤버별 뷰에서만)
         if (projectTaskViewMode === 'grouped') {
             await initProjectTaskQueueStartDates(projectId);
+            // 아코디언 헤더 클릭 이벤트 (interactive 요소 제외)
+            document.querySelectorAll('.assignee-collapse-header').forEach(function(header) {
+                header.addEventListener('click', function(e) {
+                    var tag = e.target.tagName.toLowerCase();
+                    if (tag === 'input' || tag === 'button' || tag === 'select' || tag === 'textarea'
+                        || e.target.closest('button') || e.target.closest('input')) return;
+                    var targetSel = header.getAttribute('data-collapse-target');
+                    if (!targetSel) return;
+                    var collapseEl = document.querySelector(targetSel);
+                    if (!collapseEl) return;
+                    var bsCollapse = bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+                    if (collapseEl.classList.contains('show')) {
+                        bsCollapse.hide();
+                        header.setAttribute('aria-expanded', 'false');
+                    } else {
+                        bsCollapse.show();
+                        header.setAttribute('aria-expanded', 'true');
+                    }
+                });
+            });
         }
     } catch (e) {
         console.error('프로젝트 태스크 로드 실패:', e);
@@ -1128,6 +1359,41 @@ async function loadProjectTasks(projectId) {
 function switchProjectTaskView(mode, projectId) {
     projectTaskViewMode = mode;
     loadProjectTasks(projectId);
+}
+
+/**
+ * 프로젝트 태스크 상태 필터 적용
+ * allTasks에서 현재 projectTaskStatusFilter에 해당하는 태스크만 반환
+ */
+function applyProjectStatusFilter(tasks) {
+    if (projectTaskStatusFilter === 'ALL') return tasks;
+    return tasks.filter(function(t) { return t.status === projectTaskStatusFilter; });
+}
+
+/**
+ * 프로젝트 태스크 상태 필터 변경 후 재로드
+ */
+function setProjectStatusFilter(status, projectId) {
+    projectTaskStatusFilter = status;
+    loadProjectTasks(projectId);
+}
+
+/**
+ * 스케줄 태스크 상태 필터 적용
+ */
+function applyScheduleStatusFilter(tasks) {
+    if (scheduleTaskStatusFilter === 'ALL') return tasks;
+    return tasks.filter(function(t) { return t.status === scheduleTaskStatusFilter; });
+}
+
+/**
+ * 스케줄 태스크 상태 필터 변경 후 재로드
+ */
+function setScheduleStatusFilter(status) {
+    scheduleTaskStatusFilter = status;
+    if (currentScheduleMemberId) {
+        selectScheduleMember(currentScheduleMemberId, currentScheduleMemberName);
+    }
 }
 
 /**
@@ -1161,37 +1427,27 @@ async function initProjectTaskQueueStartDates(projectId) {
                         return false;
                     };
                 })(holidays, memberLeaves)
-            ]
+            ],
+            onChange: (function(mid, mname, pid) {
+                return async function(selectedDates, dateStr) {
+                    if (dateStr !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+                    try {
+                        var res = await apiCall('/api/v1/members/' + mid + '/queue-start-date', 'PATCH',
+                            { queueStartDate: dateStr || null });
+                        if (res.success) {
+                            showToast(mname + '님의 착수일이 저장되었습니다.', 'success');
+                            await loadProjectTasks(pid);
+                        } else {
+                            showToast(res.message || '저장에 실패했습니다.', 'error');
+                        }
+                    } catch (e) {
+                        console.error('착수일 자동 저장 실패:', e);
+                        showToast('착수일 저장에 실패했습니다.', 'error');
+                    }
+                };
+            })(memberId, el.getAttribute('data-member-name') || memberId, projectId)
         });
     }
-
-    // 저장 버튼 이벤트 바인딩
-    var saveBtns = document.querySelectorAll('.project-task-queue-start-save');
-    saveBtns.forEach(function(btn) {
-        btn.addEventListener('click', async function() {
-            var memberId = btn.getAttribute('data-member-id');
-            var memberName = btn.getAttribute('data-member-name');
-            var dateInput = document.querySelector('.project-task-queue-start-date[data-member-id="' + memberId + '"]');
-            var dateVal = dateInput ? dateInput.value.trim() : '';
-            // 날짜 형식 검증 (빈 값은 null로 전송하여 착수일 제거)
-            if (dateVal && !/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
-                showToast('날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
-                return;
-            }
-            try {
-                var res = await apiCall('/api/v1/members/' + memberId + '/queue-start-date', 'PATCH', { queueStartDate: dateVal || null });
-                if (res.success) {
-                    showToast(memberName + '님의 태스크 착수일이 저장되었습니다.', 'success');
-                    await loadProjectTasks(projectId);
-                } else {
-                    showToast(res.message || '저장에 실패했습니다.', 'error');
-                }
-            } catch (e) {
-                console.error('태스크 착수일 저장 실패:', e);
-                showToast('태스크 착수일 저장에 실패했습니다.', 'error');
-            }
-        });
-    });
 
     // 비가용일 조회 버튼 이벤트 바인딩 (XSS 방지: data-attribute + addEventListener)
     var unavailBtns = document.querySelectorAll('.project-task-unavailable-btn');
@@ -1202,6 +1458,104 @@ async function initProjectTaskQueueStartDates(projectId) {
             showUnavailableDatesPopup(memberId, memberName);
         });
     });
+
+    // 일정 최적화 버튼 이벤트 바인딩
+    var recalcBtns = document.querySelectorAll('.project-task-queue-start-recalculate');
+    recalcBtns.forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            var memberId = btn.getAttribute('data-member-id');
+            var memberName = btn.getAttribute('data-member-name');
+            try {
+                var res = await apiCall('/api/v1/members/' + memberId + '/recalculate-queue', 'POST');
+                if (res.success) {
+                    showToast(memberName + '님의 TODO 태스크 일정이 최적화되었습니다.', 'success');
+                    await loadProjectTasks(projectId);
+                } else {
+                    showToast(res.message || '최적화에 실패했습니다.', 'error');
+                }
+            } catch (e) {
+                showToast('일정 최적화에 실패했습니다.', 'error');
+            }
+        });
+    });
+}
+
+/**
+ * 프로젝트 태스크 선택 개수 카운터 업데이트
+ */
+function updateProjectSelectedCount() {
+    if (projectTaskViewMode === 'flat') {
+        // 기존 전역 카운터 로직 유지
+        var checked = document.querySelectorAll('#project-tasks-content .project-task-checkbox:checked');
+        var countEl = document.getElementById('project-selected-count');
+        var deleteBtn = document.getElementById('project-batch-delete-btn');
+        if (countEl) countEl.textContent = checked.length;
+        if (deleteBtn) deleteBtn.disabled = (checked.length === 0);
+        var allCbs = document.querySelectorAll('#project-tasks-content .project-task-checkbox');
+        var selectAllCb = document.getElementById('project-select-all');
+        if (selectAllCb) {
+            selectAllCb.checked = allCbs.length > 0 && checked.length === allCbs.length;
+        }
+    } else {
+        // grouped 뷰: 멤버별 카운터 업데이트
+        document.querySelectorAll('.member-select-all-cb').forEach(function(cb) {
+            var key = cb.getAttribute('data-member-key');
+            var memberCbs = document.querySelectorAll(
+                '#project-tasks-content .project-task-checkbox[data-member-key="' + key + '"]');
+            var memberChecked = document.querySelectorAll(
+                '#project-tasks-content .project-task-checkbox[data-member-key="' + key + '"]:checked');
+            var countEl = document.getElementById('member-selected-count-' + key);
+            var deleteBtn = document.getElementById('member-batch-delete-btn-' + key);
+            if (countEl) countEl.textContent = memberChecked.length;
+            if (deleteBtn) deleteBtn.disabled = (memberChecked.length === 0);
+            // indeterminate 처리
+            if (memberCbs.length === 0) {
+                cb.checked = false;
+                cb.indeterminate = false;
+            } else if (memberChecked.length === 0) {
+                cb.checked = false;
+                cb.indeterminate = false;
+            } else if (memberChecked.length === memberCbs.length) {
+                cb.checked = true;
+                cb.indeterminate = false;
+            } else {
+                cb.checked = false;
+                cb.indeterminate = true;
+            }
+        });
+    }
+}
+
+/**
+ * 프로젝트 태스크 선택 삭제
+ */
+var projectBatchDeleteInProgress = false;
+async function batchDeleteSelectedProjectTasks(projectId, memberKey) {
+    if (projectBatchDeleteInProgress) return;
+    var selector = '#project-tasks-content .project-task-checkbox:checked';
+    // grouped 뷰 멤버별 삭제 버튼에서 호출 시 해당 멤버 체크박스만 대상
+    if (memberKey != null) {
+        selector = '#project-tasks-content .project-task-checkbox[data-member-key="'
+            + memberKey + '"]:checked';
+    }
+    var checked = document.querySelectorAll(selector);
+    if (checked.length === 0) return;
+    if (!confirmAction(checked.length + '개 태스크를 삭제하시겠습니까?')) return;
+    projectBatchDeleteInProgress = true;
+    var taskIds = Array.from(checked).map(function(cb) { return parseInt(cb.value); });
+    try {
+        var res = await apiCall('/api/v1/tasks/batch-delete', 'POST', { taskIds: taskIds });
+        if (res.success) {
+            showToast(res.deleted + '개 태스크가 삭제되었습니다.', 'success');
+            await loadProjectTasks(projectId);
+        } else {
+            showToast(res.message || '삭제에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        showToast('태스크 삭제에 실패했습니다.', 'error');
+    } finally {
+        projectBatchDeleteInProgress = false;
+    }
 }
 
 /**
@@ -1213,6 +1567,14 @@ function renderProjectTaskItem(t, orderNum, projectId, draggable, showAssignee) 
         + ' onclick="showTaskModal(' + t.id + ', ' + projectId + ')"'
         + (orderNum == null && draggable ? ' style="border-left:3px solid ' + borderColor + ';"' : '')
         + '>';
+    // 비활성 태스크(HOLD/CANCELLED)는 data-member-key="inactive",
+    // 그 외는 assignee.id 또는 'unassigned'
+    var memberKey = (t.status === 'HOLD' || t.status === 'CANCELLED')
+        ? 'inactive'
+        : (t.assignee && t.assignee.id ? t.assignee.id : 'unassigned');
+    html += '<input type="checkbox" class="project-task-checkbox me-1" value="' + t.id + '" '
+        + 'data-member-key="' + memberKey + '" '
+        + 'onclick="event.stopPropagation(); updateProjectSelectedCount();">';
     if (draggable) {
         html += '<i class="bi bi-grip-vertical drag-handle cursor-pointer me-2" title="드래그하여 순서 변경"></i>';
     }
@@ -1233,6 +1595,14 @@ function renderProjectTaskItem(t, orderNum, projectId, draggable, showAssignee) 
     html += '</div>';
     html += '</div>';
     html += '<div class="ms-2 d-flex align-items-center gap-1">';
+    if (t.jiraKey && cachedJiraBaseUrl && isSafeUrl(cachedJiraBaseUrl)) {
+        html += '<a href="' + escapeHtml(cachedJiraBaseUrl) + '/browse/' + escapeHtml(t.jiraKey) + '" target="_blank" rel="noopener noreferrer"'
+            + ' class="badge bg-info text-decoration-none" title="Jira 티켓 보기"'
+            + ' onclick="event.stopPropagation();">'
+            + '<i class="bi bi-link-45deg"></i> ' + escapeHtml(t.jiraKey) + '</a>';
+    } else if (t.jiraKey) {
+        html += '<span class="badge bg-info"><i class="bi bi-link-45deg"></i> ' + escapeHtml(t.jiraKey) + '</span>';
+    }
     html += statusBadge(t.status);
     html += '</div>';
     html += '</div>';
@@ -1256,6 +1626,8 @@ function initProjectTaskDragDrop(projectId) {
         new Sortable(container, {
             group: 'project-queue-' + assigneeId,
             handle: '.drag-handle',
+            filter: 'input[type="checkbox"]',
+            preventOnFilter: false,
             animation: 150,
             ghostClass: 'sortable-ghost',
             chosenClass: 'sortable-chosen',
@@ -1269,6 +1641,8 @@ function initProjectTaskDragDrop(projectId) {
         new Sortable(container, {
             group: 'project-queue-' + assigneeId,
             handle: '.drag-handle',
+            filter: 'input[type="checkbox"]',
+            preventOnFilter: false,
             animation: 150,
             ghostClass: 'sortable-ghost',
             chosenClass: 'sortable-chosen',
@@ -1347,6 +1721,7 @@ async function showProjectModal(projectId) {
     document.getElementById('project-start-date').value = '';
     document.getElementById('project-end-date').value = '';
     document.getElementById('project-status').value = 'PLANNING';
+    document.getElementById('project-jira-board-id').value = '';
     document.getElementById('project-delay-warning').style.display = 'none';
     document.getElementById('project-delay-warning').innerHTML = '';
 
@@ -1386,6 +1761,7 @@ async function showProjectModal(projectId) {
                 document.getElementById('project-start-date').value = p.startDate || '';
                 document.getElementById('project-end-date').value = p.endDate || '';
                 document.getElementById('project-status').value = p.status || 'PLANNING';
+                document.getElementById('project-jira-board-id').value = p.jiraBoardId || '';
                 currentMembers = p.members ? p.members.map(function(m) { return m.id; }) : [];
                 currentDs = p.domainSystems ? p.domainSystems.map(function(d) { return d.id; }) : [];
 
@@ -1461,13 +1837,16 @@ async function saveProject() {
         return;
     }
 
+    var jiraBoardId = document.getElementById('project-jira-board-id').value.trim() || null;
+
     var body = {
         name: name,
         projectType: type,
         description: description,
         startDate: startDate,
         endDate: endDate,
-        status: status
+        status: status,
+        jiraBoardId: jiraBoardId
     };
 
     try {
@@ -1609,10 +1988,8 @@ async function loadGanttSection() {
         if (currentProjectId) {
             select.value = currentProjectId;
             if (currentProjectId === 'all') {
-                document.getElementById('gantt-add-task-btn').style.display = 'none';
                 await loadAllProjectsGantt();
             } else {
-                document.getElementById('gantt-add-task-btn').style.display = '';
                 await loadGanttData(currentProjectId);
             }
         }
@@ -1636,20 +2013,17 @@ async function onGanttProjectChange(projectId) {
     if (!projectId) {
         currentProjectId = null;
         document.getElementById('gantt-chart').innerHTML = '<div class="empty-state"><i class="bi bi-bar-chart-steps"></i><p>프로젝트를 선택하여 간트차트를 표시하세요.</p></div>';
-        document.getElementById('gantt-add-task-btn').style.display = 'none';
         document.getElementById('gantt-warnings').style.display = 'none';
         ganttInstance = null;
         return;
     }
     if (projectId === 'all') {
         currentProjectId = 'all';
-        document.getElementById('gantt-add-task-btn').style.display = 'none';
         document.getElementById('gantt-warnings').style.display = 'none';
         await loadAllProjectsGantt();
         return;
     }
     currentProjectId = parseInt(projectId);
-    document.getElementById('gantt-add-task-btn').style.display = '';
     await loadGanttData(currentProjectId);
 }
 
@@ -1730,12 +2104,12 @@ async function loadAllProjectsGantt() {
             ganttInstance = new Gantt('#gantt-chart', allTasks, {
                 view_mode: currentViewMode,
                 date_format: 'YYYY-MM-DD',
-                bar_height: 23,
+                bar_height: 20,
                 bar_corner_radius: 3,
-                padding: 11,
+                padding: 8,
                 on_click: function(task) {
                     if (task._taskId) {
-                        showTaskDetail(task._taskId, { projectId: task._projectId });
+                        showTaskModal(task._taskId, task._projectId);
                     }
                 },
                 on_date_change: function() {
@@ -1768,7 +2142,7 @@ async function loadAllProjectsGantt() {
                         var id = parseInt(taskId.replace('task-', ''));
                         // projectId 추출: allTasks에서 찾기
                         var found = allTasks.find(function(t) { return t.id === taskId; });
-                        showTaskDetail(id, { projectId: found ? found._projectId : null });
+                        showTaskModal(id, found ? found._projectId : null);
                     }
                 });
                 clone.style.cursor = 'pointer';
@@ -1805,7 +2179,13 @@ async function loadAllProjectsGantt() {
                     else if (currentViewMode === 'Month') dayPixels = colWidth / 30;
                     var markerX = todayCenterX + (diffDays * dayPixels);
                     var svgWidth = parseFloat(svgEl.getAttribute('width') || svgEl.getBoundingClientRect().width);
-                    if (markerX < 0 || markerX > svgWidth) return;
+                    if (markerX < 0) return;
+                    // 마커가 SVG 범위를 초과하면 SVG 폭을 확장
+                    if (markerX > svgWidth - 20) {
+                        var newWidth = markerX + 200;
+                        svgEl.setAttribute('width', newWidth);
+                        svgEl.setAttribute('viewBox', '0 0 ' + newWidth + ' ' + (svgEl.getAttribute('height') || 500));
+                    }
                     var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                     g.setAttribute('class', 'gantt-deadline-marker-group');
                     var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -1816,11 +2196,14 @@ async function loadAllProjectsGantt() {
                     var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                     text.setAttribute('x', markerX + 4); text.setAttribute('y', 15);
                     text.setAttribute('class', 'gantt-deadline-label');
-                    text.textContent = '론치일 ' + project.endDate;
+                    text.textContent = '[' + project.name + '] 론치일 ' + formatDateWithDay(project.endDate);
                     g.appendChild(text);
                     svgEl.appendChild(g);
                 });
             }
+
+            // sticky 헤더 설정
+            setupGanttStickyHeader(chartContainer);
         }, 100);
 
     } catch (e) {
@@ -1901,7 +2284,12 @@ function addGanttDeadlineMarkerForElement(project, inst, chartEl) {
 
         var markerX = todayCenterX + (diffDays * dayPixels);
         var svgWidth = parseFloat(svg.getAttribute('width') || svg.getBoundingClientRect().width);
-        if (markerX < 0 || markerX > svgWidth) return;
+        if (markerX < 0) return;
+        if (markerX > svgWidth - 20) {
+            var newWidth = markerX + 200;
+            svg.setAttribute('width', newWidth);
+            svg.setAttribute('viewBox', '0 0 ' + newWidth + ' ' + (svg.getAttribute('height') || 500));
+        }
 
         var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'gantt-deadline-marker-group');
@@ -1916,7 +2304,7 @@ function addGanttDeadlineMarkerForElement(project, inst, chartEl) {
         text.setAttribute('x', markerX + 4);
         text.setAttribute('y', 15);
         text.setAttribute('class', 'gantt-deadline-label');
-        text.textContent = '론치일 ' + project.endDate;
+        text.textContent = '[' + project.name + '] 론치일 ' + formatDateWithDay(project.endDate);
         g.appendChild(text);
         svg.appendChild(g);
     } catch (e) {
@@ -2092,9 +2480,11 @@ function convertToGanttTasks(data, projectName) {
             else if (task.status === 'IN_PROGRESS') progress = 50;
 
             var namePrefix = projectName ? '[' + projectName + '] ' : '';
+            var jiraPrefix = (ganttShowJiraKey && task.jiraKey) ? '[' + task.jiraKey + '] ' : '';
+            var domainPart = ganttShowDomain ? '[' + ds.name + '] ' : '';
             tasks.push({
                 id: 'task-' + task.id,
-                name: parallelPrefix + priorityPrefix + namePrefix + '[' + ds.name + '] ' + task.name + ' (' + assigneeName + ', ' + manDays + 'MD)',
+                name: parallelPrefix + priorityPrefix + jiraPrefix + namePrefix + domainPart + task.name + ' (' + assigneeName + ', ' + manDays + 'MD)',
                 start: task.startDate,
                 end: task.endDate,
                 progress: progress,
@@ -2103,7 +2493,8 @@ function convertToGanttTasks(data, projectName) {
                 _taskId: task.id,
                 _projectId: data.project ? data.project.id : null,
                 _domainSystem: ds.name,
-                _domainSystemColor: ds.color
+                _domainSystemColor: ds.color,
+                _jiraKey: task.jiraKey
             });
         });
     });
@@ -2128,11 +2519,13 @@ function renderGantt(data) {
         ganttInstance = new Gantt('#gantt-chart', tasks, {
             view_mode: currentViewMode,
             date_format: 'YYYY-MM-DD',
-            bar_height: 23,
+            bar_height: 20,
             bar_corner_radius: 3,
-            padding: 11,
+            padding: 8,
             on_click: function(task) {
-                showTaskDetail(task._taskId, { projectId: currentProjectId });
+                if (task._taskId) {
+                    showTaskModal(task._taskId, currentProjectId);
+                }
             },
             on_date_change: function(task, start, end) {
                 // 드래그 변경 무시 - 다시 렌더링
@@ -2154,7 +2547,7 @@ function renderGantt(data) {
                     var taskId = clone.getAttribute('data-id');
                     if (taskId && taskId.startsWith('task-')) {
                         var id = parseInt(taskId.replace('task-', ''));
-                        showTaskDetail(id, { projectId: currentProjectId });
+                        showTaskModal(id, currentProjectId);
                     }
                 });
                 clone.style.cursor = 'pointer';
@@ -2165,6 +2558,9 @@ function renderGantt(data) {
             if (data.project) {
                 addGanttDeadlineMarker(data.project);
             }
+
+            // 4. sticky 헤더 설정
+            setupGanttStickyHeader(chartContainer);
         }, 100);
     } catch (e) {
         console.error('간트차트 렌더링 실패:', e);
@@ -2174,6 +2570,17 @@ function renderGantt(data) {
     // 간트차트 경고 로드
     if (data.project && data.project.id) {
         loadGanttWarnings(data.project.id);
+    }
+}
+
+/**
+ * 간트차트 토글 필터 변경 후 재렌더링 (FR-002)
+ */
+function reRenderGanttWithToggles() {
+    if (currentProjectId === 'all') {
+        loadAllProjectsGantt();
+    } else if (currentProjectId && currentGanttData) {
+        renderGantt(currentGanttData);
     }
 }
 
@@ -2267,7 +2674,12 @@ function addGanttDeadlineMarker(project) {
         var markerX = todayCenterX + (diffDays * dayPixels);
 
         var svgWidth = parseFloat(svg.getAttribute('width') || svg.getBoundingClientRect().width);
-        if (markerX < 0 || markerX > svgWidth) return;
+        if (markerX < 0) return;
+        if (markerX > svgWidth - 20) {
+            var newWidth = markerX + 200;
+            svg.setAttribute('width', newWidth);
+            svg.setAttribute('viewBox', '0 0 ' + newWidth + ' ' + (svg.getAttribute('height') || 500));
+        }
 
         var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'gantt-deadline-marker-group');
@@ -2283,13 +2695,107 @@ function addGanttDeadlineMarker(project) {
         text.setAttribute('x', markerX + 4);
         text.setAttribute('y', 15);
         text.setAttribute('class', 'gantt-deadline-label');
-        text.textContent = '론치일 ' + project.endDate;
+        text.textContent = '[' + project.name + '] 론치일 ' + formatDateWithDay(project.endDate);
         g.appendChild(text);
 
         svg.appendChild(g);
     } catch (e) {
         console.error('론치일 마커 삽입 실패:', e);
     }
+}
+
+/**
+ * 간트차트 날짜 헤더 sticky 구현
+ * SVG의 date 레이어와 grid-header를 DOM 최상위로 이동하고,
+ * 스크롤 이벤트에서 translateY로 헤더 위치를 보정한다.
+ * @param {HTMLElement} chartEl - #gantt-chart 요소
+ */
+function setupGanttStickyHeader(chartEl) {
+    var scrollContainer = document.querySelector('#gantt-container .card-body');
+    if (!scrollContainer) return;
+    var svg = chartEl.querySelector('svg');
+    if (!svg) return;
+
+    var gridLayer = svg.querySelector('g.grid');
+    var dateLayer = svg.querySelector('g.date');
+    if (!gridLayer || !dateLayer) return;
+
+    // grid-header rect (헤더 배경)
+    var gridHeaderRect = gridLayer.querySelector('rect.grid-header');
+
+    // rect.grid-header의 height를 날짜 헤더 전체 높이로 동적 재설정
+    // getBBox()로 g.date의 실제 렌더링 bounding box를 구해서 정밀한 height 설정
+    if (gridHeaderRect && dateLayer) {
+        var dateBBox;
+        try { dateBBox = dateLayer.getBBox(); } catch(e) { dateBBox = null; }
+        if (dateBBox && dateBBox.height > 0) {
+            var headerHeight = dateBBox.y + dateBBox.height + 2; // 2px 여유
+            gridHeaderRect.setAttribute('height', headerHeight);
+        } else {
+            // getBBox 실패 시 fallback: .lower-text의 최대 y + font-size + 4px
+            var lowerTexts = dateLayer.querySelectorAll('.lower-text');
+            var maxY = 0;
+            lowerTexts.forEach(function(t) {
+                var y = parseFloat(t.getAttribute('y') || 0);
+                if (y > maxY) maxY = y;
+            });
+            if (maxY > 0) {
+                var fontSize = 12;
+                var firstLower = lowerTexts[0];
+                if (firstLower) {
+                    var fs = parseFloat(firstLower.getAttribute('font-size') || 0);
+                    if (fs > 0) fontSize = fs;
+                }
+                gridHeaderRect.setAttribute('height', maxY + fontSize + 4);
+            }
+        }
+        gridHeaderRect.setAttribute('fill', '#ffffff');
+        // opacity 명시적으로 1 설정 (투명도로 인해 bar content가 비치는 문제 방지)
+        gridHeaderRect.setAttribute('opacity', '1');
+    }
+
+    // rect.grid-header 단독 + g.date를 SVG의 마지막 자식으로 이동 (z-order 최상위)
+    // 순서: rect 먼저, date layer 나중 → date layer가 rect 위에서 보임
+    if (gridHeaderRect) {
+        svg.appendChild(gridHeaderRect);
+    }
+    svg.appendChild(dateLayer);
+
+    // 론치일/오늘 마커를 SVG 최말단으로 재이동 (sticky header 위에 렌더링되도록 z-order 보장)
+    var deadlineMarkers = Array.from(svg.querySelectorAll('.gantt-deadline-marker-group'));
+    deadlineMarkers.forEach(function(m) { svg.appendChild(m); });
+    var todayMarkers = Array.from(svg.querySelectorAll('.gantt-today-marker-group'));
+    todayMarkers.forEach(function(m) { svg.appendChild(m); });
+
+    // 이전 스크롤 리스너 제거 (재렌더링 시 중복 방지)
+    if (scrollContainer._ganttStickyScrollHandler) {
+        scrollContainer.removeEventListener('scroll', scrollContainer._ganttStickyScrollHandler);
+    }
+
+    // requestAnimationFrame 기반 throttle
+    var rafPending = false;
+    function onScroll() {
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(function() {
+            rafPending = false;
+            var scrollTop = scrollContainer.scrollTop;
+            if (gridHeaderRect) {
+                gridHeaderRect.setAttribute('y', scrollTop);
+                // 스크롤 시 SVG 전체 폭에 맞춰 width 재설정 (주말 제거 후 폭 변화 반영)
+                var svgWidth = parseFloat(svg.getAttribute('width') || svg.getBoundingClientRect().width || 1000);
+                gridHeaderRect.setAttribute('width', svgWidth);
+            }
+            if (dateLayer) {
+                dateLayer.setAttribute('transform', 'translate(0,' + scrollTop + ')');
+            }
+        });
+    }
+
+    scrollContainer._ganttStickyScrollHandler = onScroll;
+    scrollContainer.addEventListener('scroll', onScroll);
+    // 초기 호출
+    onScroll();
 }
 
 /**
@@ -2625,6 +3131,15 @@ async function showTaskDetail(taskId, options) {
         html += '<tr><th>우선순위</th><td>' + (task.priority ? priorityBadge(task.priority) : '-') + '</td></tr>';
         html += '<tr><th>태스크 유형</th><td>' + (task.type ? taskTypeBadge(task.type) : '-') + '</td></tr>';
         html += '<tr><th>실제 완료일</th><td>' + formatDate(task.actualEndDate) + '</td></tr>';
+        // Jira 티켓 링크
+        if (task.jiraKey) {
+            var jiraLinkHtml = '<code>' + escapeHtml(task.jiraKey) + '</code>';
+            if (cachedJiraBaseUrl && isSafeUrl(cachedJiraBaseUrl)) {
+                jiraLinkHtml = '<a href="' + escapeHtml(cachedJiraBaseUrl) + '/browse/' + escapeHtml(task.jiraKey) + '" target="_blank" rel="noopener noreferrer">'
+                    + '<i class="bi bi-link-45deg"></i> ' + escapeHtml(task.jiraKey) + '</a>';
+            }
+            html += '<tr><th>Jira 티켓</th><td>' + jiraLinkHtml + '</td></tr>';
+        }
         html += '<tr><th>설명</th><td>' + escapeHtml(task.description || '-') + '</td></tr>';
         if (task.dependencyTasks && task.dependencyTasks.length > 0) {
             var depNames = task.dependencyTasks.map(function(d) { return escapeHtml(d.name); }).join(', ');
@@ -2702,6 +3217,7 @@ async function showTaskModal(taskId, projectId) {
     document.getElementById('task-priority').value = '';
     document.getElementById('task-type').value = '';
     document.getElementById('task-actual-end-date').value = '';
+    document.getElementById('task-jira-key').value = '';
     document.getElementById('task-description').value = '';
 
     // 충돌 경고 초기화
@@ -2773,6 +3289,7 @@ async function showTaskModal(taskId, projectId) {
                 document.getElementById('task-priority').value = t.priority || '';
                 document.getElementById('task-type').value = t.type || '';
                 document.getElementById('task-actual-end-date').value = t.actualEndDate || '';
+                document.getElementById('task-jira-key').value = t.jiraKey || '';
                 document.getElementById('task-description').value = t.description || '';
                 currentDependencies = t.dependencies || [];
 
@@ -2812,8 +3329,57 @@ async function showTaskModal(taskId, projectId) {
         triggerDatePreview();
     }
 
+    // 삭제 버튼 표시/숨김 (수정 모드에서만 표시)
+    var deleteModalBtn = document.getElementById('task-modal-delete-btn');
+    if (taskId) {
+        deleteModalBtn.style.display = '';
+        deleteModalBtn.onclick = function() {
+            if (!confirmAction('이 태스크를 삭제하시겠습니까?')) return;
+            bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
+            deleteTask(taskId, true);
+        };
+    } else {
+        deleteModalBtn.style.display = 'none';
+        deleteModalBtn.onclick = null;
+    }
+
+    // FR-006-C: 선행 태스크 검색 입력창 초기화 및 이벤트 바인딩 (1회만)
+    var depSearchEl = document.getElementById('task-dep-search');
+    if (depSearchEl) {
+        depSearchEl.value = '';
+        // 모든 항목 표시 상태로 복원
+        var allItems = document.querySelectorAll('#task-dependencies-checklist .form-check');
+        allItems.forEach(function(item) { item.style.display = ''; });
+
+        if (!taskDepSearchBound) {
+            depSearchEl.addEventListener('input', function() {
+                var keyword = this.value.trim().toLowerCase();
+                var items = document.querySelectorAll('#task-dependencies-checklist .form-check');
+                items.forEach(function(item) {
+                    var label = item.querySelector('label');
+                    if (!label) return;
+                    var text = label.textContent.toLowerCase();
+                    item.style.display = (keyword === '' || text.includes(keyword)) ? '' : 'none';
+                });
+            });
+            taskDepSearchBound = true;
+        }
+    }
+
     var modal = new bootstrap.Modal(document.getElementById('taskModal'));
     modal.show();
+}
+
+/**
+ * 멤버별 태스크(일정관리) 화면에서 태스크 추가 래퍼 함수 (FR-005-B)
+ * showTaskModal 완료 후 담당자를 자동 선택한다.
+ */
+async function showTaskModalForScheduleMember() {
+    await showTaskModal(null, null);
+    if (currentScheduleMemberId) {
+        var assigneeSelect = document.getElementById('task-assignee');
+        if (assigneeSelect) assigneeSelect.value = currentScheduleMemberId;
+    }
 }
 
 /**
@@ -2965,6 +3531,8 @@ async function saveTask() {
     var taskType = document.getElementById('task-type').value;
     var actualEndDate = document.getElementById('task-actual-end-date').value;
 
+    var jiraKey = document.getElementById('task-jira-key').value.trim();
+
     var body = {
         name: name,
         domainSystemId: parseInt(domainSystemId),
@@ -2975,6 +3543,7 @@ async function saveTask() {
         priority: priority || null,
         type: taskType || null,
         actualEndDate: actualEndDate || null,
+        jiraKey: jiraKey || null,
         description: description,
         links: links
     };
@@ -3062,8 +3631,8 @@ async function updateTaskDependencies(taskId) {
     }
 }
 
-async function deleteTask(id) {
-    if (!confirmAction('이 태스크를 삭제하시겠습니까?')) return;
+async function deleteTask(id, skipConfirm) {
+    if (!skipConfirm && !confirmAction('이 태스크를 삭제하시겠습니까?')) return;
 
     try {
         var res = await apiCall('/api/v1/tasks/' + id, 'DELETE');
@@ -3312,11 +3881,11 @@ async function selectScheduleMember(memberId, name) {
         }
     });
 
-    document.getElementById('schedule-member-name').innerHTML = '<strong>' + escapeHtml(name) + '</strong> 태스크 큐 <button class="btn btn-sm btn-outline-secondary ms-2" onclick="showUnavailableDatesPopup(' + memberId + ', \'' + escapeJsString(escapeHtml(name)) + '\')" style="padding:1px 5px; font-size:0.75rem;" title="비가용일 조회"><i class="bi bi-calendar-x"></i></button>';
+    document.getElementById('schedule-member-name').innerHTML = '<strong>' + escapeHtml(name) + '</strong> 태스크 큐 <button class="btn btn-sm btn-outline-secondary ms-2" onclick="showUnavailableDatesPopup(' + memberId + ', \'' + escapeJsString(escapeHtml(name)) + '\')" style="padding:1px 5px; font-size:0.75rem;" title="비가용일 조회"><i class="bi bi-calendar-x"></i></button><span id="schedule-md-summary" class="text-muted ms-auto" style="font-size:0.8rem;"></span>';
 
     // 태스크 착수일 표시
     var queueStartDateRow = document.getElementById('schedule-queue-start-date-row');
-    queueStartDateRow.style.cssText = 'display: flex !important;';
+    queueStartDateRow.style.display = 'flex';
     try {
         var memberRes = await apiCall('/api/v1/members/' + memberId);
         if (memberRes.success && memberRes.data) {
@@ -3342,7 +3911,26 @@ async function selectScheduleMember(memberId, name) {
                         if (memberLeaves[dateStr]) return true;
                         return false;
                     }
-                ]
+                ],
+                onChange: async function(selectedDates, dateStr) {
+                    try {
+                        var res = await apiCall('/api/v1/members/' + memberId + '/queue-start-date', 'PATCH',
+                            { queueStartDate: dateStr || null });
+                        if (res.success) {
+                            showToast('착수일이 저장되었습니다.', 'success');
+                            // selectScheduleMember 대신 ordered-tasks만 재조회하여 큐 갱신
+                            var orderedRes = await apiCall('/api/v1/members/' + memberId + '/ordered-tasks');
+                            if (orderedRes.success && orderedRes.data) {
+                                renderScheduleQueue(orderedRes.data);
+                            }
+                        } else {
+                            showToast(res.message || '착수일 저장에 실패했습니다.', 'error');
+                        }
+                    } catch (e) {
+                        console.error('태스크 착수일 자동 저장 실패:', e);
+                        showToast('착수일 저장에 실패했습니다.', 'error');
+                    }
+                }
             });
             if (memberRes.data.queueStartDate) {
                 queueDateEl._flatpickr.setDate(memberRes.data.queueStartDate, false);
@@ -3352,24 +3940,59 @@ async function selectScheduleMember(memberId, name) {
         console.error('멤버 정보 로드 실패:', e);
     }
 
-    // 태스크 착수일 저장 버튼 이벤트 바인딩
-    var saveBtn = document.getElementById('schedule-queue-start-date-save');
-    var newSaveBtn = saveBtn.cloneNode(true);
-    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-    newSaveBtn.addEventListener('click', async function() {
-        var dateVal = document.getElementById('schedule-queue-start-date').value;
+    // 일정 최적화 버튼 이벤트 바인딩
+    var recalcBtn = document.getElementById('schedule-queue-start-date-recalculate');
+    var newRecalcBtn = recalcBtn.cloneNode(true);
+    recalcBtn.parentNode.replaceChild(newRecalcBtn, recalcBtn);
+    newRecalcBtn.addEventListener('click', async function() {
         try {
-            var res = await apiCall('/api/v1/members/' + memberId + '/queue-start-date', 'PATCH', { queueStartDate: dateVal || null });
+            var res = await apiCall('/api/v1/members/' + memberId + '/recalculate-queue', 'POST');
             if (res.success) {
-                showToast('태스크 착수일이 저장되었습니다.', 'success');
+                showToast('TODO 태스크 일정이 최적화되었습니다.', 'success');
                 await selectScheduleMember(memberId, name);
             } else {
-                showToast(res.message || '저장에 실패했습니다.', 'error');
+                showToast(res.message || '최적화에 실패했습니다.', 'error');
             }
         } catch (e) {
-            console.error('태스크 착수일 저장 실패:', e);
-            showToast('태스크 착수일 저장에 실패했습니다.', 'error');
+            console.error('일정 최적화 실패:', e);
+            showToast('일정 최적화에 실패했습니다.', 'error');
         }
+    });
+
+    // 태스크 추가 버튼 표시
+    var scheduleAddBtn = document.getElementById('schedule-add-task-btn');
+    if (scheduleAddBtn) scheduleAddBtn.style.display = '';
+
+    // 상태 필터 버튼 표시
+    var sfRow = document.getElementById('schedule-status-filter-row');
+    sfRow.style.display = 'flex';
+    var sfGroup = document.getElementById('schedule-status-filter-group');
+    var sf = scheduleTaskStatusFilter;
+    sfGroup.innerHTML = ''
+        + '<button type="button" class="btn btn-sm ' + (sf==='TODO' ? 'btn-warning' : 'btn-outline-warning') + '" onclick="setScheduleStatusFilter(\'TODO\')">TODO</button>'
+        + '<button type="button" class="btn btn-sm ' + (sf==='IN_PROGRESS' ? 'btn-primary' : 'btn-outline-primary') + '" onclick="setScheduleStatusFilter(\'IN_PROGRESS\')">진행중</button>'
+        + '<button type="button" class="btn btn-sm ' + (sf==='COMPLETED' ? 'btn-success' : 'btn-outline-success') + '" onclick="setScheduleStatusFilter(\'COMPLETED\')">완료</button>'
+        + '<button type="button" class="btn btn-sm ' + (sf==='HOLD' ? 'btn-secondary' : 'btn-outline-secondary') + '" onclick="setScheduleStatusFilter(\'HOLD\')">홀드</button>'
+        + '<button type="button" class="btn btn-sm ' + (sf==='CANCELLED' ? 'btn-danger' : 'btn-outline-danger') + '" onclick="setScheduleStatusFilter(\'CANCELLED\')">취소</button>'
+        + '<button type="button" class="btn btn-sm ' + (sf==='ALL' ? 'btn-dark' : 'btn-outline-dark') + '" onclick="setScheduleStatusFilter(\'ALL\')">전체</button>';
+
+    // 배치 삭제 툴바 표시 및 이벤트 바인딩
+    var batchToolbar = document.getElementById('schedule-batch-delete-toolbar');
+    batchToolbar.style.display = 'flex';
+    var selectAllCb = document.getElementById('schedule-select-all');
+    selectAllCb.checked = false;
+    var newSelectAllCb = selectAllCb.cloneNode(true);
+    selectAllCb.parentNode.replaceChild(newSelectAllCb, selectAllCb);
+    newSelectAllCb.addEventListener('change', function() {
+        var cbs = document.querySelectorAll('#schedule-queue-panel .schedule-task-checkbox');
+        cbs.forEach(function(cb) { cb.checked = newSelectAllCb.checked; });
+        updateScheduleSelectedCount();
+    });
+    var batchDeleteBtn = document.getElementById('schedule-batch-delete-btn');
+    var newBatchDeleteBtn = batchDeleteBtn.cloneNode(true);
+    batchDeleteBtn.parentNode.replaceChild(newBatchDeleteBtn, batchDeleteBtn);
+    newBatchDeleteBtn.addEventListener('click', function() {
+        batchDeleteSelectedTasks(memberId);
     });
 
     // 상세 패널 초기화
@@ -3397,12 +4020,18 @@ function renderScheduleQueue(tasks) {
     var orderedEl = document.getElementById('schedule-ordered-tasks');
     var unorderedEl = document.getElementById('schedule-unordered-tasks');
 
+    // 상태 필터 적용: ALL이면 전체, 그 외는 해당 status만
+    var filteredTasks = applyScheduleStatusFilter(tasks);
+
     var ordered = [];
     var unordered = [];
     var parallelTasks = [];
     var inactiveTasks = [];
 
-    tasks.forEach(function(t) {
+    // 필터가 HOLD/CANCELLED인 경우: filteredTasks에 해당 status만 들어있음
+    // 필터가 TODO/IN_PROGRESS/COMPLETED인 경우: filteredTasks에 active만 들어있음
+    // 필터가 ALL인 경우: 전체 tasks
+    filteredTasks.forEach(function(t) {
         if (t.status === 'HOLD' || t.status === 'CANCELLED') {
             inactiveTasks.push(t);
         } else if (t.executionMode === 'PARALLEL') {
@@ -3413,6 +4042,14 @@ function renderScheduleQueue(tasks) {
             unordered.push(t);
         }
     });
+
+    // MD 합계 표시
+    var schTotalMd = tasks.reduce(function(s, t) { return s + (t.status !== 'CANCELLED' && t.manDays ? parseFloat(t.manDays) : 0); }, 0);
+    var schRemainMd = tasks.reduce(function(s, t) { return s + (t.status !== 'CANCELLED' && t.status !== 'COMPLETED' && t.manDays ? parseFloat(t.manDays) : 0); }, 0);
+    var mdSummaryEl = document.getElementById('schedule-md-summary');
+    if (mdSummaryEl) {
+        mdSummaryEl.textContent = schRemainMd + '/' + schTotalMd + ' MD';
+    }
 
     // 순서 있는 SEQUENTIAL 태스크 + PARALLEL 태스크를 시작일 기준으로 병합
     ordered.sort(function(a, b) { return (a.assigneeOrder || 0) - (b.assigneeOrder || 0); });
@@ -3448,6 +4085,8 @@ function renderScheduleQueue(tasks) {
                 html += ' style="border-left:3px solid #0dcaf0;"';
             }
             html += '>';
+            // 체크박스 (다중 선택 삭제용)
+            html += '<input type="checkbox" class="schedule-task-checkbox me-1" value="' + t.id + '" onclick="event.stopPropagation(); updateScheduleSelectedCount();">';
             if (isParallel) {
                 html += '<i class="bi bi-arrows-expand me-2 text-info" title="PARALLEL — 독립 일정"></i>';
                 html += '<span class="schedule-task-order text-info" style="font-size:0.7rem;">P</span>';
@@ -3478,6 +4117,7 @@ function renderScheduleQueue(tasks) {
         uHtml += '<div id="schedule-unordered-items">';
         unordered.forEach(function(t) {
             uHtml += '<div class="schedule-task-item d-flex align-items-center" data-task-id="' + t.id + '" data-start-date="' + (t.startDate || '') + '" onclick="showScheduleTaskDetail(' + t.id + ')" style="border-left:3px solid #ffc107;">';
+            uHtml += '<input type="checkbox" class="schedule-task-checkbox me-1" value="' + t.id + '" onclick="event.stopPropagation(); updateScheduleSelectedCount();">';
             uHtml += '<i class="bi bi-grip-vertical drag-handle cursor-pointer me-2" title="드래그하여 순서 지정"></i>';
             uHtml += '<div class="flex-grow-1">';
             uHtml += '<div><strong>' + escapeHtml(t.name) + '</strong></div>';
@@ -3502,6 +4142,7 @@ function renderScheduleQueue(tasks) {
         var iHtml = '<div class="mt-3 mb-2"><strong class="text-secondary" style="font-size:0.85rem;"><i class="bi bi-pause-circle"></i> 비활성 태스크 (' + inactiveTasks.length + '건)</strong></div>';
         inactiveTasks.forEach(function(t) {
             iHtml += '<div class="schedule-task-item d-flex align-items-center" data-task-id="' + t.id + '" onclick="showScheduleTaskDetail(' + t.id + ')" style="border-left:3px solid #adb5bd; opacity:0.7;">';
+            iHtml += '<input type="checkbox" class="schedule-task-checkbox me-1" value="' + t.id + '" onclick="event.stopPropagation(); updateScheduleSelectedCount();">';
             iHtml += '<div class="flex-grow-1 ms-3">';
             iHtml += '<div><strong>' + escapeHtml(t.name) + '</strong></div>';
             iHtml += '<div class="text-muted" style="font-size:0.78rem;">';
@@ -3552,6 +4193,15 @@ async function showScheduleTaskDetail(taskId) {
         if (task.dependencyTasks && task.dependencyTasks.length > 0) {
             var depNames = task.dependencyTasks.map(function(d) { return escapeHtml(d.name); }).join(', ');
             html += '<tr><th>선행 태스크</th><td>' + depNames + '</td></tr>';
+        }
+        // Jira 티켓 링크
+        if (task.jiraKey) {
+            var schedJiraHtml = '<code>' + escapeHtml(task.jiraKey) + '</code>';
+            if (cachedJiraBaseUrl && isSafeUrl(cachedJiraBaseUrl)) {
+                schedJiraHtml = '<a href="' + escapeHtml(cachedJiraBaseUrl) + '/browse/' + escapeHtml(task.jiraKey) + '" target="_blank" rel="noopener noreferrer">'
+                    + '<i class="bi bi-link-45deg"></i> ' + escapeHtml(task.jiraKey) + '</a>';
+            }
+            html += '<tr><th>Jira</th><td>' + schedJiraHtml + '</td></tr>';
         }
         html += '<tr><th>설명</th><td>' + escapeHtml(task.description || '-') + '</td></tr>';
         html += '</table>';
@@ -3608,6 +4258,8 @@ function initScheduleDragDrop(memberId) {
         new Sortable(orderedContainer, {
             group: 'schedule-queue',
             handle: '.drag-handle',
+            filter: 'input[type="checkbox"]',
+            preventOnFilter: false,
             animation: 150,
             ghostClass: 'sortable-ghost',
             chosenClass: 'sortable-chosen',
@@ -3620,11 +4272,58 @@ function initScheduleDragDrop(memberId) {
         new Sortable(unorderedContainer, {
             group: 'schedule-queue',
             handle: '.drag-handle',
+            filter: 'input[type="checkbox"]',
+            preventOnFilter: false,
             animation: 150,
             ghostClass: 'sortable-ghost',
             chosenClass: 'sortable-chosen',
             onEnd: onDragEnd
         });
+    }
+}
+
+/**
+ * 스케줄 큐 선택 개수 업데이트
+ */
+function updateScheduleSelectedCount() {
+    var checked = document.querySelectorAll('#schedule-queue-panel .schedule-task-checkbox:checked');
+    var countEl = document.getElementById('schedule-selected-count');
+    var deleteBtn = document.getElementById('schedule-batch-delete-btn');
+    if (countEl) countEl.textContent = checked.length;
+    if (deleteBtn) deleteBtn.disabled = (checked.length === 0);
+    // 전체 선택 체크박스 상태 동기화
+    var allCbs = document.querySelectorAll('#schedule-queue-panel .schedule-task-checkbox');
+    var selectAllCb = document.getElementById('schedule-select-all');
+    if (selectAllCb) {
+        selectAllCb.checked = allCbs.length > 0 && checked.length === allCbs.length;
+    }
+}
+
+/**
+ * 선택된 태스크 일괄 삭제
+ */
+var batchDeleteInProgress = false;
+async function batchDeleteSelectedTasks(memberId) {
+    if (batchDeleteInProgress) return;
+    var checked = document.querySelectorAll('#schedule-queue-panel .schedule-task-checkbox:checked');
+    if (checked.length === 0) return;
+    if (!confirmAction(checked.length + '개 태스크를 삭제하시겠습니까?')) return;
+
+    batchDeleteInProgress = true;
+    var taskIds = Array.from(checked).map(function(cb) { return parseInt(cb.value); });
+    try {
+        var res = await apiCall('/api/v1/tasks/batch-delete', 'POST', { taskIds: taskIds });
+        if (res.success) {
+            showToast(res.deleted + '개 태스크가 삭제되었습니다.', 'success');
+            await selectScheduleMember(memberId, currentScheduleMemberName);
+        } else {
+            showToast(res.message || '삭제에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        console.error('배치 삭제 실패:', e);
+        showToast('태스크 삭제에 실패했습니다.', 'error');
+    } finally {
+        batchDeleteInProgress = false;
     }
 }
 
@@ -4402,6 +5101,9 @@ async function loadSettingsSection() {
     }
 
     await loadMembers();
+
+    // Jira 설정 로드 (cachedJiraBaseUrl 초기화)
+    await loadJiraConfig();
 }
 
 // ========================================
@@ -4492,6 +5194,380 @@ async function confirmImport() {
         importInProgress = false;
         pendingImportFile = null;
         document.getElementById('import-file-name').textContent = '';
+    }
+}
+
+// ========================================
+// Jira 연동 설정 및 Import
+// ========================================
+
+/**
+ * Jira 설정 로드: GET /api/v1/jira/config
+ * cachedJiraBaseUrl 전역 변수도 설정
+ */
+async function loadJiraConfig() {
+    try {
+        var res = await apiCall('/api/v1/jira/config');
+        if (res.success && res.data) {
+            var cfg = res.data;
+            cachedJiraBaseUrl = cfg.baseUrl || null;
+            document.getElementById('jira-base-url').value = cfg.baseUrl || '';
+            document.getElementById('jira-email').value = cfg.email || '';
+            document.getElementById('jira-api-token').value = '';
+            document.getElementById('jira-api-token').placeholder = cfg.apiTokenMasked || 'ATATT3xFfGF0...';
+            document.getElementById('jira-delete-btn').style.display = '';
+            // 현재 설정 요약
+            var summaryEl = document.getElementById('jira-config-summary');
+            var html = '<table class="table table-sm mb-0">';
+            html += '<tr><th style="width:30%">URL</th><td>' + escapeHtml(cfg.baseUrl || '-') + '</td></tr>';
+            html += '<tr><th>이메일</th><td>' + escapeHtml(cfg.email || '-') + '</td></tr>';
+            html += '<tr><th>API Token</th><td>' + escapeHtml(cfg.apiTokenMasked || '-') + '</td></tr>';
+            html += '</table>';
+            summaryEl.innerHTML = html;
+        } else {
+            cachedJiraBaseUrl = null;
+            document.getElementById('jira-delete-btn').style.display = 'none';
+            document.getElementById('jira-config-summary').innerHTML = '<p class="text-muted">설정이 없습니다.</p>';
+        }
+    } catch (e) {
+        console.error('Jira 설정 로드 실패:', e);
+        cachedJiraBaseUrl = null;
+    }
+}
+
+/**
+ * Jira 설정 저장: PUT /api/v1/jira/config
+ */
+async function saveJiraConfig() {
+    var baseUrl = document.getElementById('jira-base-url').value.trim();
+    var email = document.getElementById('jira-email').value.trim();
+    var apiToken = document.getElementById('jira-api-token').value.trim();
+
+    if (!baseUrl || !email) {
+        showToast('Jira URL과 이메일은 필수입니다.', 'warning');
+        return;
+    }
+
+    var body = { baseUrl: baseUrl, email: email };
+    if (apiToken) {
+        body.apiToken = apiToken;
+    }
+
+    try {
+        var res = await apiCall('/api/v1/jira/config', 'PUT', body);
+        if (res.success) {
+            showToast('Jira 설정이 저장되었습니다.', 'success');
+            await loadJiraConfig();
+        } else {
+            showToast('저장 실패: ' + (res.message || '알 수 없는 오류'), 'error');
+        }
+    } catch (e) {
+        showToast('Jira 설정 저장 중 오류가 발생했습니다.', 'error');
+    }
+}
+
+/**
+ * Jira 연결 테스트: POST /api/v1/jira/config/test
+ */
+async function testJiraConnection() {
+    var resultEl = document.getElementById('jira-test-result');
+    var testBtn = document.getElementById('jira-test-btn');
+
+    var baseUrl = document.getElementById('jira-base-url').value.trim();
+    var email = document.getElementById('jira-email').value.trim();
+    var apiToken = document.getElementById('jira-api-token').value.trim();
+
+    if (!baseUrl || !email) {
+        showToast('Jira URL과 이메일을 입력해주세요.', 'warning');
+        return;
+    }
+
+    testBtn.disabled = true;
+    resultEl.style.display = '';
+    resultEl.innerHTML = '<span class="text-muted"><i class="bi bi-hourglass-split"></i> 연결 테스트 중...</span>';
+
+    try {
+        var body = { baseUrl: baseUrl, email: email };
+        if (apiToken) {
+            body.apiToken = apiToken;
+        }
+        var res = await apiCall('/api/v1/jira/config/test', 'POST', body);
+        if (res.success) {
+            var msg = res.data && res.data.message ? res.data.message : '연결 성공';
+            resultEl.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> ' + escapeHtml(msg) + '</span>';
+        } else {
+            resultEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle-fill"></i> 연결 실패: ' + escapeHtml(res.message || '알 수 없는 오류') + '</span>';
+        }
+    } catch (e) {
+        resultEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle-fill"></i> 연결 테스트 중 오류가 발생했습니다.</span>';
+    } finally {
+        testBtn.disabled = false;
+    }
+}
+
+/**
+ * Jira 설정 삭제: DELETE /api/v1/jira/config
+ */
+async function deleteJiraConfig() {
+    if (!confirmAction('Jira 연동 설정을 삭제하시겠습니까?')) return;
+    try {
+        var res = await apiCall('/api/v1/jira/config', 'DELETE');
+        if (res.success) {
+            showToast('Jira 설정이 삭제되었습니다.', 'success');
+            cachedJiraBaseUrl = null;
+            document.getElementById('jira-base-url').value = '';
+            document.getElementById('jira-email').value = '';
+            document.getElementById('jira-api-token').value = '';
+            document.getElementById('jira-api-token').placeholder = 'ATATT3xFfGF0...';
+            document.getElementById('jira-delete-btn').style.display = 'none';
+            document.getElementById('jira-config-summary').innerHTML = '<p class="text-muted">설정이 없습니다.</p>';
+            document.getElementById('jira-test-result').style.display = 'none';
+        } else {
+            showToast('삭제 실패: ' + (res.message || '알 수 없는 오류'), 'error');
+        }
+    } catch (e) {
+        showToast('Jira 설정 삭제 중 오류가 발생했습니다.', 'error');
+    }
+}
+
+/**
+ * Jira Import 모달 열기: 필터 설정 화면만 표시 (API 호출 없음)
+ */
+async function showJiraImportModal(projectId) {
+    if (!projectId) return;
+    jiraImportProjectId = projectId;
+    jiraPreviewCreatedAfter = null;
+    jiraPreviewStatusFilter = [];
+
+    // 모달 초기 상태: 필터 화면만 표시
+    document.getElementById('jira-import-filter').style.display = '';
+    document.getElementById('jira-import-loading').style.display = 'none';
+    document.getElementById('jira-import-preview').style.display = 'none';
+    document.getElementById('jira-import-result').style.display = 'none';
+    document.getElementById('jira-import-error-msg').style.display = 'none';
+    var execBtn = document.getElementById('jira-import-execute-btn');
+    execBtn.style.display = 'none';
+    execBtn.disabled = false;
+    execBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
+    document.getElementById('jira-filter-created-after').value = '';
+
+    // 상태 필터 초기화: "To Do"만 체크
+    document.getElementById('jira-filter-status-todo').checked = true;
+    document.getElementById('jira-filter-status-inprogress').checked = false;
+    document.getElementById('jira-filter-status-done').checked = false;
+    document.getElementById('jira-filter-status-all').checked = false;
+
+    var modal = new bootstrap.Modal(document.getElementById('jiraImportModal'));
+    modal.show();
+}
+
+/**
+ * 필터 설정 화면으로 돌아가기
+ */
+function showJiraFilterStep() {
+    document.getElementById('jira-import-filter').style.display = '';
+    document.getElementById('jira-import-preview').style.display = 'none';
+    document.getElementById('jira-import-loading').style.display = 'none';
+    document.getElementById('jira-import-error-msg').style.display = 'none';
+    document.getElementById('jira-import-execute-btn').style.display = 'none';
+}
+
+/**
+ * Jira 상태 필터: "전체" 체크박스 변경 시
+ * "전체" 체크 시 다른 체크박스 모두 해제
+ */
+function onJiraStatusFilterAllChange(allCb) {
+    if (allCb.checked) {
+        document.getElementById('jira-filter-status-todo').checked = false;
+        document.getElementById('jira-filter-status-inprogress').checked = false;
+        document.getElementById('jira-filter-status-done').checked = false;
+    }
+}
+
+/**
+ * Jira 상태 필터: 개별 체크박스 변경 시
+ * 개별 체크 시 "전체" 체크 해제
+ */
+function onJiraStatusFilterChange(cb) {
+    if (cb.checked) {
+        document.getElementById('jira-filter-status-all').checked = false;
+    }
+}
+
+/**
+ * Jira 미리보기 실행: 필터 적용 후 POST /api/v1/projects/{projectId}/jira/preview
+ */
+async function startJiraPreview() {
+    if (!jiraImportProjectId) return;
+
+    // 필터 값 읽기
+    var createdAfterVal = document.getElementById('jira-filter-created-after').value;
+
+    // 생성일자 필수 검증
+    if (!createdAfterVal) {
+        document.getElementById('jira-import-error-msg').style.display = '';
+        document.getElementById('jira-import-error-msg').textContent = '생성일자를 입력해주세요.';
+        return;
+    }
+    document.getElementById('jira-import-error-msg').style.display = 'none';
+
+    jiraPreviewCreatedAfter = createdAfterVal || null;
+
+    // 상태 필터 값 읽기
+    var statusFilter = [];
+    var allCheck = document.getElementById('jira-filter-status-all');
+    if (!allCheck.checked) {
+        ['jira-filter-status-todo', 'jira-filter-status-inprogress', 'jira-filter-status-done']
+            .forEach(function(id) {
+                var cb = document.getElementById(id);
+                if (cb && cb.checked) statusFilter.push(cb.value);
+            });
+        // 아무것도 체크 안 하면 기본값 "To Do"
+        if (statusFilter.length === 0) statusFilter = ['To Do'];
+    }
+    jiraPreviewStatusFilter = statusFilter; // executeJiraImport에서 재사용
+
+    // 필터 숨기고 로딩 표시
+    document.getElementById('jira-import-filter').style.display = 'none';
+    document.getElementById('jira-import-loading').style.display = '';
+    document.getElementById('jira-import-preview').style.display = 'none';
+    document.getElementById('jira-import-result').style.display = 'none';
+    document.getElementById('jira-import-error-msg').style.display = 'none';
+    document.getElementById('jira-import-execute-btn').style.display = 'none';
+
+    try {
+        var body = {};
+        if (jiraPreviewCreatedAfter) {
+            body.createdAfter = jiraPreviewCreatedAfter;
+        }
+        if (jiraPreviewStatusFilter && jiraPreviewStatusFilter.length > 0) {
+            body.statusFilter = jiraPreviewStatusFilter;
+        }
+        var res = await apiCall('/api/v1/projects/' + jiraImportProjectId + '/jira/preview', 'POST', body);
+        document.getElementById('jira-import-loading').style.display = 'none';
+
+        if (!res.success) {
+            document.getElementById('jira-import-filter').style.display = '';
+            document.getElementById('jira-import-error-msg').style.display = '';
+            document.getElementById('jira-import-error-msg').textContent = res.message || 'Preview 실패';
+            return;
+        }
+
+        var preview = res.data;
+        document.getElementById('jira-preview-create').textContent = preview.toCreate || 0;
+        document.getElementById('jira-preview-update').textContent = preview.toUpdate || 0;
+        document.getElementById('jira-preview-skip').textContent = preview.toSkip || 0;
+        document.getElementById('jira-preview-total').textContent = preview.totalIssues || 0;
+
+        // 테이블 렌더링 (jiraKey는 readonly)
+        var tbody = document.getElementById('jira-preview-table');
+        var html = '';
+        var previewIssues = preview.issues || [];
+        if (previewIssues.length > 0) {
+            previewIssues.forEach(function(item) {
+                var actionBadge = '';
+                if (item.action === 'CREATE') actionBadge = '<span class="badge bg-success">생성</span>';
+                else if (item.action === 'UPDATE') actionBadge = '<span class="badge bg-warning text-dark">업데이트</span>';
+                else actionBadge = '<span class="badge bg-secondary">스킵</span>';
+
+                var jiraKeyVal = escapeHtml(item.jiraKey || '');
+                html += '<tr>';
+                html += '<td><code style="white-space:nowrap">' + jiraKeyVal + '</code></td>';
+                html += '<td>' + escapeHtml(item.summary || '') + '</td>';
+                html += '<td>' + actionBadge + '</td>';
+                html += '<td>' + escapeHtml(item.mappedStatus || '') + '</td>';
+                html += '<td>' + escapeHtml(item.mappedAssigneeName || item.jiraAssignee || '-') + '</td>';
+                html += '</tr>';
+            });
+        } else {
+            html = '<tr><td colspan="5" class="text-center text-muted">가져올 이슈가 없습니다.</td></tr>';
+        }
+        tbody.innerHTML = html;
+        document.getElementById('jira-import-preview').style.display = '';
+
+        // 생성/업데이트 건이 있으면 실행 버튼 표시
+        if ((preview.toCreate || 0) + (preview.toUpdate || 0) > 0) {
+            document.getElementById('jira-import-execute-btn').style.display = '';
+        }
+    } catch (e) {
+        document.getElementById('jira-import-loading').style.display = 'none';
+        document.getElementById('jira-import-filter').style.display = '';
+        document.getElementById('jira-import-error-msg').style.display = '';
+        document.getElementById('jira-import-error-msg').textContent = 'Jira 이슈 조회 중 오류가 발생했습니다.';
+        console.error('Jira preview 실패:', e);
+    }
+}
+
+/**
+ * Jira Import 실행: POST /api/v1/projects/{projectId}/jira/import
+ */
+async function executeJiraImport() {
+    if (!jiraImportProjectId) return;
+    var executeBtn = document.getElementById('jira-import-execute-btn');
+    if (executeBtn.disabled) return; // 중복 클릭 방지
+    executeBtn.disabled = true;
+    executeBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 가져오는 중...';
+
+    // 이전 결과/오류 초기화
+    document.getElementById('jira-import-result').style.display = 'none';
+    document.getElementById('jira-import-result-errors').style.display = 'none';
+    document.getElementById('jira-import-error-msg').style.display = 'none';
+
+    try {
+        var importBody = {};
+        if (jiraPreviewCreatedAfter) {
+            importBody.createdAfter = jiraPreviewCreatedAfter;
+        }
+        if (jiraPreviewStatusFilter && jiraPreviewStatusFilter.length > 0) {
+            importBody.statusFilter = jiraPreviewStatusFilter;
+        }
+
+        var res = await apiCall('/api/v1/projects/' + jiraImportProjectId + '/jira/import', 'POST', importBody);
+        document.getElementById('jira-import-preview').style.display = 'none';
+        executeBtn.style.display = 'none';
+
+        if (res.success && res.data) {
+            var result = res.data;
+            var summaryHtml = '<strong>Import 완료!</strong><br>'
+                + '생성: ' + (result.created || 0) + '건, '
+                + '업데이트: ' + (result.updated || 0) + '건, '
+                + '스킵: ' + (result.skipped || 0) + '건';
+            document.getElementById('jira-import-result-summary').innerHTML = summaryHtml;
+            document.getElementById('jira-import-result').style.display = '';
+
+            // 오류 항목 표시
+            if (result.errors && result.errors.length > 0) {
+                var errList = document.getElementById('jira-import-error-list');
+                var errHtml = '';
+                result.errors.forEach(function(err) {
+                    errHtml += '<li><strong>' + escapeHtml(err.jiraKey || '') + '</strong>: ' + escapeHtml(err.reason || '') + '</li>';
+                });
+                errList.innerHTML = errHtml;
+                document.getElementById('jira-import-result-errors').style.display = '';
+            }
+
+            showToast('Jira 이슈 가져오기가 완료되었습니다.', 'success');
+
+            // 프로젝트 태스크 목록 새로고침
+            if (currentDetailProjectId) {
+                loadProjectTasks(currentDetailProjectId);
+            }
+        } else {
+            document.getElementById('jira-import-error-msg').style.display = '';
+            document.getElementById('jira-import-error-msg').textContent = res.message || 'Import 실패';
+            // 실패 시 버튼 복원하여 재시도 가능
+            executeBtn.style.display = '';
+            executeBtn.disabled = false;
+            executeBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
+        }
+    } catch (e) {
+        document.getElementById('jira-import-error-msg').style.display = '';
+        document.getElementById('jira-import-error-msg').textContent = 'Import 중 오류가 발생했습니다.';
+        console.error('Jira import 실패:', e);
+        // 오류 시 버튼 복원하여 재시도 가능
+        executeBtn.style.display = '';
+        executeBtn.disabled = false;
+        executeBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
     }
 }
 
@@ -4833,6 +5909,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 case '#settings-domains':
                     loadDomainSystems();
                     break;
+                case '#settings-jira':
+                    loadJiraConfig();
+                    break;
             }
         });
     }
@@ -4843,6 +5922,37 @@ document.addEventListener('DOMContentLoaded', function() {
             updateWarningBadges(res.data);
         }
     }).catch(function() {});
+
+    // Jira 설정 로드 (cachedJiraBaseUrl 초기화 - 태스크 링크 렌더링용)
+    apiCall('/api/v1/jira/config').then(function(res) {
+        if (res.success && res.data) {
+            cachedJiraBaseUrl = res.data.baseUrl || null;
+        }
+    }).catch(function() {});
+
+    // FR-002: 간트차트 토글 필터 초기화 (localStorage에서 복원)
+    var storedJiraKey = localStorage.getItem('ganttShowJiraKey');
+    var storedDomain = localStorage.getItem('ganttShowDomain');
+    if (storedJiraKey !== null) ganttShowJiraKey = storedJiraKey === 'true';
+    if (storedDomain !== null) ganttShowDomain = storedDomain === 'true';
+    var jiraKeyCb = document.getElementById('gantt-show-jira-key');
+    var domainCb = document.getElementById('gantt-show-domain');
+    if (jiraKeyCb) jiraKeyCb.checked = ganttShowJiraKey;
+    if (domainCb) domainCb.checked = ganttShowDomain;
+    if (jiraKeyCb) {
+        jiraKeyCb.addEventListener('change', function() {
+            ganttShowJiraKey = this.checked;
+            localStorage.setItem('ganttShowJiraKey', ganttShowJiraKey);
+            reRenderGanttWithToggles();
+        });
+    }
+    if (domainCb) {
+        domainCb.addEventListener('change', function() {
+            ganttShowDomain = this.checked;
+            localStorage.setItem('ganttShowDomain', ganttShowDomain);
+            reRenderGanttWithToggles();
+        });
+    }
 
     // hash 라우팅: hashchange 이벤트 리스너 등록 후 초기 화면 로드
     window.addEventListener('hashchange', handleHashChange);

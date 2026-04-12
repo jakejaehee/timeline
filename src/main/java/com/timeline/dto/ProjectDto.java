@@ -26,6 +26,7 @@ public class ProjectDto {
         private LocalDate startDate;
         private LocalDate endDate;
         private ProjectStatus status;
+        private String jiraBoardId;
     }
 
     @Data
@@ -43,6 +44,7 @@ public class ProjectDto {
         private Boolean isDelayed;            // 계산값: expectedEndDate > endDate
         private ProjectStatus status;
         private Integer memberCount;
+        private String jiraBoardId;
         private List<MemberDto.Response> members;
         private List<DomainSystemDto.Response> domainSystems;
 
@@ -55,6 +57,7 @@ public class ProjectDto {
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
                     .status(project.getStatus())
+                    .jiraBoardId(project.getJiraBoardId())
                     .build();
         }
 
@@ -69,6 +72,7 @@ public class ProjectDto {
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
                     .status(project.getStatus())
+                    .jiraBoardId(project.getJiraBoardId())
                     .members(members)
                     .domainSystems(domainSystems)
                     .build();
@@ -92,6 +96,7 @@ public class ProjectDto {
                     .expectedEndDate(expectedEndDate)
                     .isDelayed(delayed)
                     .status(project.getStatus())
+                    .jiraBoardId(project.getJiraBoardId())
                     .memberCount((int) memberCount)
                     .build();
         }
@@ -114,6 +119,7 @@ public class ProjectDto {
                     .expectedEndDate(expectedEndDate)
                     .isDelayed(delayed)
                     .status(project.getStatus())
+                    .jiraBoardId(project.getJiraBoardId())
                     .members(members)
                     .domainSystems(domainSystems)
                     .build();

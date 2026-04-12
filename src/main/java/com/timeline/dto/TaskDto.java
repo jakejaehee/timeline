@@ -40,6 +40,7 @@ public class TaskDto {
         private TaskPriority priority;
         private TaskType type;
         private LocalDate actualEndDate;
+        private String jiraKey;                    // Jira 티켓 번호 (수동 입력용)
         private List<TaskLinkRequest> links;       // null 또는 빈 배열 허용
     }
 
@@ -77,6 +78,7 @@ public class TaskDto {
         private TaskType type;
         private LocalDate actualEndDate;
         private Integer assigneeOrder;
+        private String jiraKey;
         private List<TaskLinkResponse> links;
 
         public static Response from(Task task, List<Long> dependencies) {
@@ -114,6 +116,7 @@ public class TaskDto {
                     .type(task.getType())
                     .actualEndDate(task.getActualEndDate())
                     .assigneeOrder(task.getAssigneeOrder())
+                    .jiraKey(task.getJiraKey())
                     .links(linkResponses)
                     .build();
         }

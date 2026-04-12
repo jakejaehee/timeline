@@ -41,4 +41,8 @@ public interface TaskDependencyRepository extends JpaRepository<TaskDependency, 
     void deleteByTaskId(Long taskId);
 
     void deleteByDependsOnTaskId(Long dependsOnTaskId);
+
+    void deleteByTaskIdIn(List<Long> taskIds);
+
+    void deleteByDependsOnTaskIdIn(List<Long> dependsOnTaskIds);
 }

@@ -94,7 +94,8 @@ public class ProjectService {
                 .projectType(normalizeProjectType(request.getProjectType()))
                 .description(request.getDescription())
                 .startDate(request.getStartDate())
-                .endDate(request.getEndDate());
+                .endDate(request.getEndDate())
+                .jiraBoardId(validateJiraBoardId(request.getJiraBoardId()));
 
         // status가 null이면 @Builder.Default(PLANNING)가 적용됨
         if (request.getStatus() != null) {
@@ -122,6 +123,7 @@ public class ProjectService {
         project.setDescription(request.getDescription());
         project.setStartDate(request.getStartDate());
         project.setEndDate(request.getEndDate());
+        project.setJiraBoardId(validateJiraBoardId(request.getJiraBoardId()));
         if (request.getStatus() != null) {
             project.setStatus(request.getStatus());
         }
@@ -244,6 +246,22 @@ public class ProjectService {
         String trimmed = rawType.trim();
         if (trimmed.length() > 100) {
             throw new IllegalArgumentException("프로젝트 유형은 100자를 초과할 수 없습니다.");
+        }
+        return trimmed;
+    }
+
+    /**
+     * Jira Board ID 검증: 숫자만 허용 (path injection 방지), DB column: VARCHAR(100)
+     */
+    private String validateJiraBoardId(String jiraBoardId) {
+        if (jiraBoardId == null) return null;
+        String trimmed = jiraBoardId.trim();
+        if (trimmed.isEmpty()) return null;
+        if (!trimmed.matches("^\\d+$")) {
+            throw new IllegalArgumentException("Jira Board ID는 숫자만 허용됩니다.");
+        }
+        if (trimmed.length() > 100) {
+            throw new IllegalArgumentException("Jira Board ID는 100자를 초과할 수 없습니다.");
         }
         return trimmed;
     }

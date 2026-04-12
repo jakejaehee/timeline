@@ -41,6 +41,14 @@ public class TaskService {
     /** Hold/Cancelled 상태 목록 (스케줄링 제외용) */
     private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
 
+    /** 일정 충돌 검증에서 제외할 상태 목록 (HOLD, CANCELLED, COMPLETED) */
+    private static final List<TaskStatus> CONFLICT_EXCLUDE_STATUSES = List.of(
+            TaskStatus.HOLD, TaskStatus.CANCELLED, TaskStatus.COMPLETED
+    );
+
+    /** 배치 삭제 chunk 크기 */
+    private static final int DELETE_CHUNK_SIZE = 100;
+
     /**
      * 간트차트용 프로젝트 태스크 조회 (도메인 시스템별 그룹핑)
      */
@@ -98,6 +106,7 @@ public class TaskService {
                                     .type(task.getType())
                                     .actualEndDate(task.getActualEndDate())
                                     .assigneeOrder(task.getAssigneeOrder())
+                                    .jiraKey(task.getJiraKey())
                                     .build())
                             .collect(Collectors.toList());
 
@@ -242,7 +251,8 @@ public class TaskService {
                 .executionMode(executionMode)
                 .priority(request.getPriority())
                 .type(request.getType())
-                .actualEndDate(request.getActualEndDate());
+                .actualEndDate(request.getActualEndDate())
+                .jiraKey(validateJiraKey(request.getJiraKey()));
 
         // status가 null이면 @Builder.Default(TODO)가 적용됨
         if (request.getStatus() != null) {
@@ -366,6 +376,11 @@ public class TaskService {
         }
         task.setSortOrder(request.getSortOrder());
 
+        // jiraKey: null이면 기존 값 유지, 빈 문자열이면 null로 저장(연결 해제), 값이 있으면 저장
+        if (request.getJiraKey() != null) {
+            task.setJiraKey(request.getJiraKey().isBlank() ? null : validateJiraKey(request.getJiraKey().trim()));
+        }
+
         Task updated = taskRepository.save(task);
 
         // SEQUENTIAL 모드이면 후속 태스크 연쇄 재계산 (동일 트랜잭션 내)
@@ -407,6 +422,41 @@ public class TaskService {
         taskLinkRepository.deleteByTaskId(taskId);
         taskRepository.delete(task);
         log.info("태스크 삭제 완료: id={}, name={}", taskId, task.getName());
+    }
+
+    /**
+     * 태스크 일괄 삭제 (best-effort 방식, chunk 분할 처리)
+     * 존재하지 않는 taskId는 건너뛰고, 존재하는 것만 삭제한다.
+     * DELETE_CHUNK_SIZE(100) 단위로 나눠 처리하며, 단일 트랜잭션을 유지한다.
+     */
+    @Transactional
+    public int deleteTasksBatch(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty()) return 0;
+
+        // 중복 ID 제거 (다른 chunk에 분산되어 불필요한 DB 쿼리가 발생하는 것을 방지)
+        List<Long> uniqueIds = taskIds.stream().distinct().toList();
+
+        int totalDeleted = 0;
+        // 100개씩 chunk 분할
+        for (int i = 0; i < uniqueIds.size(); i += DELETE_CHUNK_SIZE) {
+            List<Long> chunk = uniqueIds.subList(i, Math.min(i + DELETE_CHUNK_SIZE, uniqueIds.size()));
+
+            List<Task> existingTasks = taskRepository.findAllById(chunk);
+            if (existingTasks.isEmpty()) continue;
+
+            List<Long> existingIds = existingTasks.stream().map(Task::getId).toList();
+
+            taskDependencyRepository.deleteByTaskIdIn(existingIds);
+            taskDependencyRepository.deleteByDependsOnTaskIdIn(existingIds);
+            taskLinkRepository.deleteByTaskIdIn(existingIds);
+            taskRepository.deleteAll(existingTasks);
+
+            totalDeleted += existingTasks.size();
+            log.debug("배치 삭제 chunk 처리: offset={}, chunk={}, deleted={}", i, chunk.size(), existingTasks.size());
+        }
+
+        log.info("배치 삭제 완료: 요청={}건, 고유={}건, 삭제={}건", taskIds.size(), uniqueIds.size(), totalDeleted);
+        return totalDeleted;
     }
 
     /**
@@ -563,6 +613,97 @@ public class TaskService {
 
         taskRepository.saveAllAndFlush(orderedTasks);
         log.info("큐 날짜 연쇄 재계산 완료: assigneeId={}, orderedTasks={}", assigneeId, orderedTasks.size());
+    }
+
+    /**
+     * 담당자 큐의 순서에 따라 TODO 상태 태스크에만 날짜를 재계산한다.
+     * - IN_PROGRESS, COMPLETED 상태 태스크는 기존 날짜를 유지하되, 다음 태스크 시작일 계산의 기준으로 사용한다.
+     * - HOLD, CANCELLED 태스크는 쿼리 단계에서 이미 제외됨.
+     *
+     * 처리 흐름:
+     * 1. SEQUENTIAL 태스크를 assigneeOrder 기준 정렬 (HOLD/CANCELLED 제외)
+     * 2. 첫 번째 TODO 태스크에만 queueStartDate를 적용
+     *    - 앞에 IN_PROGRESS/COMPLETED 태스크가 있으면 그 endDate 기준으로 계산
+     * 3. TODO가 아닌 태스크는 날짜 불변 (endDate를 후속 태스크 계산 기준으로만 사용)
+     * 4. TODO 태스크에만 새 startDate/endDate 계산 및 저장
+     */
+    @Transactional
+    public void recalculateQueueDatesForTodo(Long assigneeId) {
+        if (assigneeId == null) return;
+
+        List<Task> allTasks = taskRepository.findSequentialTasksByAssigneeOrdered(
+                assigneeId, TaskExecutionMode.SEQUENTIAL, INACTIVE_STATUSES);
+
+        List<Task> orderedTasks = allTasks.stream()
+                .filter(t -> t.getAssigneeOrder() != null)
+                .sorted(Comparator.comparingInt(Task::getAssigneeOrder))
+                .collect(Collectors.toList());
+
+        if (orderedTasks.isEmpty()) return;
+
+        Set<LocalDate> unavailableDates = getUnavailableDates(assigneeId);
+        Member assignee = memberRepository.findById(assigneeId).orElse(null);
+        BigDecimal capacity = (assignee != null && assignee.getCapacity() != null)
+                ? assignee.getCapacity() : BigDecimal.ONE;
+        LocalDate queueStartDate = (assignee != null) ? assignee.getQueueStartDate() : null;
+
+        // prevEndDate: 이전 태스크의 종료일 (다음 태스크 시작일 계산 기준)
+        // prevIsFractional: 이전 태스크의 manDays가 소수인지 (Same-Day Rule용)
+        LocalDate prevEndDate = null;
+        boolean prevIsFractional = false;
+        boolean queueStartDateUsed = false;
+
+        for (int i = 0; i < orderedTasks.size(); i++) {
+            Task task = orderedTasks.get(i);
+            boolean isTodo = task.getStatus() == TaskStatus.TODO;
+
+            if (isTodo) {
+                // TODO 태스크: 날짜 재계산
+                LocalDate newStartDate;
+                if (prevEndDate != null) {
+                    // 이전 태스크가 있으면 그 endDate 기준으로 시작일 계산
+                    if (prevIsFractional) {
+                        newStartDate = businessDayCalculator.ensureBusinessDay(prevEndDate, unavailableDates);
+                    } else {
+                        newStartDate = businessDayCalculator.getNextBusinessDay(prevEndDate, unavailableDates);
+                    }
+                } else if (!queueStartDateUsed && queueStartDate != null) {
+                    // 첫 번째 TODO 태스크이고, 앞에 비-TODO 태스크가 없는 경우: queueStartDate 사용
+                    newStartDate = businessDayCalculator.ensureBusinessDay(queueStartDate, unavailableDates);
+                } else {
+                    // 이전 태스크도 없고 queueStartDate도 없으면 현재 시작일 유지
+                    newStartDate = task.getStartDate();
+                }
+
+                queueStartDateUsed = true;
+                task.setStartDate(newStartDate);
+
+                if (newStartDate != null && task.getManDays() != null && task.getManDays().compareTo(BigDecimal.ZERO) > 0) {
+                    task.setEndDate(businessDayCalculator.calculateEndDate(
+                            newStartDate, task.getManDays(), capacity, unavailableDates));
+                }
+
+                // 다음 태스크 계산을 위한 기준 업데이트
+                prevEndDate = task.getEndDate();
+                prevIsFractional = businessDayCalculator.isFractionalMd(task.getManDays());
+                // endDate가 null이면 후속 태스크 시작일 계산 불가 -> 체인 중단
+                if (prevEndDate == null) break;
+            } else {
+                // IN_PROGRESS / COMPLETED 태스크: 날짜 불변, 기준으로만 사용
+                if (i == 0 && queueStartDate != null) {
+                    // 첫 번째 태스크가 비-TODO이면 queueStartDate는 사용하지 않고,
+                    // 이 태스크의 기존 endDate를 기준으로 사용
+                    queueStartDateUsed = true;
+                }
+                prevEndDate = task.getEndDate();
+                prevIsFractional = businessDayCalculator.isFractionalMd(task.getManDays());
+                // endDate가 null이면 후속 태스크 시작일 계산 불가 -> 체인 중단
+                if (prevEndDate == null) break;
+            }
+        }
+
+        taskRepository.saveAllAndFlush(orderedTasks);
+        log.info("큐 날짜 TODO 재계산 완료: assigneeId={}, orderedTasks={}", assigneeId, orderedTasks.size());
     }
 
     // ---- 링크 전용 API 메서드 ----
@@ -841,7 +982,7 @@ public class TaskService {
                                            Long excludeTaskId) {
         List<Task> overlapping = taskRepository.findOverlappingTasks(
                 assignee.getId(), startDate, endDate, excludeTaskId,
-                TaskExecutionMode.SEQUENTIAL, INACTIVE_STATUSES);
+                TaskExecutionMode.SEQUENTIAL, CONFLICT_EXCLUDE_STATUSES);
 
         if (!overlapping.isEmpty()) {
             Task conflict = overlapping.get(0);
@@ -915,6 +1056,23 @@ public class TaskService {
             saved.add(taskLinkRepository.save(link));
         }
         return saved;
+    }
+
+    /**
+     * Jira Key 검증 및 정규화 (DB column: VARCHAR(50))
+     * 형식: 영숫자, 하이픈, 언더스코어만 허용 (예: PROJ-123)
+     */
+    private String validateJiraKey(String jiraKey) {
+        if (jiraKey == null) return null;
+        String trimmed = jiraKey.trim();
+        if (trimmed.isEmpty()) return null;
+        if (trimmed.length() > 50) {
+            throw new IllegalArgumentException("Jira 티켓 번호는 50자를 초과할 수 없습니다.");
+        }
+        if (!trimmed.matches("^[A-Za-z0-9_\\-]+$")) {
+            throw new IllegalArgumentException("Jira 티켓 번호는 영숫자, 하이픈, 언더스코어만 허용됩니다.");
+        }
+        return trimmed;
     }
 
     /**

@@ -105,7 +105,17 @@ public class MemberController {
                                                    @RequestBody Map<String, String> body) {
         String dateStr = body.get("queueStartDate");
         memberService.updateQueueStartDate(id, dateStr);
-        taskService.recalculateQueueDates(id);
+        return ResponseEntity.ok(Map.of(
+                "success", true
+        ));
+    }
+
+    /**
+     * 담당자 큐 시작일 재계산 (TODO 상태 태스크만)
+     */
+    @PostMapping("/{id}/recalculate-queue")
+    public ResponseEntity<?> recalculateQueue(@PathVariable Long id) {
+        taskService.recalculateQueueDatesForTodo(id);
         return ResponseEntity.ok(Map.of(
                 "success", true
         ));

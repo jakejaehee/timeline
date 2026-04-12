@@ -8,7 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <link rel="stylesheet" href="/css/styles.css?v=20260412b">
+    <link rel="stylesheet" href="/css/styles.css?v=20260412f">
 </head>
 <body>
     <!-- 좌측 사이드바 -->
@@ -26,6 +26,11 @@
                 </a>
             </li>
             <li>
+                <a href="#gantt" class="nav-link" data-section="gantt" onclick="showSection('gantt', this); return false;">
+                    <i class="bi bi-bar-chart-steps"></i><span class="sidebar-label"> 간트차트</span>
+                </a>
+            </li>
+            <li>
                 <a href="#projects" class="nav-link" data-section="projects" onclick="showSection('projects', this); return false;">
                     <i class="bi bi-folder"></i><span class="sidebar-label"> 프로젝트</span>
                 </a>
@@ -33,11 +38,6 @@
             <li>
                 <a href="#assignee-schedule" class="nav-link" data-section="assignee-schedule" onclick="showSection('assignee-schedule', this); return false;">
                     <i class="bi bi-person-lines-fill"></i><span class="sidebar-label"> 멤버별 태스크</span>
-                </a>
-            </li>
-            <li>
-                <a href="#gantt" class="nav-link" data-section="gantt" onclick="showSection('gantt', this); return false;">
-                    <i class="bi bi-bar-chart-steps"></i><span class="sidebar-label"> 간트차트</span>
                 </a>
             </li>
             <li>
@@ -58,22 +58,6 @@
             </li>
         </ul>
     </nav>
-
-    <!-- 글로벌 상단 바 -->
-    <header id="topbar">
-        <div class="topbar-brand">Timeline</div>
-        <div class="topbar-spacer"></div>
-        <button class="btn btn-outline-primary btn-sm" onclick="showQuickAddTask()" title="빠른 태스크 추가">
-            <i class="bi bi-plus-lg"></i> 태스크 추가
-        </button>
-        <button class="btn btn-outline-secondary btn-sm position-relative" onclick="showSection('warning-center')" title="경고 센터">
-            <i class="bi bi-bell"></i>
-            <span id="topbar-warning-badge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="display:none;">0</span>
-        </button>
-        <button class="btn btn-outline-secondary btn-sm" onclick="showSection('settings')" title="설정">
-            <i class="bi bi-gear"></i>
-        </button>
-    </header>
 
     <!-- 우측 작업 영역 -->
     <main id="main-content">
@@ -178,12 +162,13 @@
                                     <th>프로젝트명</th>
                                     <th>유형</th>
                                     <th>상태</th>
-                                    <th>기간</th>
+                                    <th>시작일</th>
+                                    <th>론치일</th>
                                     <th>지연</th>
                                 </tr>
                             </thead>
                             <tbody id="dashboard-projects-table">
-                                <tr><td colspan="5" class="text-center text-muted">로딩 중...</td></tr>
+                                <tr><td colspan="6" class="text-center text-muted">로딩 중...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -200,6 +185,10 @@
                     <button class="btn btn-primary" onclick="showProjectModal()">
                         <i class="bi bi-plus-lg"></i> 프로젝트 추가
                     </button>
+                </div>
+                <div class="d-flex align-items-center gap-2 mb-3" id="project-list-filter-bar">
+                    <span class="text-muted" style="font-size:0.85rem; white-space:nowrap;">상태 필터:</span>
+                    <div class="btn-group btn-group-sm" id="project-list-status-filter-group"></div>
                 </div>
                 <div class="card">
                     <div class="card-body">
@@ -240,6 +229,11 @@
                         <div id="project-detail-delay-warning" style="display:none;"></div>
                     </div>
                     <div class="d-flex gap-2">
+                        <button class="btn btn-outline-warning btn-sm" id="jira-import-btn"
+                                onclick="showJiraImportModal(currentDetailProjectId)"
+                                style="display:none;">
+                            <i class="bi bi-cloud-download"></i> Jira 가져오기
+                        </button>
                         <button class="btn btn-outline-primary btn-sm" onclick="showProjectModal(currentDetailProjectId)">
                             <i class="bi bi-pencil"></i> 수정
                         </button>
@@ -281,13 +275,28 @@
                 </div>
                 <!-- 패널 2: 태스크 큐 -->
                 <div id="schedule-queue-panel" class="schedule-panel-middle">
-                    <div id="schedule-member-name" class="panel-title p-2 border-bottom bg-light">
+                    <div id="schedule-member-name" class="panel-title p-2 border-bottom bg-light d-flex align-items-center">
                         <strong>멤버를 선택하세요</strong>
+                        <span id="schedule-md-summary" class="text-muted ms-auto" style="font-size:0.8rem;"></span>
                     </div>
-                    <div id="schedule-queue-start-date-row" class="d-flex align-items-center gap-2 px-2 py-1 border-bottom bg-light" style="display:none !important;">
+                    <div id="schedule-queue-start-date-row" class="align-items-center gap-2 px-2 py-1 border-bottom bg-light" style="display:none;">
                         <label class="mb-0" style="font-size:0.8rem; white-space:nowrap;"><i class="bi bi-calendar-event"></i> 태스크 착수일</label>
                         <input type="text" class="form-control form-control-sm" id="schedule-queue-start-date" style="width:160px;">
-                        <button class="btn btn-outline-primary btn-sm" id="schedule-queue-start-date-save" style="white-space:nowrap;">저장</button>
+                        <button class="btn btn-outline-success btn-sm" id="schedule-queue-start-date-recalculate" style="white-space:nowrap;"><i class="bi bi-arrow-repeat"></i> 일정 최적화</button>
+                        <button class="btn btn-primary btn-sm" id="schedule-add-task-btn" style="display:none; white-space:nowrap;"
+                                onclick="showTaskModalForScheduleMember()">
+                            <i class="bi bi-plus-lg"></i> 태스크 추가
+                        </button>
+                    </div>
+                    <div id="schedule-status-filter-row" class="d-flex align-items-center gap-2 px-2 py-1 border-bottom" style="display:none;">
+                        <div class="btn-group btn-group-sm" id="schedule-status-filter-group"></div>
+                    </div>
+                    <div id="schedule-batch-delete-toolbar" class="align-items-center gap-2 px-2 py-1 border-bottom" style="display:none;">
+                        <input type="checkbox" id="schedule-select-all" title="전체 선택">
+                        <label for="schedule-select-all" class="mb-0" style="font-size:0.8rem;">전체 선택</label>
+                        <button class="btn btn-danger btn-sm ms-2" id="schedule-batch-delete-btn" disabled>
+                            <i class="bi bi-trash"></i> 선택 삭제 (<span id="schedule-selected-count">0</span>)
+                        </button>
                     </div>
                     <div class="p-2">
                         <div id="schedule-ordered-tasks" class="sortable-list"></div>
@@ -317,14 +326,19 @@
                     </select>
                 </div>
                 <div class="d-flex align-items-center gap-2">
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" id="gantt-show-jira-key" checked>
+                        <label class="form-check-label" for="gantt-show-jira-key" style="font-size:0.85rem;">티켓번호</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" id="gantt-show-domain" checked>
+                        <label class="form-check-label" for="gantt-show-domain" style="font-size:0.85rem;">도메인명</label>
+                    </div>
                     <div class="btn-group" role="group">
                         <button class="btn btn-outline-secondary btn-sm active" onclick="changeGanttViewMode('Day')">Day</button>
                         <button class="btn btn-outline-secondary btn-sm" onclick="changeGanttViewMode('Week')">Week</button>
                         <button class="btn btn-outline-secondary btn-sm" onclick="changeGanttViewMode('Month')">Month</button>
                     </div>
-                    <button class="btn btn-primary btn-sm" onclick="showTaskModal()" id="gantt-add-task-btn" style="display:none;">
-                        <i class="bi bi-plus-lg"></i> 태스크 추가
-                    </button>
                 </div>
             </div>
 
@@ -413,6 +427,9 @@
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#settings-data">데이터 관리</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#settings-jira">Jira 연동</a>
                 </li>
             </ul>
             <div class="tab-content">
@@ -577,6 +594,62 @@
                                         </button>
                                     </div>
                                     <div id="import-file-name" class="text-muted small"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Jira 연동 탭 -->
+                <div id="settings-jira" class="tab-pane fade">
+                    <div class="row g-4">
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header fw-bold">
+                                    <i class="bi bi-cloud"></i> Jira Cloud 연결 설정
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label for="jira-base-url" class="form-label">Jira Cloud URL <span class="text-danger">*</span></label>
+                                        <input type="url" class="form-control" id="jira-base-url"
+                                               placeholder="https://yourcompany.atlassian.net">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="jira-email" class="form-label">이메일 <span class="text-danger">*</span></label>
+                                        <input type="email" class="form-control" id="jira-email"
+                                               placeholder="user@example.com">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="jira-api-token" class="form-label">API Token <span class="text-danger">*</span></label>
+                                        <input type="password" class="form-control" id="jira-api-token"
+                                               placeholder="ATATT3xFfGF0...">
+                                        <div class="form-text">
+                                            <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">
+                                                Atlassian API Token 발급 페이지 <i class="bi bi-box-arrow-up-right"></i>
+                                            </a>
+                                        </div>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-outline-primary btn-sm" onclick="testJiraConnection()" id="jira-test-btn">
+                                            <i class="bi bi-plug"></i> 연결 테스트
+                                        </button>
+                                        <button class="btn btn-primary btn-sm" onclick="saveJiraConfig()">
+                                            <i class="bi bi-save"></i> 저장
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm" onclick="deleteJiraConfig()" id="jira-delete-btn" style="display:none;">
+                                            <i class="bi bi-trash"></i> 설정 삭제
+                                        </button>
+                                    </div>
+                                    <div id="jira-test-result" class="mt-2" style="display:none;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header fw-bold">
+                                    <i class="bi bi-info-circle"></i> 현재 설정
+                                </div>
+                                <div class="card-body" id="jira-config-summary">
+                                    <p class="text-muted">설정이 없습니다.</p>
                                 </div>
                             </div>
                         </div>
@@ -833,6 +906,11 @@
                                 <option value="ON_HOLD">ON_HOLD</option>
                             </select>
                         </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="project-jira-board-id" class="form-label">Jira Board ID</label>
+                            <input type="text" class="form-control" id="project-jira-board-id"
+                                   placeholder="예: 123" maxlength="100">
+                        </div>
                     </div>
                     <!-- 지연 경고 -->
                     <div id="project-delay-warning" class="mb-3" style="display:none;">
@@ -962,16 +1040,21 @@
                             </select>
                         </div>
                     </div>
-                    <!-- 5행: 실제 완료일 -->
+                    <!-- 5행: 실제 완료일 + Jira 티켓 번호 -->
                     <div class="row">
                         <div class="col-md-4 mb-3">
                             <label for="task-actual-end-date" class="form-label">실제 완료일</label>
                             <input type="date" class="form-control" id="task-actual-end-date">
                         </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="task-jira-key" class="form-label">Jira 티켓 번호</label>
+                            <input type="text" class="form-control" id="task-jira-key"
+                                   placeholder="예: PROJ-123" maxlength="50">
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="task-description" class="form-label">설명</label>
-                        <textarea class="form-control" id="task-description" rows="2"></textarea>
+                        <textarea class="form-control" id="task-description" rows="4"></textarea>
                     </div>
                     <!-- 링크 관리 섹션 -->
                     <div class="mb-3">
@@ -984,10 +1067,15 @@
                     </div>
                     <div class="mb-3" id="task-dependencies-section">
                         <label class="form-label">선행 태스크 (의존관계)</label>
+                        <input type="text" class="form-control form-control-sm mb-2"
+                               id="task-dep-search" placeholder="태스크명으로 검색...">
                         <div id="task-dependencies-checklist" class="checklist-container"></div>
                     </div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-danger btn-sm" id="task-modal-delete-btn" style="display:none; margin-right:auto;">
+                        <i class="bi bi-trash"></i> 삭제
+                    </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
                     <button type="button" class="btn btn-primary" onclick="saveTask()">저장</button>
                 </div>
@@ -1043,6 +1131,112 @@
         </div>
     </div>
 
+    <!-- ==================== Jira Import 모달 ==================== -->
+    <div class="modal fade" id="jiraImportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-cloud-download"></i> Jira 이슈 가져오기</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 1단계: 필터 설정 -->
+                    <div id="jira-import-filter">
+                        <div class="mb-3">
+                            <label for="jira-filter-created-after" class="form-label">
+                                생성일자 필터 <span class="text-danger">*</span> <small class="text-muted">(이 날짜 이후 생성된 이슈만 가져옵니다)</small>
+                            </label>
+                            <input type="date" class="form-control" id="jira-filter-created-after"
+                                   style="max-width: 250px;">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">
+                                상태 필터 <small class="text-muted">(가져올 이슈의 Jira 상태를 선택하세요)</small>
+                            </label>
+                            <div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input jira-filter-status-cb" type="checkbox" id="jira-filter-status-todo"
+                                           value="To Do" checked onchange="onJiraStatusFilterChange(this)">
+                                    <label class="form-check-label" for="jira-filter-status-todo">To Do</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input jira-filter-status-cb" type="checkbox" id="jira-filter-status-inprogress"
+                                           value="In Progress" onchange="onJiraStatusFilterChange(this)">
+                                    <label class="form-check-label" for="jira-filter-status-inprogress">In Progress</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input jira-filter-status-cb" type="checkbox" id="jira-filter-status-done"
+                                           value="Done" onchange="onJiraStatusFilterChange(this)">
+                                    <label class="form-check-label" for="jira-filter-status-done">Done</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" id="jira-filter-status-all"
+                                           value="ALL" onchange="onJiraStatusFilterAllChange(this)">
+                                    <label class="form-check-label" for="jira-filter-status-all">전체 (필터 없음)</label>
+                                </div>
+                            </div>
+                            <small class="text-muted">아무것도 선택하지 않으면 "To Do"만 가져옵니다.</small>
+                        </div>
+                        <button type="button" class="btn btn-primary" onclick="startJiraPreview()">
+                            <i class="bi bi-search"></i> 미리보기
+                        </button>
+                    </div>
+                    <!-- 2단계: 로딩 -->
+                    <div id="jira-import-loading" class="text-center p-3" style="display:none;">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p class="mt-2 text-muted">Jira Board에서 이슈를 불러오는 중...</p>
+                    </div>
+                    <!-- 3단계: 미리보기 결과 -->
+                    <div id="jira-import-preview" style="display:none;">
+                        <div class="d-flex gap-3 mb-3">
+                            <span class="badge bg-success">신규 생성: <span id="jira-preview-create">0</span></span>
+                            <span class="badge bg-warning text-dark">업데이트: <span id="jira-preview-update">0</span></span>
+                            <span class="badge bg-secondary">스킵: <span id="jira-preview-skip">0</span></span>
+                            <span class="badge bg-info">전체: <span id="jira-preview-total">0</span></span>
+                        </div>
+                        <div class="table-responsive" style="max-height:400px; overflow-y:auto;">
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Jira Key</th>
+                                        <th>요약</th>
+                                        <th>액션</th>
+                                        <th>상태</th>
+                                        <th>담당자</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jira-preview-table"></tbody>
+                            </table>
+                        </div>
+                        <div class="mt-2">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="showJiraFilterStep()">
+                                <i class="bi bi-arrow-left"></i> 다시 필터 설정
+                            </button>
+                        </div>
+                    </div>
+                    <!-- 결과 표시 -->
+                    <div id="jira-import-result" style="display:none;">
+                        <div class="alert alert-success" id="jira-import-result-summary"></div>
+                        <div id="jira-import-result-errors" style="display:none;">
+                            <div class="alert alert-warning">
+                                <strong>오류 항목:</strong>
+                                <ul id="jira-import-error-list" class="mb-0 mt-1"></ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="jira-import-error-msg" class="alert alert-danger" style="display:none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
+                    <button type="button" class="btn btn-warning" id="jira-import-execute-btn"
+                            onclick="executeJiraImport()" style="display:none;">
+                        <i class="bi bi-cloud-download"></i> 가져오기 실행
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ==================== 알림 Toast ==================== -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container">
         <div id="app-toast" class="toast align-items-center border-0" role="alert">
@@ -1058,6 +1252,6 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
-    <script src="/js/app.js?v=20260412b"></script>
+    <script src="/js/app.js?v=20260413d"></script>
 </body>
 </html>

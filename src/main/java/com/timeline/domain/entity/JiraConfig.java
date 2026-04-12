@@ -1,54 +1,41 @@
 package com.timeline.domain.entity;
 
-import com.timeline.domain.enums.ProjectStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-
 /**
- * 프로젝트 엔티티
+ * Jira Cloud 전역 설정 엔티티
+ * 단일 레코드(ID=1)로 관리
  */
 @Entity
-@Table(name = "project")
+@Table(name = "jira_config")
 @EntityListeners(AuditingEntityListener.class)
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Project {
+public class JiraConfig {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 200)
-    private String name;
+    /** Jira Cloud 베이스 URL (예: https://yourcompany.atlassian.net) */
+    @Column(name = "base_url", length = 500)
+    private String baseUrl;
 
-    @Column(name = "project_type", length = 100)
-    private String projectType;
+    /** 인증 이메일 */
+    @Column(length = 200)
+    private String email;
 
-    @Column(columnDefinition = "TEXT")
-    private String description;
-
-    @Column(name = "start_date")
-    private LocalDate startDate;
-
-    @Column(name = "end_date")
-    private LocalDate endDate;
-
-    @Column(name = "jira_board_id", length = 100)
-    private String jiraBoardId;
-
-    @Builder.Default
-    @Enumerated(EnumType.STRING)
-    @Column(length = 20)
-    private ProjectStatus status = ProjectStatus.PLANNING;
+    /** API Token (평문 저장; MVP) */
+    @Column(name = "api_token", length = 500)
+    private String apiToken;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)

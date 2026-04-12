@@ -192,8 +192,8 @@ public class DataBackupService {
     private int insertProjects(List<BackupDto.ProjectRow> rows) {
         for (BackupDto.ProjectRow r : rows) {
             em.createNativeQuery(
-                    "INSERT INTO project (id, name, project_type, description, start_date, end_date, status, created_at, updated_at) " +
-                    "VALUES (:id, :name, :projectType, :description, :startDate, :endDate, :status, :createdAt, :updatedAt)")
+                    "INSERT INTO project (id, name, project_type, description, start_date, end_date, status, jira_board_id, created_at, updated_at) " +
+                    "VALUES (:id, :name, :projectType, :description, :startDate, :endDate, :status, :jiraBoardId, :createdAt, :updatedAt)")
                     .setParameter("id", r.getId())
                     .setParameter("name", r.getName())
                     .setParameter("projectType", r.getProjectType())
@@ -201,6 +201,7 @@ public class DataBackupService {
                     .setParameter("startDate", r.getStartDate())
                     .setParameter("endDate", r.getEndDate())
                     .setParameter("status", r.getStatus())
+                    .setParameter("jiraBoardId", r.getJiraBoardId())
                     .setParameter("createdAt", r.getCreatedAt())
                     .setParameter("updatedAt", r.getUpdatedAt())
                     .executeUpdate();
@@ -257,10 +258,10 @@ public class DataBackupService {
             em.createNativeQuery(
                     "INSERT INTO task (id, project_id, domain_system_id, assignee_id, name, description, " +
                     "start_date, end_date, man_days, status, execution_mode, priority, type, " +
-                    "actual_end_date, assignee_order, sort_order, created_at, updated_at) " +
+                    "actual_end_date, assignee_order, sort_order, jira_key, created_at, updated_at) " +
                     "VALUES (:id, :projectId, :domainSystemId, :assigneeId, :name, :description, " +
                     ":startDate, :endDate, :manDays, :status, :executionMode, :priority, :type, " +
-                    ":actualEndDate, :assigneeOrder, :sortOrder, :createdAt, :updatedAt)")
+                    ":actualEndDate, :assigneeOrder, :sortOrder, :jiraKey, :createdAt, :updatedAt)")
                     .setParameter("id", r.getId())
                     .setParameter("projectId", r.getProjectId())
                     .setParameter("domainSystemId", r.getDomainSystemId())
@@ -277,6 +278,7 @@ public class DataBackupService {
                     .setParameter("actualEndDate", r.getActualEndDate())
                     .setParameter("assigneeOrder", r.getAssigneeOrder())
                     .setParameter("sortOrder", r.getSortOrder())
+                    .setParameter("jiraKey", r.getJiraKey())
                     .setParameter("createdAt", r.getCreatedAt())
                     .setParameter("updatedAt", r.getUpdatedAt())
                     .executeUpdate();
@@ -387,6 +389,7 @@ public class DataBackupService {
                 .startDate(p.getStartDate())
                 .endDate(p.getEndDate())
                 .status(p.getStatus() != null ? p.getStatus().name() : null)
+                .jiraBoardId(p.getJiraBoardId())
                 .createdAt(p.getCreatedAt())
                 .updatedAt(p.getUpdatedAt())
                 .build();
@@ -439,6 +442,7 @@ public class DataBackupService {
                 .actualEndDate(t.getActualEndDate())
                 .assigneeOrder(t.getAssigneeOrder())
                 .sortOrder(t.getSortOrder())
+                .jiraKey(t.getJiraKey())
                 .createdAt(t.getCreatedAt())
                 .updatedAt(t.getUpdatedAt())
                 .build();

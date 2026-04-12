@@ -164,43 +164,12 @@ body {
 }
 
 /* ---- 글로벌 상단 바 ---- */
-#topbar {
-    position: fixed;
-    top: 0;
-    left: 220px;
-    right: 0;
-    height: 56px;
-    background: #fff;
-    border-bottom: 1px solid #dee2e6;
-    z-index: 999;
-    display: flex;
-    align-items: center;
-    padding: 0 24px;
-    gap: 12px;
-    transition: left 0.25s ease;
-}
-
-body.sidebar-collapsed #topbar {
-    left: 60px;
-}
-
-.topbar-brand {
-    font-weight: 600;
-    font-size: 1rem;
-    color: #4e73df;
-    display: none;
-}
-
-.topbar-spacer {
-    flex: 1;
-}
-
 /* ---- 메인 콘텐츠 ---- */
 #main-content {
     margin-left: 220px;
-    margin-top: 56px;
+    margin-top: 0;
     padding: 16px 24px;
-    min-height: calc(100vh - 56px);
+    min-height: 100vh;
     transition: margin-left 0.25s ease;
 }
 
@@ -444,6 +413,10 @@ body.sidebar-collapsed #main-content {
     font-size: 0.85rem;
 }
 
+#task-dependencies-checklist {
+    max-height: 105px; /* 약 3개 항목 높이 */
+}
+
 /* ---- 간트차트 ---- */
 
 /* 도메인 시스템 범례 */
@@ -521,6 +494,20 @@ body.sidebar-collapsed #main-content {
     font-size: 0.9rem;
 }
 
+/* 간트차트 컨테이너 세로 스크롤 영역 (FR-003) */
+#gantt-container .card-body {
+    max-height: calc(100vh - 180px);
+    overflow-y: auto;
+    overflow-x: auto;
+    position: relative;
+}
+
+/* 간트차트 sticky 헤더 배경 불투명화 */
+#gantt-chart .gantt .grid-header {
+    fill: #ffffff;
+    opacity: 1;
+}
+
 /* frappe-gantt 커스텀 */
 #gantt-chart {
     overflow-x: auto;
@@ -528,13 +515,13 @@ body.sidebar-collapsed #main-content {
 }
 
 #gantt-chart .gantt .bar-label {
-    font-size: 10px !important;
+    font-size: 12px !important;
     fill: #fff !important;
     font-weight: 500;
 }
 
 #gantt-chart .gantt .bar-label.big {
-    font-size: 10px !important;
+    font-size: 12px !important;
     fill: #333 !important;
 }
 
@@ -574,13 +561,13 @@ body.sidebar-collapsed #main-content {
 }
 
 .gantt-project-chart .gantt .bar-label {
-    font-size: 10px !important;
+    font-size: 12px !important;
     fill: #fff !important;
     font-weight: 500;
 }
 
 .gantt-project-chart .gantt .bar-label.big {
-    font-size: 10px !important;
+    font-size: 12px !important;
     fill: #333 !important;
 }
 
@@ -608,13 +595,13 @@ body.sidebar-collapsed #main-content {
 }
 
 #project-gantt-chart .gantt .bar-label {
-    font-size: 11px !important;
+    font-size: 12px !important;
     fill: #fff !important;
     font-weight: 500;
 }
 
 #project-gantt-chart .gantt .bar-label.big {
-    font-size: 11px !important;
+    font-size: 12px !important;
     fill: #333 !important;
 }
 
@@ -913,14 +900,6 @@ body.sidebar-collapsed #main-content {
         width: 60px;
     }
 
-    #topbar {
-        left: 200px;
-    }
-
-    body.sidebar-collapsed #topbar {
-        left: 60px;
-    }
-
     #main-content {
         margin-left: 200px;
         padding: 12px 16px;
@@ -948,6 +927,14 @@ body.sidebar-collapsed #main-content {
     .schedule-panel-right {
         width: 30%;
     }
+}
+
+/* ---- 아코디언 토글 아이콘 회전 ---- */
+.assignee-collapse-header[aria-expanded="false"] .toggle-icon {
+    transform: rotate(-90deg);
+}
+.assignee-collapse-header[aria-expanded="true"] .toggle-icon {
+    transform: rotate(0deg);
 }
 
 /* ---- flatpickr 비활성 날짜 스타일 ---- */

@@ -70,6 +70,7 @@ public class GanttDataDto {
         private TaskType type;
         private LocalDate actualEndDate;
         private Integer assigneeOrder;
+        private String jiraKey;
     }
 
     @Data

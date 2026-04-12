@@ -37,6 +37,11 @@ public class WarningService {
     /** Hold/Cancelled 상태 목록 */
     private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
 
+    /** 일정 충돌 경고에서 제외할 상태 목록 */
+    private static final List<TaskStatus> CONFLICT_EXCLUDE_STATUSES = List.of(
+            TaskStatus.HOLD, TaskStatus.CANCELLED, TaskStatus.COMPLETED
+    );
+
     /**
      * 프로젝트별 경고 탐지
      */
@@ -147,7 +152,7 @@ public class WarningService {
 
         // 3. SCHEDULE_CONFLICT: 담당자별 일정 겹침 검사
         Map<Long, List<Task>> tasksByAssignee = tasks.stream()
-                .filter(t -> t.getAssignee() != null && !INACTIVE_STATUSES.contains(t.getStatus())
+                .filter(t -> t.getAssignee() != null && !CONFLICT_EXCLUDE_STATUSES.contains(t.getStatus())
                         && t.getStartDate() != null && t.getEndDate() != null
                         && t.getExecutionMode() == TaskExecutionMode.SEQUENTIAL)
                 .collect(Collectors.groupingBy(t -> t.getAssignee().getId()));

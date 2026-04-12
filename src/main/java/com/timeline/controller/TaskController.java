@@ -101,6 +101,43 @@ public class TaskController {
     }
 
     /**
+     * 태스크 일괄 삭제
+     */
+    @PostMapping("/api/v1/tasks/batch-delete")
+    public ResponseEntity<?> batchDelete(@RequestBody Map<String, Object> body) {
+        Object taskIdsObj = body.get("taskIds");
+        if (!(taskIdsObj instanceof List<?>)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "taskIds는 필수입니다."
+            ));
+        }
+        List<?> taskIdRaw = (List<?>) taskIdsObj;
+        if (taskIdRaw.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "taskIds는 필수입니다."
+            ));
+        }
+        List<Long> taskIds;
+        try {
+            taskIds = taskIdRaw.stream()
+                    .map(o -> ((Number) o).longValue())
+                    .toList();
+        } catch (ClassCastException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "taskIds는 숫자 배열이어야 합니다."
+            ));
+        }
+        int deleted = taskService.deleteTasksBatch(taskIds);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "deleted", deleted
+        ));
+    }
+
+    /**
      * 의존관계 추가
      */
     @PostMapping("/api/v1/tasks/{id}/dependencies")
@@ -159,12 +196,11 @@ public class TaskController {
 
     /**
      * 담당자별 정렬된 SEQUENTIAL 태스크 목록 조회
-     * 큐 순서 기반으로 날짜를 재계산한 후 반환한다.
-     * NOTE: GET이지만 recalculateQueueDates로 DB 갱신이 발생함 (최신 날짜 보장 목적)
+     * 재계산 없이 현재 저장된 순서/날짜를 그대로 반환한다.
+     * 재계산은 명시적 재계산 버튼(POST /recalculate-queue)과 순서 변경(PATCH /assignee-order)에서만 수행.
      */
     @GetMapping("/api/v1/members/{assigneeId}/ordered-tasks")
     public ResponseEntity<?> getOrderedTasks(@PathVariable Long assigneeId) {
-        taskService.recalculateQueueDates(assigneeId);
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "data", assigneeOrderService.getOrderedTasksByAssignee(assigneeId)

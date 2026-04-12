@@ -75,6 +75,7 @@ public class BackupDto {
         private LocalDate startDate;
         private LocalDate endDate;
         private String status;
+        private String jiraBoardId;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
     }
@@ -135,6 +136,7 @@ public class BackupDto {
         private LocalDate actualEndDate;
         private Integer assigneeOrder;
         private Integer sortOrder;
+        private String jiraKey;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
     }

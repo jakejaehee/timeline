@@ -82,6 +82,9 @@ public class Task {
     @Column(name = "assignee_order")
     private Integer assigneeOrder;
 
+    @Column(name = "jira_key", length = 50)
+    private String jiraKey;
+
     @Column(name = "sort_order")
     private Integer sortOrder;
 

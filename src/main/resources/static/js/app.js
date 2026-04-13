@@ -1668,7 +1668,7 @@ async function onProjectTaskDragEnd(assigneeId, projectId) {
         var body = { assigneeId: parseInt(assigneeId), taskIds: taskIds };
         var res = await apiCall('/api/v1/tasks/assignee-order', 'PATCH', body);
         if (res.success) {
-            showToast('태스크 순서가 변경되었습니다. 날짜가 재계산됩니다.', 'success');
+            showToast('태스크 순서가 변경되었습니다.', 'success');
         } else {
             showToast(res.message || '순서 변경에 실패했습니다.', 'error');
         }
@@ -4806,7 +4806,7 @@ async function reorderAssigneeTasks(assigneeId, taskIds) {
         var res = await apiCall('/api/v1/tasks/assignee-order', 'PATCH', body);
 
         if (res.success) {
-            showToast('태스크 순서가 변경되었습니다. 날짜가 재계산됩니다.', 'success');
+            showToast('태스크 순서가 변경되었습니다.', 'success');
             // 멤버별 태스크 새로고침
             if (currentScheduleMemberId) {
                 await selectScheduleMember(currentScheduleMemberId, currentScheduleMemberName);

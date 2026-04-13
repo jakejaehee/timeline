@@ -186,9 +186,6 @@ public class TaskController {
 
         assigneeOrderService.reorderTasks(assigneeId, taskIds);
 
-        // 큐 날짜 연쇄 재계산 (담당자의 queueStartDate 기반)
-        taskService.recalculateQueueDates(assigneeId);
-
         return ResponseEntity.ok(Map.of(
                 "success", true
         ));

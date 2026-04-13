@@ -26,7 +26,20 @@ public class GanttDataDto {
     @AllArgsConstructor
     public static class Response {
         private ProjectSummary project;
+        private List<MilestoneItem> milestones;
         private List<DomainSystemGroup> domainSystems;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class MilestoneItem {
+        private Long id;
+        private String name;
+        private LocalDate startDate;
+        private LocalDate endDate;
+        private Integer sortOrder;
     }
 
     @Data

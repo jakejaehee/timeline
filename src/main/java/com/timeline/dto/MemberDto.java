@@ -22,6 +22,7 @@ public class MemberDto {
     public static class Request {
         private String name;
         private MemberRole role;
+        private String team;
         private String email;
         private BigDecimal capacity;
         private LocalDate queueStartDate;
@@ -35,6 +36,7 @@ public class MemberDto {
         private Long id;
         private String name;
         private MemberRole role;
+        private String team;
         private String email;
         private BigDecimal capacity;
         private Boolean active;
@@ -45,6 +47,7 @@ public class MemberDto {
                     .id(member.getId())
                     .name(member.getName())
                     .role(member.getRole())
+                    .team(member.getTeam())
                     .email(member.getEmail())
                     .capacity(member.getCapacity())
                     .active(member.getActive())

@@ -34,6 +34,7 @@ public class ProjectService {
     private final TaskRepository taskRepository;
     private final TaskDependencyRepository taskDependencyRepository;
     private final TaskLinkRepository taskLinkRepository;
+    private final ProjectMilestoneRepository projectMilestoneRepository;
 
     /** CANCELLED 태스크는 expectedEndDate 계산에서 제외 */
     private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
@@ -50,7 +51,7 @@ public class ProjectService {
                         row -> (Long) row[1]
                 ));
 
-        return projectRepository.findAllByOrderByCreatedAtDesc().stream()
+        return projectRepository.findAllByOrderBySortOrderAscCreatedAtDesc().stream()
                 .map(project -> {
                     LocalDate expectedEndDate = calculateExpectedEndDate(project.getId());
                     long memberCount = memberCountMap.getOrDefault(project.getId(), 0L);
@@ -150,11 +151,23 @@ public class ProjectService {
         }
         // 태스크 삭제
         taskRepository.deleteByProjectId(id);
-        // 연결 테이블 삭제
+        // 연결 테이블 및 마일스톤 삭제
         projectMemberRepository.deleteByProjectId(id);
         projectDomainSystemRepository.deleteByProjectId(id);
+        projectMilestoneRepository.deleteByProjectId(id);
         projectRepository.delete(project);
         log.info("프로젝트 삭제 완료: id={}, name={}", id, project.getName());
+    }
+
+    /**
+     * 프로젝트 순서 변경
+     */
+    @Transactional
+    public void updateSortOrder(Long id, Integer sortOrder) {
+        Project project = findProjectById(id);
+        project.setSortOrder(sortOrder);
+        projectRepository.save(project);
+        log.info("프로젝트 순서 변경: id={}, sortOrder={}", id, sortOrder);
     }
 
     /**
@@ -283,4 +296,56 @@ public class ProjectService {
         return taskRepository.findMaxEndDateByProjectId(projectId, INACTIVE_STATUSES);
     }
 
+    // ---- 마일스톤 관리 ----
+
+    public List<Map<String, Object>> getMilestones(Long projectId) {
+        findProjectById(projectId);
+        return projectMilestoneRepository.findByProjectIdOrderBySortOrderAscStartDateAsc(projectId).stream()
+                .map(this::milestoneToMap)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public Map<String, Object> createMilestone(Long projectId, Map<String, Object> body) {
+        Project project = findProjectById(projectId);
+        ProjectMilestone milestone = ProjectMilestone.builder()
+                .project(project)
+                .name((String) body.get("name"))
+                .startDate(LocalDate.parse((String) body.get("startDate")))
+                .endDate(LocalDate.parse((String) body.get("endDate")))
+                .sortOrder(body.get("sortOrder") != null ? ((Number) body.get("sortOrder")).intValue() : null)
+                .build();
+        ProjectMilestone saved = projectMilestoneRepository.save(milestone);
+        log.info("마일스톤 생성: projectId={}, name={}", projectId, saved.getName());
+        return milestoneToMap(saved);
+    }
+
+    @Transactional
+    public Map<String, Object> updateMilestone(Long projectId, Long milestoneId, Map<String, Object> body) {
+        ProjectMilestone milestone = projectMilestoneRepository.findById(milestoneId)
+                .orElseThrow(() -> new EntityNotFoundException("마일스톤을 찾을 수 없습니다. id=" + milestoneId));
+        if (body.containsKey("name")) milestone.setName((String) body.get("name"));
+        if (body.containsKey("startDate")) milestone.setStartDate(LocalDate.parse((String) body.get("startDate")));
+        if (body.containsKey("endDate")) milestone.setEndDate(LocalDate.parse((String) body.get("endDate")));
+        if (body.containsKey("sortOrder")) milestone.setSortOrder(body.get("sortOrder") != null ? ((Number) body.get("sortOrder")).intValue() : null);
+        ProjectMilestone saved = projectMilestoneRepository.save(milestone);
+        log.info("마일스톤 수정: id={}, name={}", milestoneId, saved.getName());
+        return milestoneToMap(saved);
+    }
+
+    @Transactional
+    public void deleteMilestone(Long projectId, Long milestoneId) {
+        projectMilestoneRepository.deleteById(milestoneId);
+        log.info("마일스톤 삭제: projectId={}, milestoneId={}", projectId, milestoneId);
+    }
+
+    private Map<String, Object> milestoneToMap(ProjectMilestone m) {
+        return Map.of(
+                "id", m.getId(),
+                "name", m.getName(),
+                "startDate", m.getStartDate().toString(),
+                "endDate", m.getEndDate().toString(),
+                "sortOrder", m.getSortOrder() != null ? m.getSortOrder() : 0
+        );
+    }
 }

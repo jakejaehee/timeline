@@ -34,6 +34,9 @@ public class Member {
     @Column(nullable = false, length = 20)
     private MemberRole role;
 
+    @Column(length = 100)
+    private String team;
+
     @Column(length = 200)
     private String email;
 

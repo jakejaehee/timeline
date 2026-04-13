@@ -35,7 +35,7 @@ public class Task {
     private Project project;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "domain_system_id", nullable = false)
+    @JoinColumn(name = "domain_system_id")
     private DomainSystem domainSystem;
 
     @ManyToOne(fetch = FetchType.LAZY)

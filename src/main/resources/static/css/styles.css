@@ -222,36 +222,24 @@ body.sidebar-collapsed #main-content {
     padding: 20px;
 }
 
-/* ---- 대시보드 통계 카드 ---- */
-.stat-card .card-body {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    padding: 20px;
+/* ---- Jira 스타일 설명 ---- */
+.jira-desc {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #172B4D;
+    word-break: break-word;
 }
-
-.stat-icon {
-    width: 50px;
-    height: 50px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.3rem;
-    color: #fff;
-    flex-shrink: 0;
-}
-
-.stat-info h6 {
-    font-size: 0.8rem;
-    margin-bottom: 4px;
-}
-
-.stat-info h3 {
-    font-size: 1.8rem;
-    font-weight: 700;
-    margin: 0;
-    color: #333;
+.jira-desc a { color: #0052CC; text-decoration: none; }
+.jira-desc a:hover { text-decoration: underline; }
+.jira-desc .desc-blank { height: 0.5em; }
+.jira-desc .desc-list { margin: 4px 0; padding-left: 20px; }
+.jira-desc .desc-list li { margin-bottom: 2px; }
+#task-description {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #172B4D;
 }
 
 /* ---- 테이블 ---- */
@@ -293,10 +281,19 @@ body.sidebar-collapsed #main-content {
 .badge-HOLD { background-color: #fff3cd; color: #856404; }
 .badge-CANCELLED { background-color: #f8d7da; color: #721c24; }
 
+/* ---- 툴팁 왼쪽 정렬 ---- */
+.tooltip-left-align .tooltip-inner { text-align: left; max-width: 400px; }
+
+/* ---- 정렬 가능 헤더 ---- */
+.sortable-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sortable-header:hover { background-color: rgba(0,0,0,0.05); }
+
 /* ---- 역할 배지 ---- */
-.badge-ENGINEER { background-color: #e3f2fd; color: #1565c0; }
+.badge-BE { background-color: #e3f2fd; color: #1565c0; }
+.badge-FE { background-color: #ede7f6; color: #4527a0; }
 .badge-QA { background-color: #e8f5e9; color: #2e7d32; }
 .badge-PM { background-color: #fff3e0; color: #e65100; }
+.badge-PLACEHOLDER { background-color: #f5f5f5; color: #9e9e9e; }
 
 /* ---- 프로젝트 유형 배지 (자유 문자열) ---- */
 .badge-project-type {
@@ -446,9 +443,14 @@ body.sidebar-collapsed #main-content {
 }
 
 /* 역할별 간트 바 색상 */
-.bar-engineer .bar-progress,
-.bar-engineer .bar {
+.bar-be .bar-progress,
+.bar-be .bar {
     fill: #4A90D9 !important;
+}
+
+.bar-fe .bar-progress,
+.bar-fe .bar {
+    fill: #7E57C2 !important;
 }
 
 .bar-qa .bar-progress,
@@ -460,6 +462,28 @@ body.sidebar-collapsed #main-content {
 .bar-pm .bar {
     fill: #E67E22 !important;
 }
+
+.bar-placeholder .bar-progress,
+.bar-placeholder .bar {
+    fill: #B0BEC5 !important;
+}
+
+/* 마일스톤 바 */
+.bar-milestone .bar-progress,
+.bar-milestone .bar {
+    fill: #78909C !important;
+    opacity: 0.85;
+    rx: 2;
+    ry: 2;
+}
+.bar-milestone-개발 .bar-progress,
+.bar-milestone-개발 .bar { fill: #42A5F5 !important; }
+.bar-milestone-qa .bar-progress,
+.bar-milestone-qa .bar { fill: #66BB6A !important; }
+.bar-milestone-배포 .bar-progress,
+.bar-milestone-배포 .bar { fill: #FFA726 !important; }
+.bar-milestone-론치 .bar-progress,
+.bar-milestone-론치 .bar { fill: #EF5350 !important; }
 
 /* 역할 범례 */
 .role-legend {
@@ -736,6 +760,7 @@ body.sidebar-collapsed #main-content {
     color: #adb5bd;
     cursor: grab;
     font-size: 1.1rem;
+    touch-action: none;
 }
 
 .drag-handle:hover {
@@ -768,11 +793,6 @@ body.sidebar-collapsed #main-content {
     margin-bottom: 2px;
 }
 
-/* ---- Dashboard 경고 카드 ---- */
-#dashboard-warnings-card .card-header {
-    background-color: #fff3cd;
-}
-
 /* ---- 비가용일 유형 배지 ---- */
 .badge-holiday-NATIONAL { background-color: #e3f2fd; color: #1565c0; }
 .badge-holiday-COMPANY { background-color: #e0f7fa; color: #006064; }
@@ -790,11 +810,28 @@ body.sidebar-collapsed #main-content {
 
 /* ---- 담당자 스케줄 3패널 레이아웃 ---- */
 .schedule-panel-left {
-    width: 20%;
-    min-width: 180px;
+    width: 15%;
+    min-width: 140px;
     border-right: 1px solid #dee2e6;
     overflow-y: auto;
     background: #fff;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.schedule-panel-resize-handle {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+}
+.schedule-panel-resize-handle:hover,
+.schedule-panel-resize-handle.dragging {
+    background: #4e73df;
+    opacity: 0.4;
 }
 
 .schedule-panel-middle {

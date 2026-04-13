@@ -4,7 +4,9 @@ package com.timeline.domain.enums;
  * 팀원 역할
  */
 public enum MemberRole {
-    ENGINEER,
+    BE,
+    FE,
     QA,
-    PM
+    PM,
+    PLACEHOLDER
 }

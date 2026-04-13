@@ -28,6 +28,7 @@ public class TaskDto {
     @AllArgsConstructor
     public static class Request {
         private String name;
+        private Long projectId;
         private Long domainSystemId;
         private Long assigneeId;
         private LocalDate startDate;

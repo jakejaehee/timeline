@@ -50,6 +50,9 @@ public class Project {
     @Column(length = 20)
     private ProjectStatus status = ProjectStatus.PLANNING;
 
+    @Column(name = "sort_order")
+    private Integer sortOrder;
+
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

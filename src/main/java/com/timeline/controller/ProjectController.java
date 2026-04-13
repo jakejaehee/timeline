@@ -1,7 +1,11 @@
 package com.timeline.controller;
 
+import com.timeline.domain.entity.ProjectLink;
+import com.timeline.domain.repository.ProjectLinkRepository;
+import com.timeline.domain.repository.ProjectRepository;
 import com.timeline.dto.ProjectDto;
 import com.timeline.service.ProjectService;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +21,9 @@ import java.util.Map;
 @RequestMapping("/api/v1/projects")
 @RequiredArgsConstructor
 public class ProjectController {
+
+    private final ProjectRepository projectRepository;
+    private final ProjectLinkRepository projectLinkRepository;
 
     private final ProjectService projectService;
 
@@ -90,6 +97,18 @@ public class ProjectController {
     }
 
     /**
+     * 프로젝트 순서 변경
+     */
+    @PatchMapping("/{id}/sort-order")
+    public ResponseEntity<?> updateSortOrder(@PathVariable Long id,
+                                              @RequestBody Map<String, Object> body) {
+        Object sortOrderObj = body.get("sortOrder");
+        Integer sortOrder = (sortOrderObj != null) ? ((Number) sortOrderObj).intValue() : null;
+        projectService.updateSortOrder(id, sortOrder);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    /**
      * 프로젝트에 멤버 추가
      */
     @PostMapping("/{id}/members")
@@ -135,5 +154,71 @@ public class ProjectController {
         return ResponseEntity.ok(Map.of(
                 "success", true
         ));
+    }
+
+    // ---- 마일스톤 API ----
+
+    @GetMapping("/{id}/milestones")
+    public ResponseEntity<?> getMilestones(@PathVariable Long id) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", projectService.getMilestones(id)
+        ));
+    }
+
+    @PostMapping("/{id}/milestones")
+    public ResponseEntity<?> createMilestone(@PathVariable Long id,
+                                              @RequestBody Map<String, Object> body) {
+        var result = projectService.createMilestone(id, body);
+        return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
+
+    @PutMapping("/{id}/milestones/{milestoneId}")
+    public ResponseEntity<?> updateMilestone(@PathVariable Long id,
+                                              @PathVariable Long milestoneId,
+                                              @RequestBody Map<String, Object> body) {
+        var result = projectService.updateMilestone(id, milestoneId, body);
+        return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
+
+    @DeleteMapping("/{id}/milestones/{milestoneId}")
+    public ResponseEntity<?> deleteMilestone(@PathVariable Long id,
+                                              @PathVariable Long milestoneId) {
+        projectService.deleteMilestone(id, milestoneId);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    // ---- 프로젝트 링크 ----
+
+    @GetMapping("/{id}/links")
+    public ResponseEntity<?> getProjectLinks(@PathVariable Long id) {
+        var links = projectLinkRepository.findByProjectIdOrderByCreatedAtAsc(id);
+        var data = links.stream().map(l -> Map.of(
+                "id", l.getId(),
+                "url", l.getUrl(),
+                "label", l.getLabel()
+        )).toList();
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    @PostMapping("/{id}/links")
+    public ResponseEntity<?> addProjectLink(@PathVariable Long id,
+                                             @RequestBody Map<String, String> body) {
+        var project = projectRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다."));
+        var link = ProjectLink.builder()
+                .project(project)
+                .url(body.get("url"))
+                .label(body.get("label"))
+                .build();
+        projectLinkRepository.save(link);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @DeleteMapping("/{id}/links/{linkId}")
+    public ResponseEntity<?> deleteProjectLink(@PathVariable Long id,
+                                                @PathVariable Long linkId) {
+        projectLinkRepository.deleteById(linkId);
+        return ResponseEntity.ok(Map.of("success", true));
     }
 }

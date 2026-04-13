@@ -99,9 +99,13 @@ public class AssigneeOrderService {
         List<Task> parallelTasks = taskRepository.findParallelTasksByAssigneeOrdered(
                 assigneeId, TaskExecutionMode.PARALLEL, INACTIVE_STATUSES);
 
-        // SEQUENTIAL + PARALLEL 병합 후 startDate 순 정렬
+        // 비활성(HOLD/CANCELLED) 태스크도 포함
+        List<Task> inactiveTasks = taskRepository.findInactiveTasksByAssignee(assigneeId, INACTIVE_STATUSES);
+
+        // SEQUENTIAL + PARALLEL + 비활성 병합
         List<Task> allTasks = new ArrayList<>(sequentialTasks);
         allTasks.addAll(parallelTasks);
+        allTasks.addAll(inactiveTasks);
 
         // 순서 있는 SEQUENTIAL 먼저, 그 다음 startDate 기준 정렬
         allTasks.sort(Comparator

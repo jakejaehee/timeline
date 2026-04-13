@@ -4,7 +4,6 @@ import com.timeline.domain.entity.*;
 import com.timeline.domain.enums.TaskExecutionMode;
 import com.timeline.domain.enums.TaskStatus;
 import com.timeline.domain.repository.MemberRepository;
-import com.timeline.domain.repository.ProjectDomainSystemRepository;
 import com.timeline.domain.repository.ProjectRepository;
 import com.timeline.domain.repository.TaskLinkRepository;
 import com.timeline.domain.repository.TaskRepository;
@@ -15,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -39,7 +39,6 @@ public class JiraImportService {
     private final TaskLinkRepository taskLinkRepository;
     private final ProjectRepository projectRepository;
     private final MemberRepository memberRepository;
-    private final ProjectDomainSystemRepository projectDomainSystemRepository;
 
     /** Jira 상태 -> TaskStatus 매핑 */
     private static final Map<String, TaskStatus> STATUS_MAP = Map.ofEntries(
@@ -52,6 +51,7 @@ public class JiraImportService {
             Map.entry("done",        TaskStatus.COMPLETED),
             Map.entry("resolved",    TaskStatus.COMPLETED),
             Map.entry("closed",      TaskStatus.COMPLETED),
+            Map.entry("hold",        TaskStatus.HOLD),
             Map.entry("on hold",     TaskStatus.HOLD),
             Map.entry("blocked",     TaskStatus.HOLD),
             Map.entry("cancelled",   TaskStatus.CANCELLED),
@@ -150,9 +150,10 @@ public class JiraImportService {
 
         LocalDate createdAfter = (request != null) ? request.getCreatedAfter() : null;
         List<String> statusFilter = (request != null) ? request.getStatusFilter() : null;
-
-        // 프로젝트에 연결된 첫 번째 domainSystem (필수)
-        DomainSystem defaultDomainSystem = getDefaultDomainSystem(projectId);
+        List<String> selectedKeys = (request != null) ? request.getSelectedKeys() : null;
+        Map<String, Long> issueProjectMap = (request != null) ? request.getIssueProjectMap() : null;
+        Set<String> selectedKeySet = (selectedKeys != null && !selectedKeys.isEmpty())
+                ? new HashSet<>(selectedKeys) : null;
 
         // Story Points 필드 ID 동적 탐지
         String storyPointsFieldId = jiraApiClient.findStoryPointsFieldId(
@@ -163,8 +164,9 @@ public class JiraImportService {
                 config.getBaseUrl(), config.getEmail(), config.getApiToken(),
                 project.getJiraBoardId(), createdAfter, statusFilter, storyPointsFieldId);
 
-        // 기존 태스크 jiraKey 맵
-        Map<String, Task> existingTaskMap = buildExistingTaskMap(projectId);
+        // 프로젝트 캐시 (이슈별 프로젝트 지정 시)
+        Map<Long, Project> projectCache = new HashMap<>();
+        projectCache.put(projectId, project);
 
         // 멤버 맵 (이름 + 이메일)
         MemberMaps memberMaps = buildMemberMaps();
@@ -172,16 +174,35 @@ public class JiraImportService {
         int created = 0, updated = 0, skipped = 0;
         List<JiraDto.ImportError> errors = new ArrayList<>();
         List<Task> tasksToSave = new ArrayList<>();
+        Set<Long> affectedProjectIds = new HashSet<>();
+        affectedProjectIds.add(projectId);
+        Map<Long, Map<String, Task>> existingTaskMapCache = new HashMap<>();
 
         for (JiraDto.JiraIssue issue : issues) {
             try {
                 // jiraKey 길이 검증 (DB column: VARCHAR(50))
                 String jiraKey = issue.getKey();
+
+                // 선택된 이슈만 처리 (selectedKeys가 있으면 해당 키만)
+                if (selectedKeySet != null && !selectedKeySet.contains(jiraKey)) {
+                    skipped++;
+                    continue;
+                }
+
                 if (jiraKey != null && jiraKey.length() > 50) {
                     jiraKey = jiraKey.substring(0, 50);
                     log.warn("Jira 이슈 {} 의 jiraKey가 50자를 초과하여 잘림: {}", issue.getKey(), jiraKey);
                 }
 
+                // 이슈별 프로젝트 결정
+                Long issueProjectId = (issueProjectMap != null && issueProjectMap.containsKey(jiraKey))
+                        ? issueProjectMap.get(jiraKey) : projectId;
+                Project issueProject = projectCache.computeIfAbsent(issueProjectId, this::getValidProject);
+                affectedProjectIds.add(issueProjectId);
+
+                // 해당 프로젝트의 기존 태스크 맵 조회 (캐시)
+                Map<String, Task> existingTaskMap = existingTaskMapCache.computeIfAbsent(
+                        issueProjectId, this::buildExistingTaskMap);
                 Task existing = existingTaskMap.get(issue.getKey());
                 Member mappedMember = resolveMember(issue, memberMaps);
 
@@ -226,7 +247,7 @@ public class JiraImportService {
                     // endDate 폴백: dueDate -> resolutionDate -> 기존 값 유지
                     LocalDate endDate = resolveEndDateForUpdate(issue, existing);
 
-                    LocalDate[] resolved = resolveDatePair(startDate, endDate, issue.getKey());
+                    LocalDate[] resolved = resolveDatePair(startDate, endDate, issue.getKey(), issue.getStoryPoints());
                     existing.setStartDate(resolved[0]);
                     existing.setEndDate(resolved[1]);
 
@@ -244,11 +265,11 @@ public class JiraImportService {
                     LocalDate endDate = resolveEndDateForCreate(issue);
 
                     LocalDate[] resolved = resolveDatePair(
-                            issue.getStartDate(), endDate, issue.getKey());
+                            issue.getStartDate(), endDate, issue.getKey(), issue.getStoryPoints());
 
                     Task newTask = Task.builder()
-                            .project(project)
-                            .domainSystem(defaultDomainSystem)
+                            .project(issueProject)
+                            .domainSystem(null)
                             .assignee(mappedMember)
                             .name(taskName)
                             .description(issue.getDescription())
@@ -275,6 +296,11 @@ public class JiraImportService {
         // 배치 저장 (flush 필수: 후속 saveIssueLinks에서 신규 태스크의 ID가 필요)
         if (!tasksToSave.isEmpty()) {
             taskRepository.saveAllAndFlush(tasksToSave);
+        }
+
+        // 담당자별 assigneeOrder 자동 부여 (시작일 기준 정렬) — 영향받은 모든 프로젝트
+        for (Long pid : affectedProjectIds) {
+            assignOrderByStartDate(pid);
         }
 
         // issuelinks -> TaskLink 저장 (FR-007)
@@ -436,16 +462,36 @@ public class JiraImportService {
     }
 
     /**
-     * 프로젝트에 연결된 첫 번째 도메인 시스템 조회
+     * 프로젝트 내 태스크를 담당자별로 그룹핑하여 시작일 기준 assigneeOrder 부여
      */
-    private DomainSystem getDefaultDomainSystem(Long projectId) {
-        List<ProjectDomainSystem> pdsList = projectDomainSystemRepository.findByProjectIdWithDomainSystem(projectId);
-        if (pdsList.isEmpty()) {
-            throw new IllegalStateException("프로젝트에 도메인 시스템이 등록되어 있지 않습니다. 프로젝트에 도메인 시스템을 먼저 추가해주세요.");
+    private void assignOrderByStartDate(Long projectId) {
+        List<Task> allTasks = taskRepository.findByProjectId(projectId);
+
+        // 담당자별 SEQUENTIAL 활성 태스크 그룹핑
+        Map<Long, List<Task>> byAssignee = new LinkedHashMap<>();
+        for (Task t : allTasks) {
+            if (t.getAssignee() == null) continue;
+            if (t.getExecutionMode() != TaskExecutionMode.SEQUENTIAL) continue;
+            if (t.getStatus() == TaskStatus.HOLD || t.getStatus() == TaskStatus.CANCELLED) continue;
+            byAssignee.computeIfAbsent(t.getAssignee().getId(), k -> new ArrayList<>()).add(t);
         }
-        // ID 오름차순 기준 첫 번째
-        pdsList.sort(Comparator.comparingLong(ProjectDomainSystem::getId));
-        return pdsList.get(0).getDomainSystem();
+
+        List<Task> toUpdate = new ArrayList<>();
+        for (List<Task> tasks : byAssignee.values()) {
+            tasks.sort(Comparator.comparing(
+                    (Task t) -> t.getStartDate() != null ? t.getStartDate() : LocalDate.MAX)
+                    .thenComparing(t -> t.getEndDate() != null ? t.getEndDate() : LocalDate.MAX));
+            int order = 1;
+            for (Task t : tasks) {
+                t.setAssigneeOrder(order++);
+                toUpdate.add(t);
+            }
+        }
+
+        if (!toUpdate.isEmpty()) {
+            taskRepository.saveAll(toUpdate);
+            log.info("Jira Import 후 assigneeOrder 자동 부여: projectId={}, 대상 태스크={}건", projectId, toUpdate.size());
+        }
     }
 
     /**
@@ -554,29 +600,44 @@ public class JiraImportService {
      *
      * @return LocalDate[2] = {startDate, endDate}
      */
-    private LocalDate[] resolveDatePair(LocalDate startDate, LocalDate endDate, String jiraKey) {
+    private LocalDate[] resolveDatePair(LocalDate startDate, LocalDate endDate, String jiraKey, BigDecimal manDays) {
         if (startDate == null && endDate == null) {
             LocalDate today = LocalDate.now();
             log.warn("Jira 이슈 {} 의 startDate, endDate 가 모두 null이어서 오늘 날짜({})로 대체합니다.",
                     jiraKey, today);
-            return new LocalDate[]{today, today};
+            startDate = today;
+            endDate = today;
         }
         if (startDate == null) {
-            log.warn("Jira 이슈 {} 의 startDate 가 null이어서 endDate({})로 대체합니다.",
-                    jiraKey, endDate);
             startDate = endDate;
         }
         if (endDate == null) {
-            log.warn("Jira 이슈 {} 의 endDate 가 null이어서 startDate({})로 대체합니다.",
-                    jiraKey, startDate);
             endDate = startDate;
         }
         if (endDate.isBefore(startDate)) {
-            log.warn("Jira 이슈 {} 의 endDate({})가 startDate({}) 이전이어서 startDate로 보정합니다.",
-                    jiraKey, endDate, startDate);
             endDate = startDate;
         }
+        // startDate == endDate이고 manDays > 1이면 영업일 기준으로 endDate 보정
+        if (startDate.equals(endDate) && manDays != null && manDays.intValue() > 1) {
+            endDate = addBusinessDays(startDate, manDays.intValue() - 1);
+        }
         return new LocalDate[]{startDate, endDate};
+    }
+
+    /**
+     * 영업일(평일) 기준 날짜 더하기
+     */
+    private LocalDate addBusinessDays(LocalDate from, int days) {
+        LocalDate d = from;
+        int added = 0;
+        while (added < days) {
+            d = d.plusDays(1);
+            if (d.getDayOfWeek() != java.time.DayOfWeek.SATURDAY
+                    && d.getDayOfWeek() != java.time.DayOfWeek.SUNDAY) {
+                added++;
+            }
+        }
+        return d;
     }
 
     /**

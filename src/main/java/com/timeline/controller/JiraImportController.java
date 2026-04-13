@@ -38,7 +38,7 @@ public class JiraImportController {
                     "message", e.getMessage()
             ));
         } catch (RuntimeException e) {
-            log.warn("Jira preview 실패", e);
+            log.error("Jira preview 실패: {}", e.getMessage(), e);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", sanitizeErrorMessage(e)
@@ -64,7 +64,7 @@ public class JiraImportController {
                     "message", e.getMessage()
             ));
         } catch (RuntimeException e) {
-            log.warn("Jira import 실패", e);
+            log.error("Jira import 실패: {}", e.getMessage(), e);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", sanitizeErrorMessage(e)
@@ -78,8 +78,12 @@ public class JiraImportController {
      */
     private String sanitizeErrorMessage(RuntimeException e) {
         String msg = e.getMessage();
-        if (msg != null && (msg.startsWith("Jira ") || msg.startsWith("Board"))) {
-            return msg;
+        if (msg != null && !msg.isBlank()) {
+            // 사용자 친화적 메시지 패턴 (Jira/Board/프로젝트/멤버 관련)
+            if (msg.startsWith("Jira ") || msg.startsWith("Board") || msg.startsWith("프로젝트")
+                    || msg.startsWith("멤버") || e instanceof IllegalStateException || e instanceof IllegalArgumentException) {
+                return msg;
+            }
         }
         return "Jira 연동 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
     }

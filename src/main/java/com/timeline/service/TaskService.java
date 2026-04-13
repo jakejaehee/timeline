@@ -34,6 +34,7 @@ public class TaskService {
     private final ProjectRepository projectRepository;
     private final DomainSystemRepository domainSystemRepository;
     private final MemberRepository memberRepository;
+    private final ProjectMilestoneRepository projectMilestoneRepository;
     private final BusinessDayCalculator businessDayCalculator;
     private final HolidayService holidayService;
     private final MemberLeaveService memberLeaveService;
@@ -69,11 +70,12 @@ public class TaskService {
                         Collectors.mapping(td -> td.getDependsOnTask().getId(), Collectors.toList())
                 ));
 
-        // 도메인 시스템별 그룹핑 (LinkedHashMap으로 순서 유지)
+        // 도메인 시스템별 그룹핑 (LinkedHashMap으로 순서 유지, null은 0L 키)
         Map<Long, List<Task>> groupedByDomainSystem = new LinkedHashMap<>();
         for (Task task : tasks) {
+            Long dsId = (task.getDomainSystem() != null) ? task.getDomainSystem().getId() : 0L;
             groupedByDomainSystem
-                    .computeIfAbsent(task.getDomainSystem().getId(), k -> new ArrayList<>())
+                    .computeIfAbsent(dsId, k -> new ArrayList<>())
                     .add(task);
         }
 
@@ -111,12 +113,24 @@ public class TaskService {
                             .collect(Collectors.toList());
 
                     return GanttDataDto.DomainSystemGroup.builder()
-                            .id(ds.getId())
-                            .name(ds.getName())
-                            .color(ds.getColor())
+                            .id(ds != null ? ds.getId() : 0L)
+                            .name(ds != null ? ds.getName() : "미지정")
+                            .color(ds != null ? ds.getColor() : "#9E9E9E")
                             .tasks(taskItems)
                             .build();
                 })
+                .collect(Collectors.toList());
+
+        // 마일스톤 조회
+        List<GanttDataDto.MilestoneItem> milestoneItems = projectMilestoneRepository
+                .findByProjectIdOrderBySortOrderAscStartDateAsc(projectId).stream()
+                .map(m -> GanttDataDto.MilestoneItem.builder()
+                        .id(m.getId())
+                        .name(m.getName())
+                        .startDate(m.getStartDate())
+                        .endDate(m.getEndDate())
+                        .sortOrder(m.getSortOrder())
+                        .build())
                 .collect(Collectors.toList());
 
         return GanttDataDto.Response.builder()
@@ -126,6 +140,7 @@ public class TaskService {
                         .startDate(project.getStartDate())
                         .endDate(project.getEndDate())
                         .build())
+                .milestones(milestoneItems)
                 .domainSystems(domainSystemGroups)
                 .build();
     }
@@ -169,10 +184,6 @@ public class TaskService {
         if (request.getName().length() > 300) {
             throw new IllegalArgumentException("태스크명은 300자를 초과할 수 없습니다.");
         }
-        if (request.getDomainSystemId() == null) {
-            throw new IllegalArgumentException("도메인 시스템은 필수입니다.");
-        }
-
         // 실행 모드 결정 (null이면 SEQUENTIAL 기본값)
         TaskExecutionMode executionMode = request.getExecutionMode() != null
                 ? request.getExecutionMode() : TaskExecutionMode.SEQUENTIAL;
@@ -229,9 +240,12 @@ public class TaskService {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다. id=" + projectId));
 
-        DomainSystem domainSystem = domainSystemRepository.findById(request.getDomainSystemId())
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
+        DomainSystem domainSystem = null;
+        if (request.getDomainSystemId() != null) {
+            domainSystem = domainSystemRepository.findById(request.getDomainSystemId())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
+        }
 
         // PARALLEL 모드인 경우 프로젝트 기간 내 검증 (다른 태스크와 충돌 검증 안 함)
         if (assignee != null && executionMode == TaskExecutionMode.PARALLEL) {
@@ -284,10 +298,6 @@ public class TaskService {
         if (request.getName().length() > 300) {
             throw new IllegalArgumentException("태스크명은 300자를 초과할 수 없습니다.");
         }
-        if (request.getDomainSystemId() == null) {
-            throw new IllegalArgumentException("도메인 시스템은 필수입니다.");
-        }
-
         // 실행 모드 결정
         TaskExecutionMode executionMode = request.getExecutionMode() != null
                 ? request.getExecutionMode() : TaskExecutionMode.SEQUENTIAL;
@@ -295,7 +305,7 @@ public class TaskService {
         Task task = taskRepository.findByIdWithDetails(taskId)
                 .orElseThrow(() -> new EntityNotFoundException("태스크를 찾을 수 없습니다. id=" + taskId));
 
-        Long projectId = task.getProject().getId();
+        Long projectId = (request.getProjectId() != null) ? request.getProjectId() : task.getProject().getId();
 
         LocalDate startDate = request.getStartDate();
         LocalDate endDate = request.getEndDate();
@@ -355,11 +365,19 @@ public class TaskService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
 
-        // PARALLEL 모드인 경우 프로젝트 기간 내 검증 (다른 태스크와 충돌 검증 안 함)
-        if (assignee != null && executionMode == TaskExecutionMode.PARALLEL) {
-            validateParallelTaskDateRange(assignee, task.getProject(), startDate, endDate);
+        // 프로젝트 변경 처리
+        Project project = task.getProject();
+        if (request.getProjectId() != null && !request.getProjectId().equals(task.getProject().getId())) {
+            project = projectRepository.findById(request.getProjectId())
+                    .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다. id=" + request.getProjectId()));
         }
 
+        // PARALLEL 모드인 경우 프로젝트 기간 내 검증 (다른 태스크와 충돌 검증 안 함)
+        if (assignee != null && executionMode == TaskExecutionMode.PARALLEL) {
+            validateParallelTaskDateRange(assignee, project, startDate, endDate);
+        }
+
+        task.setProject(project);
         task.setDomainSystem(domainSystem);
         task.setAssignee(assignee);
         task.setName(request.getName());

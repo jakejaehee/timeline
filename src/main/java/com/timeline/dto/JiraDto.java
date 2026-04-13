@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Jira 연동 관련 DTO
@@ -149,5 +150,7 @@ public class JiraDto {
     public static class ImportRequest {
         private LocalDate createdAfter;                     // 생성일자 필터 (nullable)
         private List<String> statusFilter; // Jira 상태 필터 (nullable 또는 빈 리스트 = 전체)
+        private List<String> selectedKeys; // 선택된 Jira 이슈 키 목록 (null이면 전체)
+        private Map<String, Long> issueProjectMap; // Jira 키 -> 프로젝트 ID 매핑 (null이면 URL의 projectId 사용)
     }
 }

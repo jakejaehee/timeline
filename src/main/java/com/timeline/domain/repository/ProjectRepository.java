@@ -15,7 +15,7 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
 
     List<Project> findByStatusNot(ProjectStatus status);
 
-    List<Project> findAllByOrderByCreatedAtDesc();
+    List<Project> findAllByOrderBySortOrderAscCreatedAtDesc();
 
     @Query("SELECT DISTINCT p.projectType FROM Project p WHERE p.projectType IS NOT NULL ORDER BY p.projectType")
     List<String> findDistinctProjectTypes();

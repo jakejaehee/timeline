@@ -24,10 +24,10 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.domainSystem " +
             "LEFT JOIN FETCH t.assignee " +
             "WHERE t.project.id = :projectId " +
-            "ORDER BY t.domainSystem.name ASC, t.sortOrder ASC, t.startDate ASC")
+            "ORDER BY t.domainSystem.name ASC NULLS LAST, t.sortOrder ASC, t.startDate ASC")
     List<Task> findByProjectIdWithDetails(@Param("projectId") Long projectId);
 
     /**
@@ -35,7 +35,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.domainSystem " +
             "LEFT JOIN FETCH t.assignee " +
             "WHERE t.id = :taskId")
     Optional<Task> findByIdWithDetails(@Param("taskId") Long taskId);
@@ -50,7 +50,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.domainSystem " +
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.startDate <= :endDate " +
             "AND t.endDate >= :startDate " +
@@ -70,7 +70,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.domainSystem " +
             "WHERE t.assignee.id = :assigneeId " +
             "ORDER BY t.startDate ASC")
     List<Task> findByAssigneeIdWithDetails(@Param("assigneeId") Long assigneeId);
@@ -82,7 +82,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.domainSystem " +
             "LEFT JOIN FETCH t.assignee " +
             "WHERE (:status IS NULL OR t.status = :status) " +
             "AND (:projectId IS NULL OR t.project.id = :projectId) " +
@@ -185,7 +185,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.domainSystem " +
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.executionMode = :sequentialMode " +
             "AND t.status NOT IN :excludeStatuses " +
@@ -200,7 +200,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.domainSystem " +
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.executionMode = :parallelMode " +
             "AND t.status NOT IN :excludeStatuses " +
@@ -209,6 +209,19 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             @Param("assigneeId") Long assigneeId,
             @Param("parallelMode") TaskExecutionMode parallelMode,
             @Param("excludeStatuses") List<TaskStatus> excludeStatuses);
+
+    /**
+     * 담당자의 비활성(HOLD/CANCELLED) 태스크 조회
+     */
+    @Query("SELECT t FROM Task t " +
+            "JOIN FETCH t.project " +
+            "LEFT JOIN FETCH t.domainSystem " +
+            "WHERE t.assignee.id = :assigneeId " +
+            "AND t.status IN :statuses " +
+            "ORDER BY t.startDate ASC")
+    List<Task> findInactiveTasksByAssignee(
+            @Param("assigneeId") Long assigneeId,
+            @Param("statuses") List<TaskStatus> statuses);
 
     /**
      * 프로젝트 내 최대 endDate 조회 (expectedEndDate 계산용)

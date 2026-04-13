@@ -61,6 +61,7 @@ public class MemberService {
         Member.MemberBuilder builder = Member.builder()
                 .name(request.getName())
                 .role(request.getRole())
+                .team(request.getTeam())
                 .email(request.getEmail());
 
         // capacity가 null이면 @Builder.Default(1.0)가 적용됨
@@ -94,6 +95,7 @@ public class MemberService {
 
         member.setName(request.getName());
         member.setRole(request.getRole());
+        member.setTeam(request.getTeam());
         member.setEmail(request.getEmail());
         if (request.getCapacity() != null) {
             validateCapacity(request.getCapacity());

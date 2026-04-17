@@ -1,6 +1,7 @@
 package com.timeline.domain.repository;
 
 import com.timeline.domain.entity.ProjectMember;
+import com.timeline.domain.enums.MemberRole;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -34,4 +35,18 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
      */
     @Query("SELECT pm.project.id, COUNT(pm) FROM ProjectMember pm GROUP BY pm.project.id")
     List<Object[]> countByProjectIdGrouped();
+
+    /**
+     * 프로젝트별 특정 역할 멤버 수 일괄 조회 (N+1 방지)
+     * 결과: Object[] { projectId (Long), count (Long) }
+     */
+    @Query("SELECT pm.project.id, COUNT(pm) FROM ProjectMember pm WHERE pm.member.role = :role GROUP BY pm.project.id")
+    List<Object[]> countByProjectIdAndRoleGrouped(@Param("role") MemberRole role);
+
+    /**
+     * 프로젝트별 특정 역할 멤버의 capacity 합계 일괄 조회 (N+1 방지)
+     * 결과: Object[] { projectId (Long), totalCapacity (BigDecimal) }
+     */
+    @Query("SELECT pm.project.id, COALESCE(SUM(pm.member.capacity), 0) FROM ProjectMember pm WHERE pm.member.role = :role GROUP BY pm.project.id")
+    List<Object[]> sumCapacityByProjectIdAndRoleGrouped(@Param("role") MemberRole role);
 }

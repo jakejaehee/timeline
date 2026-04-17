@@ -310,45 +310,19 @@ public class JiraApiClient {
             fields = fields + "," + storyPointsFieldId;
         }
 
-        List<JiraDto.JiraIssue> allIssues = new ArrayList<>();
-        int startAt = 0;
-        int total = Integer.MAX_VALUE;
+        List<String> fieldsList = List.of(fields.split(","));
+        List<JiraDto.JiraIssue> allIssues;
 
-        while (startAt < total && allIssues.size() < MAX_TOTAL_ISSUES) {
-            URI uri = UriComponentsBuilder
-                    .fromHttpUrl(baseUrl + "/rest/api/3/search")
-                    .queryParam("jql", jql)
-                    .queryParam("maxResults", MAX_RESULTS)
-                    .queryParam("startAt", startAt)
-                    .queryParam("fields", fields)
-                    .build().encode().toUri();
-
-            try {
-                ResponseEntity<Map> response = jiraRestTemplate.exchange(uri, HttpMethod.GET, entity, Map.class);
-                Map<String, Object> body = response.getBody();
-                if (body == null) break;
-
-                total = toInt(body.get("total"), 0);
-                List<Map<String, Object>> issues = (List<Map<String, Object>>) body.get("issues");
-                if (issues == null || issues.isEmpty()) break;
-
-                for (Map<String, Object> issue : issues) {
-                    allIssues.add(parseIssue(issue, storyPointsFieldId));
-                }
-
-                startAt += issues.size();
-                log.debug("Search API 이슈 수집 중: startAt={}, total={}, fetched={}", startAt, total, allIssues.size());
-
-            } catch (HttpClientErrorException.Unauthorized e) {
-                throw new RuntimeException("Jira 인증 실패: 이메일 또는 API Token이 올바르지 않습니다.");
-            } catch (HttpClientErrorException e) {
-                log.warn("Jira Search API 오류: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
-                throw new RuntimeException("Jira Search API 오류: " + e.getStatusCode());
-            } catch (Exception e) {
-                if (e instanceof RuntimeException) throw (RuntimeException) e;
-                log.warn("Jira Search API 이슈 수집 실패", e);
-                throw new RuntimeException("Jira 이슈 수집 실패. 네트워크 상태를 확인해주세요.");
-            }
+        try {
+            allIssues = searchAllByJqlPost(baseUrl, headers, jql, fieldsList, storyPointsFieldId);
+        } catch (HttpClientErrorException.Unauthorized e) {
+            throw new RuntimeException("Jira 인증 실패: 이메일 또는 API Token이 올바르지 않습니다.");
+        } catch (HttpClientErrorException e) {
+            log.warn("Jira Search API 오류: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Jira Search API 오류: " + e.getStatusCode());
+        } catch (Exception e) {
+            if (e instanceof RuntimeException) throw (RuntimeException) e;
+            throw new RuntimeException("Jira 이슈 수집 실패. 네트워크 상태를 확인해주세요.");
         }
 
         // Search API 응답 후에도 클라이언트 사이드 statusCategory 재필터링 (방어적 처리)
@@ -368,6 +342,103 @@ public class JiraApiClient {
 
         log.info("Jira Search API 이슈 수집 완료: {}건 (project={})", allIssues.size(), projectKey);
         return allIssues;
+    }
+
+    /**
+     * Jira 프로젝트 키 기반 이슈 수집 (Search API, JQL: project="KEY")
+     */
+    @SuppressWarnings("unchecked")
+    public List<JiraDto.JiraIssue> fetchIssuesByProjectKey(String baseUrl, String email, String apiToken,
+                                                            String projectKey, LocalDate createdAfter,
+                                                            List<String> statusFilter,
+                                                            String storyPointsFieldId) {
+        if (projectKey == null || !projectKey.matches("^[A-Za-z0-9_\\-]+$")) {
+            throw new IllegalArgumentException("Jira 프로젝트 키가 올바르지 않습니다: " + projectKey);
+        }
+
+        HttpHeaders headers = createAuthHeaders(email, apiToken);
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        StringBuilder jqlBuilder = new StringBuilder();
+        jqlBuilder.append("project=\"").append(projectKey).append("\"");
+        String additionalJql = buildJql(createdAfter, statusFilter);
+        if (additionalJql != null) {
+            jqlBuilder.append(" AND ").append(additionalJql);
+        }
+        jqlBuilder.append(" ORDER BY created ASC");
+        String jql = jqlBuilder.toString();
+
+        log.info("Jira Space 검색 JQL: {}", jql);
+
+        String fields = BOARD_FIELDS;
+        if (storyPointsFieldId != null && !storyPointsFieldId.isBlank()
+                && !BOARD_FIELDS_SET.contains(storyPointsFieldId)) {
+            fields = fields + "," + storyPointsFieldId;
+        }
+
+        List<String> fieldsList = List.of(fields.split(","));
+
+        try {
+            List<JiraDto.JiraIssue> allIssues = searchAllByJqlPost(baseUrl, headers, jql, fieldsList, storyPointsFieldId);
+            log.info("Jira Space 이슈 수집 완료: {}건 (project={})", allIssues.size(), projectKey);
+            return allIssues;
+        } catch (HttpClientErrorException.Unauthorized e) {
+            throw new RuntimeException("Jira 인증 실패: 이메일 또는 API Token이 올바르지 않습니다.");
+        } catch (HttpClientErrorException e) {
+            log.warn("Jira Search API 오류: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Jira Search API 오류: " + e.getStatusCode());
+        } catch (Exception e) {
+            if (e instanceof RuntimeException) throw (RuntimeException) e;
+            throw new RuntimeException("Jira 이슈 수집 실패. 네트워크 상태를 확인해주세요.");
+        }
+    }
+
+    /**
+     * Jira Epic 키 기반 하위 이슈 수집 (Search API, JQL: parent="KEY" OR "Epic Link"="KEY")
+     */
+    @SuppressWarnings("unchecked")
+    public List<JiraDto.JiraIssue> fetchIssuesByEpicKey(String baseUrl, String email, String apiToken,
+                                                         String epicKey, LocalDate createdAfter,
+                                                         List<String> statusFilter,
+                                                         String storyPointsFieldId) {
+        if (epicKey == null || !epicKey.matches("^[A-Za-z0-9_\\-]+$")) {
+            throw new IllegalArgumentException("Jira Epic 키가 올바르지 않습니다: " + epicKey);
+        }
+
+        HttpHeaders headers = createAuthHeaders(email, apiToken);
+
+        // parent=KEY (Next-gen) OR "Epic Link"=KEY (Classic)
+        StringBuilder jqlBuilder = new StringBuilder();
+        jqlBuilder.append("(parent=\"").append(epicKey).append("\" OR \"Epic Link\"=\"").append(epicKey).append("\")");
+        String additionalJql = buildJql(createdAfter, statusFilter);
+        if (additionalJql != null) {
+            jqlBuilder.append(" AND ").append(additionalJql);
+        }
+        jqlBuilder.append(" ORDER BY created ASC");
+        String jql = jqlBuilder.toString();
+
+        log.info("Jira Epic 검색 JQL: {}", jql);
+
+        String fields = BOARD_FIELDS;
+        if (storyPointsFieldId != null && !storyPointsFieldId.isBlank()
+                && !BOARD_FIELDS_SET.contains(storyPointsFieldId)) {
+            fields = fields + "," + storyPointsFieldId;
+        }
+        List<String> fieldsList = List.of(fields.split(","));
+
+        try {
+            List<JiraDto.JiraIssue> allIssues = searchAllByJqlPost(baseUrl, headers, jql, fieldsList, storyPointsFieldId);
+            log.info("Jira Epic 이슈 수집 완료: {}건 (epic={})", allIssues.size(), epicKey);
+            return allIssues;
+        } catch (HttpClientErrorException.Unauthorized e) {
+            throw new RuntimeException("Jira 인증 실패: 이메일 또는 API Token이 올바르지 않습니다.");
+        } catch (HttpClientErrorException e) {
+            log.warn("Jira Search API 오류: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Jira Search API 오류: " + e.getStatusCode());
+        } catch (Exception e) {
+            if (e instanceof RuntimeException) throw (RuntimeException) e;
+            throw new RuntimeException("Jira 이슈 수집 실패. 네트워크 상태를 확인해주세요.");
+        }
     }
 
     /**
@@ -447,6 +518,13 @@ public class JiraApiClient {
         // summary
         String summary = (String) fields.get("summary");
 
+        // issueType
+        String issueType = null;
+        Map<String, Object> issuetypeObj = (Map<String, Object>) fields.get("issuetype");
+        if (issuetypeObj != null) {
+            issueType = (String) issuetypeObj.get("name");
+        }
+
         // status
         String statusName = null;
         String statusCategoryKey = null;
@@ -490,6 +568,7 @@ public class JiraApiClient {
         return JiraDto.JiraIssue.builder()
                 .key(key)
                 .summary(truncate(summary, 300))
+                .issueType(issueType)
                 .status(statusName)
                 .statusCategoryKey(statusCategoryKey)
                 .assigneeDisplayName(assigneeDisplayName)
@@ -678,6 +757,53 @@ public class JiraApiClient {
     /**
      * Basic Auth 헤더 생성
      */
+    /**
+     * Jira Search API POST 호출 (v3 search/jql — GET deprecated 대응)
+     * 410 GONE 시 GET /rest/api/3/search 로 폴백
+     */
+    /**
+     * POST /rest/api/3/search/jql — 커서 기반 페이지네이션으로 전체 이슈 수집
+     */
+    @SuppressWarnings("unchecked")
+    private List<JiraDto.JiraIssue> searchAllByJqlPost(String baseUrl, HttpHeaders headers,
+                                                        String jql, List<String> fields,
+                                                        String storyPointsFieldId) {
+        List<JiraDto.JiraIssue> allIssues = new ArrayList<>();
+        String nextPageToken = null;
+
+        while (allIssues.size() < MAX_TOTAL_ISSUES) {
+            Map<String, Object> requestBody = new LinkedHashMap<>();
+            requestBody.put("jql", jql);
+            requestBody.put("fields", fields);
+            requestBody.put("maxResults", MAX_RESULTS);
+            if (nextPageToken != null) {
+                requestBody.put("nextPageToken", nextPageToken);
+            }
+
+            HttpEntity<Map<String, Object>> postEntity = new HttpEntity<>(requestBody, headers);
+            ResponseEntity<Map> response = jiraRestTemplate.exchange(
+                    URI.create(baseUrl + "/rest/api/3/search/jql"), HttpMethod.POST, postEntity, Map.class);
+
+            Map<String, Object> body = response.getBody();
+            if (body == null) break;
+
+            List<Map<String, Object>> issues = (List<Map<String, Object>>) body.get("issues");
+            if (issues == null || issues.isEmpty()) break;
+
+            for (Map<String, Object> issue : issues) {
+                allIssues.add(parseIssue(issue, storyPointsFieldId));
+            }
+
+            // 다음 페이지 토큰 확인
+            nextPageToken = (String) body.get("nextPageToken");
+            if (nextPageToken == null || nextPageToken.isEmpty()) break;
+
+            log.debug("search/jql 페이지 수집 중: fetched={}", allIssues.size());
+        }
+
+        return allIssues;
+    }
+
     private HttpHeaders createAuthHeaders(String email, String apiToken) {
         HttpHeaders headers = new HttpHeaders();
         String auth = email + ":" + apiToken;

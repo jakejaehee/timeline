@@ -47,6 +47,7 @@ public class JiraDto {
     public static class JiraIssue {
         private String key;
         private String summary;
+        private String issueType;             // "Epic", "Story", "Task", "Bug" 등
         private String status;
         private String statusCategoryKey;     // "new" | "indeterminate" | "done"
         private String assigneeDisplayName;
@@ -130,6 +131,7 @@ public class JiraDto {
         private Long mappedAssigneeId;
         private String mappedAssigneeName;
         private String action; // CREATE, UPDATE, SKIP
+        private Long existingProjectId; // UPDATE 시 기존 태스크의 프로젝트 ID
     }
 
     // ---- Request DTO ----
@@ -141,6 +143,9 @@ public class JiraDto {
     public static class PreviewRequest {
         private LocalDate createdAfter;   // 생성일자 필터 (nullable)
         private List<String> statusFilter; // Jira 상태 필터 (nullable 또는 빈 리스트 = 전체)
+        private String jiraBoardId;       // Jira Board ID 오버라이드 (nullable, 없으면 프로젝트 설정값 사용)
+        private String jiraProjectKey;    // Jira 프로젝트 키 (space 검색용, nullable)
+        private String jiraEpicKey;       // Jira Epic 키 (epic 검색용, nullable)
     }
 
     @Data
@@ -152,5 +157,9 @@ public class JiraDto {
         private List<String> statusFilter; // Jira 상태 필터 (nullable 또는 빈 리스트 = 전체)
         private List<String> selectedKeys; // 선택된 Jira 이슈 키 목록 (null이면 전체)
         private Map<String, Long> issueProjectMap; // Jira 키 -> 프로젝트 ID 매핑 (null이면 URL의 projectId 사용)
+        private String jiraBoardId;       // Jira Board ID 오버라이드 (nullable, 없으면 프로젝트 설정값 사용)
+        private String jiraProjectKey;    // Jira 프로젝트 키 (space 검색용, nullable)
+        private String jiraEpicKey;       // Jira Epic 키 (epic 검색용, nullable)
+        private Long defaultProjectId;    // 기본 프로젝트 ID (space import 시)
     }
 }

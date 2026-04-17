@@ -5,12 +5,14 @@ import com.timeline.domain.repository.ProjectLinkRepository;
 import com.timeline.domain.repository.ProjectRepository;
 import com.timeline.dto.ProjectDto;
 import com.timeline.service.ProjectService;
+import com.timeline.service.ScheduleCalculationService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -26,6 +28,7 @@ public class ProjectController {
     private final ProjectLinkRepository projectLinkRepository;
 
     private final ProjectService projectService;
+    private final ScheduleCalculationService scheduleCalculationService;
 
     /**
      * 전체 프로젝트 목록 조회
@@ -188,6 +191,22 @@ public class ProjectController {
         return ResponseEntity.ok(Map.of("success", true));
     }
 
+    // ---- 일정 계산 ----
+
+    @PostMapping("/schedule-calculate")
+    public ResponseEntity<?> calculateSchedule(@RequestBody Map<String, List<Long>> body) {
+        try {
+            List<Long> projectIds = body.get("projectIds");
+            var result = scheduleCalculationService.calculateSchedule(projectIds);
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        } catch (Exception e) {
+            log.error("일정 계산 실패: {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "일정 계산 중 오류가 발생했습니다."));
+        }
+    }
+
     // ---- 프로젝트 링크 ----
 
     @GetMapping("/{id}/links")
@@ -211,6 +230,18 @@ public class ProjectController {
                 .url(body.get("url"))
                 .label(body.get("label"))
                 .build();
+        projectLinkRepository.save(link);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @PutMapping("/{id}/links/{linkId}")
+    public ResponseEntity<?> updateProjectLink(@PathVariable Long id,
+                                                @PathVariable Long linkId,
+                                                @RequestBody Map<String, String> body) {
+        var link = projectLinkRepository.findById(linkId)
+                .orElseThrow(() -> new EntityNotFoundException("링크를 찾을 수 없습니다."));
+        if (body.containsKey("label")) link.setLabel(body.get("label"));
+        if (body.containsKey("url")) link.setUrl(body.get("url"));
         projectLinkRepository.save(link);
         return ResponseEntity.ok(Map.of("success", true));
     }

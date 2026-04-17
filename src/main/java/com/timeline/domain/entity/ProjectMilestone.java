@@ -1,5 +1,6 @@
 package com.timeline.domain.entity;
 
+import com.timeline.domain.enums.MilestoneType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -31,11 +32,18 @@ public class ProjectMilestone {
     @Column(nullable = false, length = 50)
     private String name;
 
-    @Column(name = "start_date", nullable = false)
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private MilestoneType type;
+
+    @Column(name = "start_date")
     private LocalDate startDate;
 
-    @Column(name = "end_date", nullable = false)
+    @Column(name = "end_date")
     private LocalDate endDate;
+
+    @Column
+    private Integer days;
 
     @Column(name = "sort_order")
     private Integer sortOrder;

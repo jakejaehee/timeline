@@ -73,6 +73,38 @@ public class JiraImportController {
     }
 
     /**
+     * Jira Space(프로젝트 키) 기반 미리보기
+     */
+    @PostMapping("/api/v1/jira/space/preview")
+    public ResponseEntity<?> previewBySpace(@RequestBody JiraDto.PreviewRequest request) {
+        try {
+            JiraDto.PreviewResult result = jiraImportService.previewBySpace(request);
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        } catch (RuntimeException e) {
+            log.error("Jira space preview 실패: {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", sanitizeErrorMessage(e)));
+        }
+    }
+
+    /**
+     * Jira Space(프로젝트 키) 기반 가져오기
+     */
+    @PostMapping("/api/v1/jira/space/import")
+    public ResponseEntity<?> importBySpace(@RequestBody JiraDto.ImportRequest request) {
+        try {
+            JiraDto.ImportResult result = jiraImportService.importBySpace(request);
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        } catch (RuntimeException e) {
+            log.error("Jira space import 실패: {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", sanitizeErrorMessage(e)));
+        }
+    }
+
+    /**
      * RuntimeException 메시지 sanitize: Jira API 클라이언트에서 생성한 사용자 친화적 메시지만 전달,
      * 그 외 예상 외 예외(NullPointer, DB 오류 등)는 일반 메시지로 대체
      */

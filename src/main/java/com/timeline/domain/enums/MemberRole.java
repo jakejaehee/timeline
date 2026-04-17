@@ -8,5 +8,6 @@ public enum MemberRole {
     FE,
     QA,
     PM,
+    EM,
     PLACEHOLDER
 }

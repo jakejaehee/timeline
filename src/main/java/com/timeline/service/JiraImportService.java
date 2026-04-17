@@ -79,7 +79,8 @@ public class JiraImportService {
         // 설정 + 프로젝트 검증
         JiraConfig config = getValidConfig();
         Project project = getValidProject(projectId);
-        validateBoardId(project);
+        String boardId = resolveBoardId(
+                (request != null) ? request.getJiraBoardId() : null, project);
 
         LocalDate createdAfter = (request != null) ? request.getCreatedAfter() : null;
         List<String> statusFilter = (request != null) ? request.getStatusFilter() : null;
@@ -91,7 +92,7 @@ public class JiraImportService {
         // Jira 이슈 수집
         List<JiraDto.JiraIssue> issues = jiraApiClient.fetchAllBoardIssues(
                 config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                project.getJiraBoardId(), createdAfter, statusFilter, storyPointsFieldId);
+                boardId, createdAfter, statusFilter, storyPointsFieldId);
 
         // 기존 태스크 jiraKey 맵 조회
         Map<String, Task> existingTaskMap = buildExistingTaskMap(projectId);
@@ -126,6 +127,7 @@ public class JiraImportService {
                     .mappedAssigneeId(mappedMember != null ? mappedMember.getId() : null)
                     .mappedAssigneeName(mappedMember != null ? mappedMember.getName() : null)
                     .action(action)
+                    .existingProjectId(existing != null && existing.getProject() != null ? existing.getProject().getId() : null)
                     .build());
         }
 
@@ -139,6 +141,222 @@ public class JiraImportService {
     }
 
     /**
+     * Space Preview: Jira 프로젝트 키 기반 미리보기
+     */
+    @Transactional(readOnly = true)
+    public JiraDto.PreviewResult previewBySpace(JiraDto.PreviewRequest request) {
+        JiraConfig config = getValidConfig();
+        String projectKey = request.getJiraProjectKey();
+        String epicKey = request.getJiraEpicKey();
+        if ((projectKey == null || projectKey.isBlank()) && (epicKey == null || epicKey.isBlank())) {
+            throw new IllegalArgumentException("Jira 프로젝트 키 또는 Epic 키를 입력해주세요.");
+        }
+
+        String storyPointsFieldId = jiraApiClient.findStoryPointsFieldId(
+                config.getBaseUrl(), config.getEmail(), config.getApiToken());
+        List<JiraDto.JiraIssue> issues;
+        if (epicKey != null && !epicKey.isBlank()) {
+            issues = jiraApiClient.fetchIssuesByEpicKey(
+                    config.getBaseUrl(), config.getEmail(), config.getApiToken(),
+                    epicKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+        } else {
+            issues = jiraApiClient.fetchIssuesByProjectKey(
+                    config.getBaseUrl(), config.getEmail(), config.getApiToken(),
+                    projectKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+        }
+
+        MemberMaps memberMaps = buildMemberMaps();
+
+        // 전체 프로젝트의 기존 jiraKey 수집
+        List<Task> allTasks = taskRepository.findAll();
+        Map<String, Task> globalTaskMap = new HashMap<>();
+        for (Task t : allTasks) {
+            if (t.getJiraKey() != null && !t.getJiraKey().isBlank()) {
+                globalTaskMap.put(t.getJiraKey(), t);
+            }
+        }
+
+        List<JiraDto.PreviewItem> items = new ArrayList<>();
+        int toCreate = 0, toUpdate = 0, toSkip = 0;
+        for (JiraDto.JiraIssue issue : issues) {
+            String action;
+            Task existing = globalTaskMap.get(issue.getKey());
+            if (existing != null) { action = "UPDATE"; toUpdate++; }
+            else { action = "CREATE"; toCreate++; }
+
+            TaskStatus mappedStatus = mapStatus(issue.getStatus(), issue.getStatusCategoryKey());
+            Member mappedMember = resolveMember(issue, memberMaps);
+
+            items.add(JiraDto.PreviewItem.builder()
+                    .jiraKey(issue.getKey())
+                    .summary(issue.getSummary())
+                    .jiraStatus(issue.getStatus())
+                    .mappedStatus(mappedStatus.name())
+                    .jiraAssignee(issue.getAssigneeDisplayName())
+                    .mappedAssigneeId(mappedMember != null ? mappedMember.getId() : null)
+                    .mappedAssigneeName(mappedMember != null ? mappedMember.getName() : null)
+                    .action(action)
+                    .existingProjectId(existing != null && existing.getProject() != null ? existing.getProject().getId() : null)
+                    .build());
+        }
+
+        return JiraDto.PreviewResult.builder()
+                .totalIssues(issues.size())
+                .toCreate(toCreate)
+                .toUpdate(toUpdate)
+                .toSkip(toSkip)
+                .issues(items)
+                .build();
+    }
+
+    /**
+     * Space Import: Jira 프로젝트 키 기반 가져오기
+     */
+    @Transactional
+    public JiraDto.ImportResult importBySpace(JiraDto.ImportRequest request) {
+        JiraConfig config = getValidConfig();
+        String projectKey = request.getJiraProjectKey();
+        String epicKey = request.getJiraEpicKey();
+        if ((projectKey == null || projectKey.isBlank()) && (epicKey == null || epicKey.isBlank())) {
+            throw new IllegalArgumentException("Jira 프로젝트 키 또는 Epic 키를 입력해주세요.");
+        }
+        Long defaultProjectId = request.getDefaultProjectId();
+        if (defaultProjectId == null) {
+            defaultProjectId = getOrCreateUncategorizedProject();
+        }
+
+        String storyPointsFieldId = jiraApiClient.findStoryPointsFieldId(
+                config.getBaseUrl(), config.getEmail(), config.getApiToken());
+        List<JiraDto.JiraIssue> issues;
+        if (epicKey != null && !epicKey.isBlank()) {
+            issues = jiraApiClient.fetchIssuesByEpicKey(
+                    config.getBaseUrl(), config.getEmail(), config.getApiToken(),
+                    epicKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+        } else {
+            issues = jiraApiClient.fetchIssuesByProjectKey(
+                    config.getBaseUrl(), config.getEmail(), config.getApiToken(),
+                    projectKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+        }
+
+        List<String> selectedKeys = request.getSelectedKeys();
+        Map<String, Long> issueProjectMap = request.getIssueProjectMap();
+        Set<String> selectedKeySet = (selectedKeys != null && !selectedKeys.isEmpty())
+                ? new HashSet<>(selectedKeys) : null;
+
+        Project defaultProject = getValidProject(defaultProjectId);
+        Map<Long, Project> projectCache = new HashMap<>();
+        projectCache.put(defaultProjectId, defaultProject);
+
+        MemberMaps memberMaps = buildMemberMaps();
+
+        int created = 0, updated = 0, skipped = 0;
+        List<JiraDto.ImportError> errors = new ArrayList<>();
+        List<Task> tasksToSave = new ArrayList<>();
+        Set<Long> affectedProjectIds = new HashSet<>();
+        affectedProjectIds.add(defaultProjectId);
+        Map<Long, Map<String, Task>> existingTaskMapCache = new HashMap<>();
+
+        for (JiraDto.JiraIssue issue : issues) {
+            try {
+                String jiraKey = issue.getKey();
+                if (selectedKeySet != null && !selectedKeySet.contains(jiraKey)) {
+                    skipped++;
+                    continue;
+                }
+                if (jiraKey != null && jiraKey.length() > 50) {
+                    jiraKey = jiraKey.substring(0, 50);
+                }
+
+                Long issueProjectId = (issueProjectMap != null && issueProjectMap.containsKey(jiraKey)
+                        && issueProjectMap.get(jiraKey) != null)
+                        ? issueProjectMap.get(jiraKey) : defaultProjectId;
+                if (issueProjectId == null) {
+                    skipped++;
+                    continue;
+                }
+                Project issueProject = projectCache.computeIfAbsent(issueProjectId, this::getValidProject);
+                affectedProjectIds.add(issueProjectId);
+
+                Map<String, Task> existingTaskMap = existingTaskMapCache.computeIfAbsent(
+                        issueProjectId, this::buildExistingTaskMap);
+                Task existing = existingTaskMap.get(issue.getKey());
+                Member mappedMember = resolveMember(issue, memberMaps);
+
+                // Epic 이슈 처리: 새로 생성하지 않고, 기존 태스크가 있으면 공수 0으로
+                if (isEpicIssue(issue)) {
+                    if (existing != null) {
+                        existing.setManDays(BigDecimal.ZERO);
+                        existing.setJiraKey(jiraKey);
+                        tasksToSave.add(existing);
+                        updated++;
+                    } else {
+                        skipped++;
+                    }
+                    continue;
+                }
+
+                String taskName = truncate(issue.getSummary(), 300);
+                if (taskName == null || taskName.isBlank()) {
+                    taskName = issue.getKey();
+                }
+
+                if (existing != null) {
+                    if (taskName != null && !taskName.isBlank()) existing.setName(taskName);
+                    if (issue.getStatus() != null && !issue.getStatus().isBlank()) {
+                        existing.setStatus(mapStatus(issue.getStatus(), issue.getStatusCategoryKey()));
+                    }
+                    if (mappedMember != null) existing.setAssignee(mappedMember);
+                    if (issue.getStoryPoints() != null) existing.setManDays(issue.getStoryPoints());
+                    if (issue.getDescription() != null) existing.setDescription(issue.getDescription());
+                    existing.setJiraKey(jiraKey);
+                    tasksToSave.add(existing);
+                    updated++;
+                } else {
+                    TaskStatus mappedStatus = mapStatus(issue.getStatus(), issue.getStatusCategoryKey());
+                    LocalDate endDate = resolveEndDateForCreate(issue);
+                    LocalDate[] resolved = resolveDatePair(
+                            issue.getStartDate(), endDate, issue.getKey(), issue.getStoryPoints());
+
+                    Task newTask = Task.builder()
+                            .project(issueProject)
+                            .domainSystem(null)
+                            .assignee(mappedMember)
+                            .name(taskName)
+                            .description(issue.getDescription())
+                            .status(mappedStatus)
+                            .executionMode(TaskExecutionMode.SEQUENTIAL)
+                            .manDays(issue.getStoryPoints())
+                            .startDate(resolved[0])
+                            .endDate(resolved[1])
+                            .jiraKey(jiraKey)
+                            .build();
+                    tasksToSave.add(newTask);
+                    created++;
+                }
+            } catch (Exception e) {
+                errors.add(JiraDto.ImportError.builder()
+                        .jiraKey(issue.getKey())
+                        .reason(e.getMessage())
+                        .build());
+            }
+        }
+
+        if (!tasksToSave.isEmpty()) {
+            taskRepository.saveAllAndFlush(tasksToSave);
+        }
+        for (Long pid : affectedProjectIds) {
+            assignOrderByStartDate(pid);
+        }
+
+        return JiraDto.ImportResult.builder()
+                .created(created)
+                .updated(updated)
+                .skipped(skipped)
+                .errors(errors)
+                .build();
+    }
+
+    /**
      * Import 실행: Jira Board 이슈를 가져와 Task를 생성/업데이트
      */
     @Transactional
@@ -146,7 +364,8 @@ public class JiraImportService {
         // 설정 + 프로젝트 검증
         JiraConfig config = getValidConfig();
         Project project = getValidProject(projectId);
-        validateBoardId(project);
+        String boardId = resolveBoardId(
+                (request != null) ? request.getJiraBoardId() : null, project);
 
         LocalDate createdAfter = (request != null) ? request.getCreatedAfter() : null;
         List<String> statusFilter = (request != null) ? request.getStatusFilter() : null;
@@ -162,7 +381,7 @@ public class JiraImportService {
         // Jira 이슈 수집
         List<JiraDto.JiraIssue> issues = jiraApiClient.fetchAllBoardIssues(
                 config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                project.getJiraBoardId(), createdAfter, statusFilter, storyPointsFieldId);
+                boardId, createdAfter, statusFilter, storyPointsFieldId);
 
         // 프로젝트 캐시 (이슈별 프로젝트 지정 시)
         Map<Long, Project> projectCache = new HashMap<>();
@@ -205,6 +424,21 @@ public class JiraImportService {
                         issueProjectId, this::buildExistingTaskMap);
                 Task existing = existingTaskMap.get(issue.getKey());
                 Member mappedMember = resolveMember(issue, memberMaps);
+
+                // Epic 이슈 처리: 새로 생성하지 않고, 기존 태스크가 있으면 공수 0으로
+                if (isEpicIssue(issue)) {
+                    if (existing != null) {
+                        existing.setManDays(BigDecimal.ZERO);
+                        existing.setJiraKey(jiraKey);
+                        tasksToSave.add(existing);
+                        updated++;
+                        log.debug("Epic 이슈 공수 0으로 업데이트: {}", issue.getKey());
+                    } else {
+                        skipped++;
+                        log.debug("Epic 이슈 스킵 (신규 생성 안 함): {}", issue.getKey());
+                    }
+                    continue;
+                }
 
                 String taskName = truncate(issue.getSummary(), 300);
                 if (taskName == null || taskName.isBlank()) {
@@ -439,6 +673,22 @@ public class JiraImportService {
     /**
      * Jira 설정 검증 및 반환
      */
+    private Long getOrCreateUncategorizedProject() {
+        return projectRepository.findAll().stream()
+                .filter(p -> "미분류".equals(p.getName()))
+                .findFirst()
+                .map(Project::getId)
+                .orElseGet(() -> {
+                    Project p = Project.builder()
+                            .name("미분류")
+                            .status(com.timeline.domain.enums.ProjectStatus.IN_PROGRESS)
+                            .startDate(java.time.LocalDate.now())
+                            .endDate(java.time.LocalDate.now().plusMonths(3))
+                            .build();
+                    return projectRepository.save(p).getId();
+                });
+    }
+
     private JiraConfig getValidConfig() {
         return jiraConfigService.getRawConfig()
                 .orElseThrow(() -> new IllegalStateException("Jira 설정이 되어있지 않습니다. 설정 > Jira 연동에서 먼저 설정해주세요."));
@@ -453,12 +703,16 @@ public class JiraImportService {
     }
 
     /**
-     * Board ID 검증
+     * Board ID 해결: 요청 값 우선, 없으면 프로젝트 설정값 사용
      */
-    private void validateBoardId(Project project) {
-        if (project.getJiraBoardId() == null || project.getJiraBoardId().isBlank()) {
-            throw new IllegalArgumentException("프로젝트에 Jira Board ID가 설정되어 있지 않습니다. 프로젝트 수정에서 Board ID를 입력해주세요.");
+    private String resolveBoardId(String requestBoardId, Project project) {
+        if (requestBoardId != null && !requestBoardId.isBlank()) {
+            return requestBoardId.trim();
         }
+        if (project.getJiraBoardId() != null && !project.getJiraBoardId().isBlank()) {
+            return project.getJiraBoardId();
+        }
+        throw new IllegalArgumentException("Jira Board ID를 입력해주세요.");
     }
 
     /**
@@ -638,6 +892,13 @@ public class JiraImportService {
             }
         }
         return d;
+    }
+
+    /**
+     * Epic 이슈 여부 판별
+     */
+    private boolean isEpicIssue(JiraDto.JiraIssue issue) {
+        return issue.getIssueType() != null && issue.getIssueType().equalsIgnoreCase("Epic");
     }
 
     /**

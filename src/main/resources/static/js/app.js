@@ -30,20 +30,17 @@ var cachedJiraBaseUrl = null;    // Jira 베이스 URL 캐시 (태스크 링크 
 var jiraImportProjectId = null;  // Jira Import 모달에서 사용 중인 프로젝트 ID
 var jiraPreviewCreatedAfter = null; // Jira Import 미리보기에서 사용한 생성일자 필터
 var jiraPreviewStatusFilter = [];  // Jira Import 미리보기에서 사용한 상태 필터
+var jiraPreviewBoardId = null;   // Jira Import 미리보기에서 사용한 Board ID (executeJiraImport에서 재사용)
 var projectTaskStatusFilter = ['TODO', 'IN_PROGRESS'];  // 프로젝트 태스크 상태 필터 (복수 선택, 기본값: TODO + 진행중)
 var scheduleTaskStatusFilter = ['TODO', 'IN_PROGRESS']; // 스케줄 태스크 상태 필터 (복수 선택, 기본값: TODO + 진행중)
 var VALID_PROJECT_STATUSES = ['PLANNING', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'];
-var _savedProjectListFilter = localStorage.getItem('projectListStatusFilter');
+var _defaultProjectStatusFilter = ['PLANNING', 'IN_PROGRESS'];
+// v2 키로 마이그레이션: 이전 키 무시하고 새 키 사용
+var _savedProjectListFilter2 = localStorage.getItem('projectListStatusFilter_v2');
 var projectListStatusFilter = (function() {
-    if (!_savedProjectListFilter) return ['PLANNING', 'IN_PROGRESS', 'ON_HOLD'];
-    try { var arr = JSON.parse(_savedProjectListFilter); return Array.isArray(arr) ? arr : ['PLANNING', 'IN_PROGRESS', 'ON_HOLD']; }
-    catch(e) {
-        // 기존 단일값 마이그레이션
-        if (_savedProjectListFilter === 'ALL') return [];
-        if (_savedProjectListFilter === 'EXCLUDE_COMPLETED') return ['PLANNING', 'IN_PROGRESS', 'ON_HOLD'];
-        if (VALID_PROJECT_STATUSES.indexOf(_savedProjectListFilter) !== -1) return [_savedProjectListFilter];
-        return ['PLANNING', 'IN_PROGRESS', 'ON_HOLD'];
-    }
+    if (!_savedProjectListFilter2) return _defaultProjectStatusFilter.slice();
+    try { var arr = JSON.parse(_savedProjectListFilter2); return Array.isArray(arr) ? arr : _defaultProjectStatusFilter.slice(); }
+    catch(e) { return _defaultProjectStatusFilter.slice(); }
 })();
 var ganttShowJiraKey = false;  // 간트차트 티켓번호 표시 여부
 var ganttShowDomain = false;   // 간트차트 도메인명 표시 여부
@@ -280,6 +277,15 @@ function formatDateWithDay(dateStr) {
     return dateStr + '(' + days[d.getDay()] + ')';
 }
 
+function formatDateShort(dateStr) {
+    if (!dateStr) return '-';
+    var days = ['일', '월', '화', '수', '목', '금', '토'];
+    var parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    return parseInt(parts[1]) + '/' + parseInt(parts[2]) + '(' + days[d.getDay()] + ')';
+}
+
 /**
  * 두 날짜 간 영업일 수 계산 (주말 제외)
  */
@@ -342,6 +348,37 @@ function countBusinessDaysBetween(from, to) {
  */
 function confirmAction(message) {
     return window.confirm(message);
+}
+
+function showConfirmDialog(message, onConfirm) {
+    var modalEl = document.getElementById('confirmDialogModal');
+    if (!modalEl) {
+        // 동적으로 모달 생성
+        modalEl = document.createElement('div');
+        modalEl.id = 'confirmDialogModal';
+        modalEl.className = 'modal fade';
+        modalEl.tabIndex = -1;
+        modalEl.style.zIndex = '1060';
+        modalEl.innerHTML = '<div class="modal-dialog modal-dialog-centered modal-sm">'
+            + '<div class="modal-content">'
+            + '<div class="modal-body text-center py-4">'
+            + '<p id="confirmDialogMessage" class="mb-0"></p>'
+            + '</div>'
+            + '<div class="modal-footer justify-content-center border-0 pt-0">'
+            + '<button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>'
+            + '<button type="button" class="btn btn-danger btn-sm" id="confirmDialogOkBtn">확인</button>'
+            + '</div>'
+            + '</div></div>';
+        document.body.appendChild(modalEl);
+    }
+    document.getElementById('confirmDialogMessage').textContent = message;
+    var okBtn = document.getElementById('confirmDialogOkBtn');
+    var modal = new bootstrap.Modal(modalEl, { backdrop: 'static' });
+    okBtn.onclick = function() {
+        modal.hide();
+        if (onConfirm) onConfirm();
+    };
+    modal.show();
 }
 
 /**
@@ -507,40 +544,112 @@ function showSection(sectionName, linkEl) {
 // Members
 // ========================================
 
+var _projMembersModalProjectId = null;
+var _projMembersModalAllMembers = [];
+
 async function showProjectMembersModal(projectId, projectName) {
+    _projMembersModalProjectId = projectId;
     document.getElementById('projectMembersModalTitle').textContent = projectName + ' — 멤버';
+    document.getElementById('proj-member-search').value = '';
+    document.getElementById('proj-member-search-results').style.display = 'none';
     var listEl = document.getElementById('project-members-list');
     listEl.innerHTML = '<div class="text-center text-muted py-3">로딩 중...</div>';
-    var modal = new bootstrap.Modal(document.getElementById('projectMembersModal'));
+    var modal = bootstrap.Modal.getInstance(document.getElementById('projectMembersModal')) || new bootstrap.Modal(document.getElementById('projectMembersModal'));
     modal.show();
+
+    // 전체 멤버 캐시 로드
+    try {
+        var allRes = await apiCall('/api/v1/members');
+        _projMembersModalAllMembers = (allRes.success && allRes.data) ? allRes.data : [];
+    } catch (e) { _projMembersModalAllMembers = []; }
+
+    await renderProjectMembersModalList();
+}
+
+async function renderProjectMembersModalList() {
+    var projectId = _projMembersModalProjectId;
+    var listEl = document.getElementById('project-members-list');
     try {
         var res = await apiCall('/api/v1/projects/' + projectId);
-        if (res.success && res.data && res.data.members && res.data.members.length > 0) {
-            var members = res.data.members;
-            var roleOrder = { PM: 0, BE: 1, FE: 2, QA: 3, PLACEHOLDER: 4 };
-            members.sort(function(a, b) {
-                var ra = roleOrder[a.role] != null ? roleOrder[a.role] : 99;
-                var rb = roleOrder[b.role] != null ? roleOrder[b.role] : 99;
-                if (ra !== rb) return ra - rb;
-                return (a.name || '').localeCompare(b.name || '');
-            });
-            var html = '<table class="table table-sm mb-0"><thead><tr><th>이름</th><th>역할</th><th>소속 팀</th><th>캐파</th></tr></thead><tbody>';
-            members.forEach(function(m) {
-                html += '<tr>';
-                html += '<td>' + escapeHtml(m.name) + '</td>';
-                html += '<td>' + roleBadge(m.role) + '</td>';
-                html += '<td>' + escapeHtml(m.team || '-') + '</td>';
-                html += '<td>' + (m.capacity != null ? m.capacity : '1.0') + '</td>';
-                html += '</tr>';
-            });
-            html += '</tbody></table>';
-            listEl.innerHTML = html;
-        } else {
+        var members = (res.success && res.data && res.data.members) ? res.data.members : [];
+        if (members.length === 0) {
             listEl.innerHTML = '<div class="text-center text-muted py-3">배정된 멤버가 없습니다.</div>';
+            return;
         }
+        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
+        members.sort(function(a, b) {
+            var ra = roleOrder[a.role] != null ? roleOrder[a.role] : 99;
+            var rb = roleOrder[b.role] != null ? roleOrder[b.role] : 99;
+            return ra !== rb ? ra - rb : (a.name || '').localeCompare(b.name || '');
+        });
+        var html = '<table class="table table-sm mb-0"><thead><tr><th>이름</th><th>역할</th><th>캐파</th><th>팀</th><th></th></tr></thead><tbody>';
+        members.forEach(function(m) {
+            html += '<tr>';
+            html += '<td>' + escapeHtml(m.name) + '</td>';
+            html += '<td>' + roleBadge(m.role) + '</td>';
+            html += '<td style="text-align:center;">' + (m.capacity != null ? m.capacity : '-') + '</td>';
+            html += '<td>' + escapeHtml(m.team || '-') + '</td>';
+            html += '<td class="text-end"><button class="btn btn-outline-danger btn-sm" style="padding:0 4px; font-size:0.7rem;" onclick="removeProjMemberFromModal(' + projectId + ',' + m.id + ',\'' + escapeJsString(escapeHtml(m.name)) + '\')"><i class="bi bi-x-lg"></i></button></td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        listEl.innerHTML = html;
     } catch (e) {
-        listEl.innerHTML = '<div class="text-center text-danger py-3">멤버 목록을 불러오는데 실패했습니다.</div>';
+        listEl.innerHTML = '<div class="text-center text-danger py-3">로드 실패</div>';
     }
+}
+
+function filterProjMemberSearch() {
+    var input = document.getElementById('proj-member-search');
+    var dropdown = document.getElementById('proj-member-search-results');
+    var keyword = input.value.trim().toLowerCase();
+    if (!keyword) { dropdown.style.display = 'none'; return; }
+
+    // 현재 프로젝트 멤버 ID 수집 (이미 추가된 멤버 제외)
+    var currentIds = [];
+    document.querySelectorAll('#project-members-list table tbody tr').forEach(function(row) {
+        var btn = row.querySelector('button[onclick]');
+        if (btn) {
+            var match = btn.getAttribute('onclick').match(/removeProjMemberFromModal\(\d+,(\d+)/);
+            if (match) currentIds.push(parseInt(match[1]));
+        }
+    });
+
+    var matches = _projMembersModalAllMembers.filter(function(m) {
+        if (currentIds.indexOf(m.id) !== -1) return false;
+        return (m.name || '').toLowerCase().indexOf(keyword) !== -1;
+    });
+
+    if (matches.length === 0) {
+        dropdown.innerHTML = '<div class="px-2 py-1 text-muted" style="font-size:0.85rem;">결과 없음</div>';
+    } else {
+        var html = '';
+        matches.slice(0, 10).forEach(function(m) {
+            html += '<a href="javascript:void(0)" class="d-block px-2 py-1 text-decoration-none rounded" style="font-size:0.85rem; color:#333;" onmouseover="this.style.background=\'#e9ecef\'" onmouseout="this.style.background=\'\'" onclick="addProjMemberFromModal(' + _projMembersModalProjectId + ',' + m.id + ')">'
+                + escapeHtml(m.name) + ' <span class="text-muted">(' + m.role + (m.team ? ', ' + escapeHtml(m.team) : '') + ')</span></a>';
+        });
+        dropdown.innerHTML = html;
+    }
+    dropdown.style.display = '';
+}
+
+async function addProjMemberFromModal(projectId, memberId) {
+    document.getElementById('proj-member-search').value = '';
+    document.getElementById('proj-member-search-results').style.display = 'none';
+    try {
+        await apiCall('/api/v1/projects/' + projectId + '/members', 'POST', { memberId: memberId });
+        await renderProjectMembersModalList();
+        showToast('멤버가 추가되었습니다.', 'success');
+    } catch (e) { showToast('멤버 추가 실패', 'error'); }
+}
+
+async function removeProjMemberFromModal(projectId, memberId, memberName) {
+    if (!confirm(memberName + ' 멤버를 제거하시겠습니까?')) return;
+    try {
+        await apiCall('/api/v1/projects/' + projectId + '/members/' + memberId, 'DELETE');
+        await renderProjectMembersModalList();
+        showToast(memberName + ' 멤버가 제거되었습니다.', 'success');
+    } catch (e) { showToast('멤버 제거 실패', 'error'); }
 }
 
 var _cachedMembers = [];
@@ -835,61 +944,145 @@ async function deleteDomainSystem(id) {
 // Projects
 // ========================================
 
-/**
- * 프로젝트 목록 상태 필터 적용
- * (프로젝트 상세 태스크 필터 applyProjectStatusFilter와 별개)
- */
+var _projFilterType = [];
+var _projFilterQuarter = [];
+
 function applyProjectListStatusFilter(projects) {
-    if (projectListStatusFilter.length === 0) return projects;
-    return projects.filter(function(p) { return projectListStatusFilter.indexOf(p.status) !== -1; });
-}
-
-/**
- * 프로젝트 목록 상태 필터 토글 (복수 선택)
- */
-function toggleProjectListStatusFilter(status) {
-    var idx = projectListStatusFilter.indexOf(status);
-    if (idx !== -1) {
-        projectListStatusFilter.splice(idx, 1);
-    } else {
-        projectListStatusFilter.push(status);
+    var result = projects;
+    // 상태 필터
+    if (projectListStatusFilter.length > 0) {
+        result = result.filter(function(p) { return projectListStatusFilter.indexOf(p.status) !== -1; });
     }
-    localStorage.setItem('projectListStatusFilter', JSON.stringify(projectListStatusFilter));
-    renderProjectListFilterButtons();
+    // 프로젝트명 검색
+    var nameFilter = (document.getElementById('proj-filter-name') || {}).value || '';
+    if (nameFilter.trim()) {
+        var kw = nameFilter.trim().toLowerCase();
+        result = result.filter(function(p) { return (p.name || '').toLowerCase().indexOf(kw) !== -1; });
+    }
+    // PPL 필터
+    var pplFilter = (document.getElementById('proj-filter-ppl') || {}).value || '';
+    if (pplFilter) {
+        result = result.filter(function(p) { return p.pplName === pplFilter; });
+    }
+    // EPL 필터
+    var eplFilter = (document.getElementById('proj-filter-epl') || {}).value || '';
+    if (eplFilter) {
+        result = result.filter(function(p) { return p.eplName === eplFilter; });
+    }
+    // 유형 필터
+    if (_projFilterType.length > 0) {
+        result = result.filter(function(p) { return _projFilterType.indexOf(p.projectType) !== -1; });
+    }
+    // 분기 필터
+    if (_projFilterQuarter.length > 0) {
+        result = result.filter(function(p) {
+            if (!p.quarter) return false;
+            var qs = p.quarter.split(',').map(function(q) { return q.trim(); });
+            return _projFilterQuarter.some(function(fq) { return qs.indexOf(fq) !== -1; });
+        });
+    }
+    return result;
+}
+
+function applyProjectListFilters() {
     renderProjectsTable(window._cachedProjects || []);
 }
 
-function clearProjectListStatusFilter() {
+function onProjFilterStatusChange() {
     projectListStatusFilter = [];
-    localStorage.setItem('projectListStatusFilter', JSON.stringify(projectListStatusFilter));
-    renderProjectListFilterButtons();
-    renderProjectsTable(window._cachedProjects || []);
+    document.querySelectorAll('.proj-filter-status-cb:checked').forEach(function(cb) { projectListStatusFilter.push(cb.value); });
+    localStorage.setItem('projectListStatusFilter_v2', JSON.stringify(projectListStatusFilter));
+    var btn = document.getElementById('proj-filter-status-btn');
+    if (btn) btn.textContent = projectListStatusFilter.length > 0 ? '상태 (' + projectListStatusFilter.length + ')' : '상태';
+    applyProjectListFilters();
 }
 
-/**
- * 프로젝트 목록 상태 필터 버튼 렌더링 (복수 선택)
- */
+function onProjFilterTypeChange() {
+    _projFilterType = [];
+    document.querySelectorAll('.proj-filter-type-cb:checked').forEach(function(cb) { _projFilterType.push(cb.value); });
+    var btn = document.getElementById('proj-filter-type-btn');
+    if (btn) btn.textContent = _projFilterType.length > 0 ? '유형 (' + _projFilterType.length + ')' : '유형';
+    applyProjectListFilters();
+}
+
+function onProjFilterQuarterChange() {
+    _projFilterQuarter = [];
+    document.querySelectorAll('.proj-filter-quarter-cb:checked').forEach(function(cb) { _projFilterQuarter.push(cb.value); });
+    var btn = document.getElementById('proj-filter-quarter-btn');
+    if (btn) btn.textContent = _projFilterQuarter.length > 0 ? '분기 (' + _projFilterQuarter.length + ')' : '분기';
+    applyProjectListFilters();
+}
+
+function populateProjectFilterOptions(projects) {
+    // PPL/EPL 드롭다운
+    var ppls = {}, epls = {}, types = {}, quarters = {};
+    projects.forEach(function(p) {
+        if (p.pplName) ppls[p.pplName] = true;
+        if (p.eplName) epls[p.eplName] = true;
+        if (p.projectType) types[p.projectType] = true;
+        if (p.quarter) p.quarter.split(',').forEach(function(q) { q = q.trim(); if (q) quarters[q] = true; });
+    });
+
+    var pplSel = document.getElementById('proj-filter-ppl');
+    var curPpl = pplSel ? pplSel.value : '';
+    if (pplSel) {
+        pplSel.innerHTML = '<option value="">PPL 전체</option>';
+        Object.keys(ppls).sort().forEach(function(n) { pplSel.innerHTML += '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>'; });
+        pplSel.value = curPpl;
+    }
+    var eplSel = document.getElementById('proj-filter-epl');
+    var curEpl = eplSel ? eplSel.value : '';
+    if (eplSel) {
+        eplSel.innerHTML = '<option value="">EPL 전체</option>';
+        Object.keys(epls).sort().forEach(function(n) { eplSel.innerHTML += '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>'; });
+        eplSel.value = curEpl;
+    }
+    // 유형 드롭다운 체크박스
+    var typeMenu = document.getElementById('proj-filter-type-menu');
+    if (typeMenu) {
+        var typeHtml = '';
+        var typeKeys = Object.keys(types).sort();
+        typeKeys.forEach(function(t) {
+            var checked = _projFilterType.indexOf(t) !== -1 ? ' checked' : '';
+            typeHtml += '<div class="form-check"><input class="form-check-input proj-filter-type-cb" type="checkbox" value="' + escapeHtml(t) + '" id="pft-' + escapeHtml(t) + '"' + checked + ' onchange="onProjFilterTypeChange()"><label class="form-check-label" for="pft-' + escapeHtml(t) + '">' + escapeHtml(t) + '</label></div>';
+        });
+        typeMenu.innerHTML = typeHtml || '<div class="text-muted">유형 없음</div>';
+        var typeBtn = document.getElementById('proj-filter-type-btn');
+        if (typeBtn) typeBtn.textContent = _projFilterType.length > 0 ? '유형 (' + _projFilterType.length + ')' : '유형';
+    }
+    // 분기 드롭다운 체크박스
+    var qMenu = document.getElementById('proj-filter-quarter-menu');
+    if (qMenu) {
+        var qHtml = '';
+        var qKeys = Object.keys(quarters).sort();
+        qKeys.forEach(function(q) {
+            var checked = _projFilterQuarter.indexOf(q) !== -1 ? ' checked' : '';
+            qHtml += '<div class="form-check"><input class="form-check-input proj-filter-quarter-cb" type="checkbox" value="' + escapeHtml(q) + '" id="pfq-' + escapeHtml(q) + '"' + checked + ' onchange="onProjFilterQuarterChange()"><label class="form-check-label" for="pfq-' + escapeHtml(q) + '">' + escapeHtml(q) + '</label></div>';
+        });
+        qMenu.innerHTML = qHtml || '<div class="text-muted">분기 없음</div>';
+        var qBtn = document.getElementById('proj-filter-quarter-btn');
+        if (qBtn) qBtn.textContent = _projFilterQuarter.length > 0 ? '분기 (' + _projFilterQuarter.length + ')' : '분기';
+    }
+}
+
 function renderProjectListFilterButtons() {
-    var group = document.getElementById('project-list-status-filter-group');
-    if (!group) return;
+    var menu = document.getElementById('proj-filter-status-menu');
+    if (!menu) return;
     var sf = projectListStatusFilter;
-    var allSelected = sf.length === 0;
-    group.innerHTML =
-        '<button type="button" class="btn btn-sm '
-            + (allSelected ? 'btn-dark' : 'btn-outline-dark')
-            + '" onclick="clearProjectListStatusFilter()">전체</button>'
-        + '<button type="button" class="btn btn-sm '
-            + (sf.indexOf('PLANNING') !== -1 ? 'btn-info' : 'btn-outline-info')
-            + '" onclick="toggleProjectListStatusFilter(\'PLANNING\')">플래닝</button>'
-        + '<button type="button" class="btn btn-sm '
-            + (sf.indexOf('IN_PROGRESS') !== -1 ? 'btn-primary' : 'btn-outline-primary')
-            + '" onclick="toggleProjectListStatusFilter(\'IN_PROGRESS\')">진행중</button>'
-        + '<button type="button" class="btn btn-sm '
-            + (sf.indexOf('COMPLETED') !== -1 ? 'btn-success' : 'btn-outline-success')
-            + '" onclick="toggleProjectListStatusFilter(\'COMPLETED\')">완료</button>'
-        + '<button type="button" class="btn btn-sm '
-            + (sf.indexOf('ON_HOLD') !== -1 ? 'btn-warning' : 'btn-outline-warning')
-            + '" onclick="toggleProjectListStatusFilter(\'ON_HOLD\')">보류</button>';
+    var statuses = [
+        { value: 'PLANNING', label: '플래닝' },
+        { value: 'IN_PROGRESS', label: '진행중' },
+        { value: 'COMPLETED', label: '완료' },
+        { value: 'ON_HOLD', label: '보류' }
+    ];
+    var html = '';
+    statuses.forEach(function(s) {
+        var checked = sf.indexOf(s.value) !== -1 ? ' checked' : '';
+        html += '<div class="form-check"><input class="form-check-input proj-filter-status-cb" type="checkbox" value="' + s.value + '" id="pfs-' + s.value + '"' + checked + ' onchange="onProjFilterStatusChange()"><label class="form-check-label" for="pfs-' + s.value + '">' + s.label + '</label></div>';
+    });
+    menu.innerHTML = html;
+    var btn = document.getElementById('proj-filter-status-btn');
+    if (btn) btn.textContent = sf.length > 0 ? '상태 (' + sf.length + ')' : '상태';
 }
 
 /**
@@ -903,7 +1096,7 @@ function renderProjectsTable(projects) {
     var filtered = applyProjectListStatusFilter(projects);
 
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">해당 상태의 프로젝트가 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="15" class="text-center text-muted">해당 상태의 프로젝트가 없습니다.</td></tr>';
         updateProjSortIcons();
         return;
     }
@@ -912,9 +1105,9 @@ function renderProjectsTable(projects) {
     if (_projSortField) {
         filtered = filtered.slice().sort(function(a, b) {
             var va, vb;
-            if (_projSortField === 'sortOrder') {
-                va = a.sortOrder != null ? a.sortOrder : 999999;
-                vb = b.sortOrder != null ? b.sortOrder : 999999;
+            if (_projSortField === 'sortOrder' || _projSortField === 'totalManDays' || _projSortField === 'estimatedDays') {
+                va = a[_projSortField] != null ? Number(a[_projSortField]) : 0;
+                vb = b[_projSortField] != null ? Number(b[_projSortField]) : 0;
             } else {
                 va = (a[_projSortField] || '').toString().toLowerCase();
                 vb = (b[_projSortField] || '').toString().toLowerCase();
@@ -936,19 +1129,31 @@ function renderProjectsTable(projects) {
         } else {
             delayHtml = '-';
         }
-        var sortVal = p.sortOrder != null ? p.sortOrder : '';
         html += '<tr data-project-id="' + p.id + '">';
+        html += '<td class="text-center" style="padding:4px;"><input type="checkbox" class="proj-schedule-cb" value="' + p.id + '" onclick="event.stopPropagation(); updateScheduleCalcBtn()"></td>';
         html += '<td class="text-center" style="padding:4px;"><button class="btn btn-sm p-0 border-0 text-muted proj-ms-toggle" data-project-id="' + p.id + '" onclick="event.stopPropagation(); toggleProjectMilestones(' + p.id + ', this)" title="마일스톤"><i class="bi bi-chevron-right"></i></button></td>';
-        html += '<td><input type="number" class="form-control form-control-sm text-center" style="width:50px; padding:2px 4px;" value="' + sortVal + '" onchange="updateProjectSortOrder(' + p.id + ', this.value)" onclick="event.stopPropagation()"></td>';
+        html += '<td class="proj-drag-handle" style="cursor:grab; text-align:center; color:#adb5bd; padding:4px;"><i class="bi bi-grip-vertical"></i></td>';
         var descTooltip = p.description ? ' data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-custom-class="tooltip-left-align" title="' + escapeHtml(p.description).replace(/\n/g, '<br>') + '"' : '';
+        html += '<td class="text-center" style="padding:4px;"><button class="btn btn-sm p-0 border-0 text-info" onclick="showProjectLinksPopup(' + p.id + ', this, event)" title="링크"><i class="bi bi-link-45deg"></i></button></td>';
         html += '<td class="cursor-pointer" onclick="showProjectDetail(' + p.id + ')"' + descTooltip + '><strong>' + escapeHtml(p.name) + '</strong></td>';
+        html += '<td><a href="javascript:void(0)" onclick="event.stopPropagation(); showProjectMembersModal(' + p.id + ', \'' + escapeJsString(escapeHtml(p.name)) + '\')" style="text-decoration:none;">' + memberCount + '명</a></td>';
+        var beCount = p.beCount != null ? p.beCount : 0;
+        var beTooltip = '';
+        if (p.beMembers && p.beMembers.length > 0) {
+            beTooltip = ' data-bs-toggle="tooltip" data-bs-placement="bottom" title="' + p.beMembers.map(function(m) { return escapeHtml(m.name) + '(' + m.capacity + ')'; }).join(', ') + '"';
+        }
+        html += '<td style="font-size:0.85rem; text-align:center; cursor:default;"' + beTooltip + '>' + (beCount > 0 ? beCount : '-') + '</td>';
+        var mdVal = p.totalManDays != null && p.totalManDays > 0 ? p.totalManDays : '-';
+        html += '<td style="font-size:0.85rem; text-align:center;">' + mdVal + '</td>';
+        var estDays = p.estimatedDays != null && p.estimatedDays > 0 ? p.estimatedDays : '-';
+        html += '<td style="font-size:0.85rem; text-align:center;">' + estDays + '</td>';
         html += '<td>' + formatDateWithDay(p.startDate) + '</td>';
         html += '<td>' + formatDateWithDay(p.endDate) + '</td>';
+        html += '<td style="font-size:0.8rem;">' + escapeHtml(p.pplName || '-') + '</td>';
+        html += '<td style="font-size:0.8rem;">' + escapeHtml(p.quarter || '-') + '</td>';
         html += '<td>' + typeBadge(p.projectType) + '</td>';
         html += '<td>' + statusBadge(p.status) + '</td>';
         html += '<td>' + delayHtml + '</td>';
-        html += '<td><a href="javascript:void(0)" onclick="event.stopPropagation(); showProjectMembersModal(' + p.id + ', \'' + escapeJsString(escapeHtml(p.name)) + '\')" style="text-decoration:none;">' + memberCount + '명</a></td>';
-        html += '<td class="text-center"><button class="btn btn-sm p-0 border-0 text-info" onclick="showProjectLinksPopup(' + p.id + ', this, event)" title="링크"><i class="bi bi-link-45deg"></i></button></td>';
         html += '<td class="text-center">';
         html += '<div class="action-buttons">';
         html += '<button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); showProjectModal(' + p.id + ')" title="수정"><i class="bi bi-pencil"></i></button>';
@@ -963,6 +1168,59 @@ function renderProjectsTable(projects) {
     tbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
         new bootstrap.Tooltip(el, { html: true });
     });
+    // 정렬 상태 표시 + 드래그 제어
+    var sortResetEl = document.getElementById('proj-sort-reset');
+    if (_projSortField) {
+        // 헤더 정렬 활성 → 드래그 비활성, 리셋 버튼 표시
+        if (sortResetEl) sortResetEl.style.display = '';
+        tbody.querySelectorAll('.proj-drag-handle').forEach(function(el) { el.style.visibility = 'hidden'; });
+    } else {
+        if (sortResetEl) sortResetEl.style.display = 'none';
+        initProjectListDragDrop(tbody);
+    }
+}
+
+function initProjectListDragDrop(tbody) {
+    if (typeof Sortable === 'undefined' || !tbody) return;
+    if (tbody._sortable) tbody._sortable.destroy();
+    tbody._sortable = new Sortable(tbody, {
+        handle: '.proj-drag-handle',
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        draggable: 'tr[data-project-id]:not([class*="ms-row"])',
+        onStart: function() {
+            // 드래그 시작 시 모든 마일스톤 행 접기
+            tbody.querySelectorAll('tr[class*="ms-row"]').forEach(function(r) { r.remove(); });
+            tbody.querySelectorAll('.proj-ms-toggle i').forEach(function(icon) {
+                icon.className = 'bi bi-chevron-right';
+            });
+        },
+        onEnd: function() {
+            var rows = tbody.querySelectorAll('tr[data-project-id]');
+            var ids = [];
+            rows.forEach(function(row) { ids.push(parseInt(row.getAttribute('data-project-id'))); });
+            saveProjectListOrder(ids);
+        }
+    });
+}
+
+async function saveProjectListOrder(projectIds) {
+    try {
+        for (var i = 0; i < projectIds.length; i++) {
+            await apiCall('/api/v1/projects/' + projectIds[i] + '/sort-order', 'PATCH', { sortOrder: i + 1 });
+        }
+        // 캐시 업데이트
+        if (window._cachedProjects) {
+            projectIds.forEach(function(pid, idx) {
+                var p = window._cachedProjects.find(function(proj) { return proj.id === pid; });
+                if (p) p.sortOrder = idx + 1;
+            });
+        }
+        showToast('프로젝트 순서가 변경되었습니다.', 'success');
+    } catch (e) {
+        showToast('순서 변경 실패', 'error');
+    }
 }
 
 async function updateProjectSortOrder(projectId, value) {
@@ -990,8 +1248,14 @@ function sortProjectList(field) {
     renderProjectsTable(window._cachedProjects || []);
 }
 
+function resetProjectListSort() {
+    _projSortField = null;
+    _projSortAsc = true;
+    renderProjectsTable(window._cachedProjects || []);
+}
+
 function updateProjSortIcons() {
-    var fields = ['sortOrder', 'name', 'projectType', 'status', 'startDate', 'endDate'];
+    var fields = ['name', 'totalManDays', 'estimatedDays', 'projectType', 'status', 'startDate', 'endDate'];
     fields.forEach(function(f) {
         var icon = document.getElementById('proj-sort-icon-' + f);
         if (!icon) return;
@@ -1035,19 +1299,28 @@ async function toggleProjectMilestones(projectId, btn) {
             return;
         }
         // 역순으로 insert (after이므로 마지막 것이 가장 위에)
+        // 헤더 순서: [체크] [토글] [드래그] [링크] | 프로젝트명 | 멤버 | BE | MD | 소요일 | 시작일 | 론치일 | PPL | 분기 | 유형 | 상태 | 지연 | 액션
+        // 마일스톤:  [빈4칸]                       | 이름       | -   | -  | -  | QA일수 | 시작일 | 종료일 | [나머지 pad]
+        var msPadCols = colCount - 11; // 11 = 4(빈) + 이름 + 멤버 + BE + MD + 소요일 + 시작일 + 론치일
         for (var i = milestones.length - 1; i >= 0; i--) {
             var ms = milestones[i];
             var msRow = document.createElement('tr');
             msRow.className = 'ms-row-' + projectId;
             msRow.style.fontSize = '0.82rem';
             msRow.style.background = '#fafafa';
-            var msDays = calcWorkingDays(ms.startDate, ms.endDate);
+            var msDays = (ms.startDate && ms.endDate) ? calcWorkingDays(ms.startDate, ms.endDate) : null;
             var msDaysLabel = msDays != null ? ' <span class="text-muted" style="font-size:0.75rem;">(' + msDays + ' days)</span>' : '';
-            msRow.innerHTML = '<td></td><td></td>'
-                + '<td style="padding-left:8px; color:' + getMilestoneColor(ms.name) + ';">' + escapeHtml(ms.name) + msDaysLabel + '</td>'
+            var msTypeLabel = ms.type ? (_milestoneTypeLabels[ms.type] || ms.type) : '';
+            var msNameDisplay = (msTypeLabel ? '<span class="badge bg-secondary me-1" style="font-size:0.7rem;">' + msTypeLabel + '</span>' : '') + escapeHtml(ms.name) + msDaysLabel;
+            // 소요일 컬럼: QA 마일스톤이면 일수 표시
+            var msEstDays = (ms.type === 'QA' && ms.days) ? ms.days : '';
+            msRow.innerHTML = '<td></td><td></td><td></td><td></td>'
+                + '<td style="padding-left:8px; color:' + getMilestoneColor(ms.name) + ';">' + msNameDisplay + '</td>'
+                + '<td></td><td></td><td></td>'
+                + '<td style="text-align:center;">' + msEstDays + '</td>'
                 + '<td>' + formatDateWithDay(ms.startDate) + '</td>'
                 + '<td>' + formatDateWithDay(ms.endDate) + '</td>'
-                + '<td colspan="' + (colCount - 5) + '"></td>';
+                + (msPadCols > 0 ? '<td colspan="' + msPadCols + '"></td>' : '');
             projectRow.after(msRow);
         }
     } catch (e) {
@@ -1066,6 +1339,7 @@ async function loadProjects() {
         var res = await apiCall('/api/v1/projects');
         var projects = (res.success && res.data) ? res.data : [];
         window._cachedProjects = projects;
+        populateProjectFilterOptions(projects);
 
         if (projects.length === 0) {
             document.getElementById('projects-table').innerHTML =
@@ -1151,6 +1425,7 @@ async function showProjectDetail(projectId, tabName) {
     // 프로젝트 데이터 로드 후 헤더 렌더링 + 태스크 탭 로드
     var projRes = await apiCall('/api/v1/projects/' + projectId);
     var p = (projRes.success && projRes.data) ? projRes.data : {};
+    window._currentDetailProject = p;
     renderProjectDetailHeader(p);
     await loadProjectTasks(projectId);
 }
@@ -1167,6 +1442,8 @@ function renderProjectDetailHeader(p) {
     metaHtml += '<span class="text-muted" style="font-size:0.88rem;">';
     metaHtml += formatDateWithDay(p.startDate) + ' ~ ' + formatDateWithDay(p.endDate);
     metaHtml += '</span>';
+    if (p.pplName) metaHtml += ' <span class="badge bg-info" style="font-size:0.72rem;">PPL: ' + escapeHtml(p.pplName) + '</span>';
+    if (p.eplName) metaHtml += ' <span class="badge bg-primary" style="font-size:0.72rem;">EPL: ' + escapeHtml(p.eplName) + '</span>';
 
     // 지연/정상 인라인 뱃지 (isDelayed가 null/undefined면 미표시)
     if (p.isDelayed === true) {
@@ -1192,10 +1469,10 @@ function renderProjectDetailHeader(p) {
     delayEl.style.display = 'none';
     delayEl.innerHTML = '';
 
-    // Jira 가져오기 버튼 표시/숨김
+    // Jira 가져오기 버튼은 항상 표시 (보드 미설정이어도 Epic으로 하부 티켓 가져오기 가능)
     var jiraBtn = document.getElementById('jira-import-btn');
     if (jiraBtn) {
-        jiraBtn.style.display = (p.jiraBoardId) ? '' : 'none';
+        jiraBtn.style.display = '';
     }
 }
 
@@ -1239,7 +1516,10 @@ async function loadProjectTasks(projectId) {
             });
         }
         if (allTasks.length === 0 && inactiveTasks.length === 0) {
-            contentEl.innerHTML = '<div class="text-center text-muted p-3">등록된 태스크가 없습니다.</div>';
+            contentEl.innerHTML = '<div class="d-flex align-items-center gap-2 mb-3">'
+                + '<button class="btn btn-primary btn-sm" onclick="showTaskModal(null, ' + projectId + ')"><i class="bi bi-plus-lg"></i> 태스크 추가</button>'
+                + '</div>'
+                + '<div class="text-center text-muted p-3">등록된 태스크가 없습니다.</div>';
             return;
         }
 
@@ -1261,7 +1541,13 @@ async function loadProjectTasks(projectId) {
         toggleHtml += '<button type="button" class="btn btn-sm ' + (af.indexOf('CANCELLED') !== -1 ? 'btn-danger' : 'btn-outline-danger') + '" onclick="toggleProjectStatusFilter(\'CANCELLED\',' + projectId + ')">취소</button>';
         toggleHtml += '</div>';
         var totalCount = allTasks.length + inactiveTasks.length;
-        toggleHtml += '<span class="text-muted" style="font-size:0.8rem;">' + totalCount + '건' + (inactiveTasks.length > 0 ? ' (비활성 ' + inactiveTasks.length + ')' : '') + '</span>';
+        var allTasksConcat = allTasks.concat(inactiveTasks);
+        var projTotalMd = allTasksConcat.reduce(function(s, t) { return s + (t.status !== 'CANCELLED' && t.manDays ? parseFloat(t.manDays) : 0); }, 0);
+        var projRemainMd = allTasksConcat.reduce(function(s, t) { return s + (t.status !== 'CANCELLED' && t.status !== 'COMPLETED' && t.manDays ? parseFloat(t.manDays) : 0); }, 0);
+        var mdOverrideVal = (window._currentDetailProject && window._currentDetailProject.totalManDaysOverride != null) ? window._currentDetailProject.totalManDaysOverride : '';
+        toggleHtml += '<span class="text-muted" style="font-size:0.8rem;">' + totalCount + '건' + (inactiveTasks.length > 0 ? ' (비활성 ' + inactiveTasks.length + ')' : '') + ' | 공수: ' + projRemainMd + '/' + projTotalMd + ' MD'
+            + ' | Override MD: <input type="number" id="project-md-override-inline" value="' + mdOverrideVal + '" placeholder="미입력" min="0" step="0.5" style="width:65px; font-size:0.8rem; padding:1px 4px; border:1px solid #ccc; border-radius:3px;" onchange="saveProjectMdOverride(this.value)">'
+            + '</span>';
         toggleHtml += '<button class="btn btn-primary btn-sm" onclick="showTaskModal(null, ' + projectId + ')"><i class="bi bi-plus-lg"></i> 태스크 추가</button>';
         // grouped 뷰: 상단 전체선택 toolbar 없음 (멤버별 카드 헤더에 배치)
         // flat 뷰: 기존 전역 toolbar 유지
@@ -1871,12 +2157,13 @@ async function loadProjectLinks() {
         }
         var html = '<div class="list-group">';
         links.forEach(function(l) {
-            html += '<div class="list-group-item d-flex align-items-center">';
+            html += '<div class="list-group-item d-flex align-items-center" id="proj-link-row-' + l.id + '">';
             html += '<a href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer" class="flex-grow-1 text-decoration-none">';
             html += '<i class="bi bi-link-45deg me-1"></i> <strong>' + escapeHtml(l.label) + '</strong>';
             html += ' <small class="text-muted">' + escapeHtml(l.url) + '</small>';
             html += '</a>';
-            html += '<button class="btn btn-outline-danger btn-sm ms-2" style="padding:0 4px; font-size:0.7rem;" onclick="deleteProjectLink(' + projectId + ',' + l.id + ')"><i class="bi bi-x-lg"></i></button>';
+            html += '<button class="btn btn-outline-secondary btn-sm ms-2" style="padding:0 4px; font-size:0.7rem;" onclick="editProjectLinkInline(' + projectId + ',' + l.id + ',\'' + escapeJsString(l.label) + '\',\'' + escapeJsString(l.url) + '\')" title="수정"><i class="bi bi-pencil"></i></button>';
+            html += '<button class="btn btn-outline-danger btn-sm ms-1" style="padding:0 4px; font-size:0.7rem;" onclick="deleteProjectLink(' + projectId + ',' + l.id + ')"><i class="bi bi-x-lg"></i></button>';
             html += '</div>';
         });
         html += '</div>';
@@ -1910,6 +2197,29 @@ async function addProjectLink() {
     }
 }
 
+function editProjectLinkInline(projectId, linkId, label, url) {
+    var row = document.getElementById('proj-link-row-' + linkId);
+    if (!row) return;
+    row.innerHTML = '<div class="d-flex align-items-center gap-1 w-100">'
+        + '<input type="text" class="form-control form-control-sm" id="edit-link-label-' + linkId + '" value="' + escapeHtml(label) + '" style="width:150px;">'
+        + '<input type="url" class="form-control form-control-sm flex-grow-1" id="edit-link-url-' + linkId + '" value="' + escapeHtml(url) + '">'
+        + '<button class="btn btn-primary btn-sm" style="white-space:nowrap;" onclick="saveProjectLinkEdit(' + projectId + ',' + linkId + ')">저장</button>'
+        + '<button class="btn btn-secondary btn-sm" onclick="loadProjectLinks()">취소</button>'
+        + '</div>';
+    document.getElementById('edit-link-label-' + linkId).focus();
+}
+
+async function saveProjectLinkEdit(projectId, linkId) {
+    var label = document.getElementById('edit-link-label-' + linkId).value.trim();
+    var url = document.getElementById('edit-link-url-' + linkId).value.trim();
+    if (!label || !url) { showToast('이름과 주소를 입력하세요.', 'warning'); return; }
+    try {
+        await apiCall('/api/v1/projects/' + projectId + '/links/' + linkId, 'PUT', { label: label, url: url });
+        loadProjectLinks();
+        showToast('링크가 수정되었습니다.', 'success');
+    } catch (e) { showToast('링크 수정 실패', 'error'); }
+}
+
 async function deleteProjectLink(projectId, linkId) {
     if (!confirm('이 링크를 삭제하시겠습니까?')) return;
     try {
@@ -1925,43 +2235,115 @@ async function deleteProjectLink(projectId, linkId) {
 
 async function showProjectLinksPopup(projectId, btn, event) {
     event.stopPropagation();
-    // 기존 팝오버 제거
     var existing = document.querySelector('.project-links-popover');
-    if (existing) existing.remove();
-
-    var res = await apiCall('/api/v1/projects/' + projectId + '/links');
-    var links = (res.success && res.data) ? res.data : [];
-    if (links.length === 0) {
-        showToast('등록된 링크가 없습니다.', 'warning');
-        return;
+    if (existing) {
+        var isSameBtn = existing._triggerBtn === btn;
+        existing.remove();
+        if (isSameBtn) return;
     }
 
-    var html = '<div class="project-links-popover" style="position:absolute; z-index:1050; background:#fff; border:1px solid #dee2e6; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:220px; max-width:350px; font-size:0.85rem;">';
-    html += '<div class="p-2 border-bottom bg-light" style="border-radius:6px 6px 0 0;"><strong>링크</strong></div>';
-    html += '<div class="p-1" style="max-height:200px; overflow-y:auto;">';
-    links.forEach(function(l) {
-        html += '<a href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer" class="d-block px-2 py-1 text-decoration-none rounded" style="color:#333;" onmouseover="this.style.background=\'#f0f0f0\'" onmouseout="this.style.background=\'\'">';
-        html += '<i class="bi bi-link-45deg me-1"></i>' + escapeHtml(l.label);
-        html += '</a>';
-    });
-    html += '</div></div>';
-
-    var container = document.createElement('div');
-    container.innerHTML = html;
-    var popover = container.firstChild;
+    var popover = document.createElement('div');
+    popover.className = 'project-links-popover';
+    popover.style.cssText = 'position:absolute; z-index:1050; background:#fff; border:1px solid #dee2e6; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:280px; max-width:400px; font-size:0.85rem;';
+    popover._triggerBtn = btn;
+    popover._projectId = projectId;
+    popover.innerHTML = '<div class="text-center text-muted p-2">로딩 중...</div>';
     document.body.appendChild(popover);
 
     var rect = btn.getBoundingClientRect();
     popover.style.top = (rect.bottom + window.scrollY + 4) + 'px';
-    popover.style.left = (rect.left + window.scrollX) + 'px';
+    popover.style.left = (rect.left + window.scrollX + 20) + 'px';
 
     function closePopover(e) {
-        if (!popover.contains(e.target) && e.target !== btn) {
+        if (!popover.contains(e.target) && e.target !== btn && !e.target.closest('.project-links-popover')) {
             popover.remove();
             document.removeEventListener('click', closePopover);
         }
     }
     setTimeout(function() { document.addEventListener('click', closePopover); }, 0);
+
+    await renderLinksPopoverContent(popover);
+}
+
+async function renderLinksPopoverContent(popover) {
+    var projectId = popover._projectId;
+    var res = await apiCall('/api/v1/projects/' + projectId + '/links');
+    var links = (res.success && res.data) ? res.data : [];
+
+    var html = '<div class="p-2 border-bottom bg-light d-flex align-items-center" style="border-radius:6px 6px 0 0;">';
+    html += '<strong class="me-auto">링크</strong>';
+    html += '<button class="btn btn-sm p-0 border-0 text-primary" onclick="event.stopPropagation(); toggleLinksPopupAddForm(this)" title="추가"><i class="bi bi-plus-lg"></i></button>';
+    html += '</div>';
+
+    // 추가 폼 (숨김)
+    html += '<div class="links-popup-add-form p-2 border-bottom" style="display:none;">';
+    html += '<input type="text" class="form-control form-control-sm mb-1 links-popup-label" placeholder="이름" style="font-size:0.8rem;">';
+    html += '<input type="url" class="form-control form-control-sm mb-1 links-popup-url" placeholder="https://..." style="font-size:0.8rem;">';
+    html += '<button class="btn btn-primary btn-sm w-100" style="font-size:0.8rem;" onclick="event.stopPropagation(); saveLinksPopupLink(this)">추가</button>';
+    html += '</div>';
+
+    // 링크 목록
+    html += '<div class="links-popup-list" style="max-height:250px; overflow-y:auto;">';
+    if (links.length === 0) {
+        html += '<div class="text-center text-muted p-2">링크가 없습니다.</div>';
+    } else {
+        links.forEach(function(l) {
+            html += '<div class="d-flex align-items-center px-2 py-1 links-popup-item" data-link-id="' + l.id + '" style="gap:4px;">';
+            html += '<a href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer" class="flex-grow-1 text-decoration-none text-truncate" style="color:#333; font-size:0.82rem;" title="' + escapeHtml(l.url) + '">';
+            html += '<i class="bi bi-link-45deg"></i> ' + escapeHtml(l.label);
+            html += '</a>';
+            html += '<button class="btn btn-sm p-0 border-0 text-secondary" onclick="event.stopPropagation(); editLinksPopupLink(this,' + l.id + ',\'' + escapeJsString(escapeHtml(l.label)) + '\',\'' + escapeJsString(escapeHtml(l.url)) + '\')" title="수정"><i class="bi bi-pencil" style="font-size:0.7rem;"></i></button>';
+            html += '<button class="btn btn-sm p-0 border-0 text-danger" onclick="event.stopPropagation(); deleteLinksPopupLink(this,' + l.id + ')" title="삭제"><i class="bi bi-x-lg" style="font-size:0.7rem;"></i></button>';
+            html += '</div>';
+        });
+    }
+    html += '</div>';
+    popover.innerHTML = html;
+}
+
+function toggleLinksPopupAddForm(btn) {
+    var popover = btn.closest('.project-links-popover');
+    var form = popover.querySelector('.links-popup-add-form');
+    form.style.display = form.style.display === 'none' ? '' : 'none';
+    if (form.style.display !== 'none') {
+        form.querySelector('.links-popup-label').focus();
+    }
+}
+
+async function saveLinksPopupLink(btn) {
+    var popover = btn.closest('.project-links-popover');
+    var label = popover.querySelector('.links-popup-label').value.trim();
+    var url = popover.querySelector('.links-popup-url').value.trim();
+    if (!label || !url) { showToast('이름과 주소를 입력하세요.', 'warning'); return; }
+    var projectId = popover._projectId;
+    var editId = popover._editLinkId;
+
+    if (editId) {
+        await apiCall('/api/v1/projects/' + projectId + '/links/' + editId, 'PUT', { label: label, url: url });
+        popover._editLinkId = null;
+    } else {
+        await apiCall('/api/v1/projects/' + projectId + '/links', 'POST', { label: label, url: url });
+    }
+    await renderLinksPopoverContent(popover);
+}
+
+function editLinksPopupLink(btn, linkId, label, url) {
+    var popover = btn.closest('.project-links-popover');
+    var form = popover.querySelector('.links-popup-add-form');
+    form.style.display = '';
+    popover.querySelector('.links-popup-label').value = label;
+    popover.querySelector('.links-popup-url').value = url;
+    popover._editLinkId = linkId;
+    popover.querySelector('.links-popup-label').focus();
+    var saveBtn = form.querySelector('.btn-primary');
+    saveBtn.textContent = '수정';
+}
+
+async function deleteLinksPopupLink(btn, linkId) {
+    var popover = btn.closest('.project-links-popover');
+    var projectId = popover._projectId;
+    await apiCall('/api/v1/projects/' + projectId + '/links/' + linkId, 'DELETE');
+    await renderLinksPopoverContent(popover);
 }
 
 // ---- 프로젝트 멤버 ----
@@ -1993,7 +2375,7 @@ async function loadProjectMembers(projectId) {
         // 정렬
         var sf = _projectMemberSort.field;
         var sa = _projectMemberSort.asc;
-        var roleOrder = { PM: 0, BE: 1, FE: 2, QA: 3, PLACEHOLDER: 4 };
+        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
         members.sort(function(a, b) {
             var va, vb;
             if (sf === 'role') {
@@ -2083,7 +2465,7 @@ async function showAddProjectMemberModal(projectId) {
     if (available.length === 0) {
         listEl.innerHTML = '<div class="text-center text-muted py-3">추가 가능한 멤버가 없습니다.</div>';
     } else {
-        var roleOrder = { PM: 0, BE: 1, FE: 2, QA: 3, PLACEHOLDER: 4 };
+        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
         available.sort(function(a, b) {
             var ra = roleOrder[a.role] != null ? roleOrder[a.role] : 99;
             var rb = roleOrder[b.role] != null ? roleOrder[b.role] : 99;
@@ -2132,16 +2514,23 @@ async function showProjectModal(projectId) {
     document.getElementById('project-end-date').value = '';
     document.getElementById('project-status').value = 'PLANNING';
     document.getElementById('project-jira-board-id').value = '';
+    document.getElementById('project-jira-epic-key').value = '';
+    document.getElementById('project-total-md-override').value = '';
+    document.getElementById('project-ppl').value = '';
+    document.getElementById('project-epl').value = '';
+    document.getElementById('project-quarter').value = '';
     document.getElementById('project-delay-warning').style.display = 'none';
     document.getElementById('project-delay-warning').innerHTML = '';
 
-    // 도메인시스템/프로젝트 유형 병렬 로드
+    // 도메인시스템/프로젝트 유형/멤버 병렬 로드
     var checklistResults = await Promise.all([
         apiCall('/api/v1/domain-systems'),
-        apiCall('/api/v1/projects/types')
+        apiCall('/api/v1/projects/types'),
+        apiCall('/api/v1/members')
     ]);
     var dsRes = checklistResults[0];
     var typesRes = checklistResults[1];
+    var membersRes = checklistResults[2];
 
     // datalist 채우기
     if (typesRes.success && typesRes.data) {
@@ -2150,6 +2539,15 @@ async function showProjectModal(projectId) {
             return '<option value="' + escapeHtml(t) + '">';
         }).join('');
     }
+    // PPL/EPL 멤버 드롭다운 채우기
+    var allMembers = (membersRes.success && membersRes.data) ? membersRes.data : [];
+    var memberOptHtml = '<option value="">선택 안함</option>';
+    allMembers.forEach(function(m) {
+        memberOptHtml += '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.role + ')</option>';
+    });
+    document.getElementById('project-ppl').innerHTML = memberOptHtml;
+    document.getElementById('project-epl').innerHTML = memberOptHtml;
+
     var allDs = (dsRes.success && dsRes.data) ? dsRes.data : [];
 
     var currentDs = [];
@@ -2168,6 +2566,11 @@ async function showProjectModal(projectId) {
                 document.getElementById('project-end-date').value = p.endDate || '';
                 document.getElementById('project-status').value = p.status || 'PLANNING';
                 document.getElementById('project-jira-board-id').value = p.jiraBoardId || '';
+                document.getElementById('project-jira-epic-key').value = p.jiraEpicKey || '';
+                document.getElementById('project-total-md-override').value = p.totalManDaysOverride != null ? p.totalManDaysOverride : '';
+                document.getElementById('project-ppl').value = p.pplId || '';
+                document.getElementById('project-epl').value = p.eplId || '';
+                document.getElementById('project-quarter').value = p.quarter || '';
                 currentDs = p.domainSystems ? p.domainSystems.map(function(d) { return d.id; }) : [];
 
                 // 지연 경고 표시
@@ -2226,21 +2629,28 @@ async function saveProject() {
         showToast('프로젝트명을 입력해주세요.', 'warning');
         return;
     }
-    if (!startDate || !endDate) {
-        showToast('시작일과 론치일을 입력해주세요.', 'warning');
-        return;
-    }
+    // startDate, endDate는 선택사항 (nullable)
 
     var jiraBoardId = document.getElementById('project-jira-board-id').value.trim() || null;
+    var jiraEpicKey = document.getElementById('project-jira-epic-key').value.trim() || null;
+    var mdOverrideVal = document.getElementById('project-total-md-override').value;
+    var totalManDaysOverride = mdOverrideVal ? parseFloat(mdOverrideVal) : null;
+    var pplVal = document.getElementById('project-ppl').value;
+    var eplVal = document.getElementById('project-epl').value;
 
     var body = {
         name: name,
         projectType: type,
         description: description,
-        startDate: startDate,
-        endDate: endDate,
+        startDate: startDate || null,
+        endDate: endDate || null,
         status: status,
-        jiraBoardId: jiraBoardId
+        jiraBoardId: jiraBoardId,
+        jiraEpicKey: jiraEpicKey,
+        totalManDaysOverride: totalManDaysOverride,
+        pplId: pplVal ? parseInt(pplVal) : null,
+        eplId: eplVal ? parseInt(eplVal) : null,
+        quarter: document.getElementById('project-quarter').value.trim() || null
     };
 
     try {
@@ -2461,6 +2871,7 @@ function renderProjectGantt() {
     ganttShowDomain = showDomain ? showDomain.checked : false;
 
     var tasks = convertToGanttTasks(_projGanttData);
+    var _projBizDaysMap = buildBizDaysMap(tasks);
 
     // 글로벌 상태 복원
     ganttShowJiraKey = savedJira;
@@ -2494,7 +2905,7 @@ function renderProjectGantt() {
 
             // 주말 제거 (Day 모드)
             if (_projGanttInstance && _projGanttViewMode === 'Day') {
-                removeGanttWeekendsForElement(_projGanttInstance, chartEl);
+                removeGanttWeekendsForElement(_projGanttInstance, chartEl, _projBizDaysMap);
             }
 
             // 드래그 비활성화
@@ -2512,7 +2923,7 @@ function renderProjectGantt() {
 
             // 마커
             if (_projGanttData.project) {
-                addGanttDeadlineMarkerForElement(_projGanttData.project, _projGanttInstance, chartEl);
+                // 론치일 세로 가이드선 제거됨
             }
 
             // sticky 헤더
@@ -2582,6 +2993,7 @@ async function loadAllProjectsGantt() {
             ganttInstance = null;
             return;
         }
+        var _allBizDaysMap = buildBizDaysMap(allTasks);
 
         // 단일 인스턴스 렌더링
         chartContainer.innerHTML = '';
@@ -2623,7 +3035,7 @@ async function loadAllProjectsGantt() {
             // 주말 제거 (Day 모드)
             ganttWeekendsRemoved = false;
             if (ganttInstance && currentViewMode === 'Day') {
-                removeGanttWeekendsForElement(ganttInstance, chartContainer);
+                removeGanttWeekendsForElement(ganttInstance, chartContainer, _allBizDaysMap);
                 ganttWeekendsRemoved = true;
             }
 
@@ -2757,8 +3169,11 @@ function addGanttDeadlineMarkerForElement(project, inst, chartEl) {
 /**
  * 특정 요소 내 간트차트에서 주말 열 제거
  */
-function removeGanttWeekendsForElement(inst, chartEl) {
-    if (!inst || currentViewMode !== 'Day') return;
+function removeGanttWeekendsForElement(inst, chartEl, bizDaysMap) {
+    if (!inst) return;
+    // 프로젝트 탭 간트는 _projGanttViewMode 사용, 독립 간트는 currentViewMode 사용
+    var viewMode = (chartEl.id === 'proj-gantt-chart') ? _projGanttViewMode : currentViewMode;
+    if (viewMode !== 'Day') return;
     var svg = chartEl.querySelector('svg');
     if (!svg) return;
 
@@ -2790,91 +3205,87 @@ function removeGanttWeekendsForElement(inst, chartEl) {
     }
     var totalRemoved = cumul;
 
-    // lower-text 처리
-    var ltIdx = 0;
-    lowerTexts.forEach(function(el) {
-        if (ltIdx < isWeekend.length && isWeekend[ltIdx]) {
-            el.remove();
-        } else {
-            var cx = parseFloat(el.getAttribute('x'));
-            el.setAttribute('x', cx - (ltIdx < offset.length ? offset[ltIdx] : totalRemoved));
-        }
-        ltIdx++;
-    });
-
-    // upper-text 이동
-    var upperTexts = svg.querySelectorAll('.upper-text');
-    upperTexts.forEach(function(el) {
-        var cx = parseFloat(el.getAttribute('x'));
-        var colIdx = Math.round((cx - gridOffsetX) / colWidth);
-        var off = (colIdx >= 0 && colIdx < offset.length) ? offset[colIdx] : totalRemoved;
-        el.setAttribute('x', cx - off);
-    });
-
-    // grid ticks 이동
-    var ticks = svg.querySelectorAll('.tick');
-    ticks.forEach(function(el) {
-        var isLine = (el.tagName === 'line' || el.tagName === 'LINE');
-        if (isLine) {
-            var x1 = parseFloat(el.getAttribute('x1'));
-            var colIdx = Math.round((x1 - gridOffsetX) / colWidth);
-            var off = (colIdx >= 0 && colIdx < offset.length) ? offset[colIdx] : totalRemoved;
-            el.setAttribute('x1', x1 - off);
-            el.setAttribute('x2', parseFloat(el.getAttribute('x2')) - off);
-        }
-    });
-
-    // today-highlight 이동
-    var todayHighlight = svg.querySelector('.today-highlight');
-    if (todayHighlight) {
-        var thx = parseFloat(todayHighlight.getAttribute('x'));
-        var colIdx = Math.round((thx + colWidth/2 - gridOffsetX) / colWidth);
-        var off = (colIdx >= 0 && colIdx < offset.length) ? offset[colIdx] : totalRemoved;
-        todayHighlight.setAttribute('x', thx - off);
+    // shiftForCol/shiftForX — removeGanttWeekends와 동일한 로직
+    function shiftForCol(col) {
+        if (col <= 0) return 0;
+        return offset[Math.min(col - 1, dates.length - 1)];
+    }
+    function shiftForX(x) {
+        var col = Math.floor((x - gridOffsetX) / colWidth);
+        return shiftForCol(Math.max(0, col));
     }
 
-    // bar 처리
-    var barWrappers = svg.querySelectorAll('.bar-wrapper');
-    barWrappers.forEach(function(bw) {
-        var barGroup = bw.querySelector('.bar-group');
-        if (!barGroup) return;
-        var bar = barGroup.querySelector('.bar');
-        if (!bar) return;
-
-        var bx = parseFloat(bar.getAttribute('x'));
-        var bw2 = parseFloat(bar.getAttribute('width'));
-        var bRight = bx + bw2;
-
-        var leftColIdx = Math.round((bx - gridOffsetX) / colWidth);
-        var rightColIdx = Math.round((bRight - gridOffsetX) / colWidth);
-        var leftOff = (leftColIdx >= 0 && leftColIdx < offset.length) ? offset[leftColIdx] : totalRemoved;
-        var rightOff = (rightColIdx >= 0 && rightColIdx < offset.length) ? offset[rightColIdx] : totalRemoved;
-        var newX = bx - leftOff;
-        var newWidth = Math.max(bw2 - (rightOff - leftOff), colWidth * 0.3);
-
-        bar.setAttribute('x', newX);
-        bar.setAttribute('width', newWidth);
-
-        var progress = barGroup.querySelector('.bar-progress');
-        if (progress) {
-            var pw = parseFloat(progress.getAttribute('width'));
-            var ratio = bw2 > 0 ? pw / bw2 : 0;
-            progress.setAttribute('x', newX);
-            progress.setAttribute('width', newWidth * ratio);
+    // 1. lower-text: 주말 제거, 평일 이동
+    for (var i = 0; i < lowerTexts.length && i < dates.length; i++) {
+        if (isWeekend[i]) {
+            lowerTexts[i].remove();
+        } else {
+            var x = parseFloat(lowerTexts[i].getAttribute('x'));
+            lowerTexts[i].setAttribute('x', x - shiftForCol(i));
         }
+    }
 
-        // 라벨
-        var labels = barGroup.querySelectorAll('.bar-label');
-        labels.forEach(function(label) {
-            label.setAttribute('x', newX + newWidth / 2);
-        });
+    // 2. upper-text
+    svg.querySelectorAll('.upper-text').forEach(function(el) {
+        var x = parseFloat(el.getAttribute('x'));
+        el.setAttribute('x', x - shiftForX(x));
+    });
 
-        // handle-group 이동
-        var handleGroup = bw.querySelector('.handle-group');
-        if (handleGroup) {
-            var handles = handleGroup.querySelectorAll('rect');
-            if (handles.length >= 1) handles[0].setAttribute('x', newX - 3);
-            if (handles.length >= 2) handles[1].setAttribute('x', newX + newWidth - 5);
+    // 3. grid ticks
+    svg.querySelectorAll('.tick').forEach(function(el) {
+        if (el.tagName === 'line' || el.tagName === 'LINE') {
+            var x = parseFloat(el.getAttribute('x1'));
+            var newX = x - shiftForX(x);
+            el.setAttribute('x1', newX);
+            el.setAttribute('x2', newX);
+        }
+    });
+
+    // 4. today-highlight
+    var todayHL = svg.querySelector('.today-highlight');
+    if (todayHL) {
+        var x = parseFloat(todayHL.getAttribute('x'));
+        todayHL.setAttribute('x', x - shiftForX(x));
+    }
+
+    // 5. bar 처리 — bizDaysMap이 있으면 정확한 영업일 수 기반, 없으면 shiftForX 기반
+    svg.querySelectorAll('.bar-wrapper').forEach(function(bw) {
+        var bar = bw.querySelector('.bar');
+        var progress = bw.querySelector('.bar-progress');
+        var label = bw.querySelector('.bar-label');
+
+        if (bar) {
+            var origX = parseFloat(bar.getAttribute('x'));
+            var origW = parseFloat(bar.getAttribute('width'));
+            var newX = origX - shiftForX(origX);
+            var newW;
+
+            // bizDaysMap에서 정확한 영업일 수로 bar 너비 설정
+            var taskId = bw.getAttribute('data-id');
+            if (bizDaysMap && taskId && bizDaysMap[taskId]) {
+                newW = bizDaysMap[taskId] * colWidth;
+            } else {
+                var newRight = (origX + origW) - shiftForX(origX + origW);
+                newW = Math.max(newRight - newX, colWidth * 0.5);
+            }
+
+            bar.setAttribute('x', newX);
+            bar.setAttribute('width', newW);
+
+            if (progress) {
+                var pW = parseFloat(progress.getAttribute('width'));
+                var ratio = origW > 0 ? pW / origW : 0;
+                progress.setAttribute('x', newX);
+                progress.setAttribute('width', newW * ratio);
+            }
+
+            if (label) {
+                if (label.classList.contains('big')) {
+                    label.setAttribute('x', newX + newW + 5);
+                } else {
+                    label.setAttribute('x', newX + newW / 2);
+                }
+            }
         }
     });
 
@@ -2897,6 +3308,12 @@ function removeGanttWeekendsForElement(inst, chartEl) {
     chartEl.setAttribute('data-weekends-removed', 'true');
 }
 
+function buildBizDaysMap(ganttTasks) {
+    var map = {};
+    ganttTasks.forEach(function(t) { if (t._bizDays) map[t.id] = t._bizDays; });
+    return map;
+}
+
 function convertToGanttTasks(data, projectName) {
     var tasks = [];
     if (!data) return tasks;
@@ -2905,6 +3322,7 @@ function convertToGanttTasks(data, projectName) {
     if (data.milestones && data.milestones.length > 0) {
         data.milestones.forEach(function(ms) {
             if (!ms.startDate || !ms.endDate) return;
+            var msBizDays = calcWorkingDays(ms.startDate, ms.endDate) || 1;
             tasks.push({
                 id: 'milestone-' + ms.id,
                 name: '▸ ' + ms.name,
@@ -2913,7 +3331,8 @@ function convertToGanttTasks(data, projectName) {
                 progress: 0,
                 dependencies: '',
                 custom_class: 'bar-milestone bar-milestone-' + ms.name.toLowerCase().replace(/[^a-z가-힣]/g, ''),
-                _isMilestone: true
+                _isMilestone: true,
+                _bizDays: msBizDays
             });
         });
     }
@@ -2928,7 +3347,8 @@ function convertToGanttTasks(data, projectName) {
             progress: 0,
             dependencies: '',
             custom_class: 'bar-milestone bar-milestone-론치',
-            _isMilestone: true
+            _isMilestone: true,
+            _bizDays: 1
         });
     }
 
@@ -2957,9 +3377,10 @@ function convertToGanttTasks(data, projectName) {
             var namePrefix = projectName ? '[' + projectName + '] ' : '';
             var jiraPrefix = (ganttShowJiraKey && task.jiraKey) ? '[' + task.jiraKey + '] ' : '';
             var domainPart = ganttShowDomain ? '[' + ds.name + '] ' : '';
+            var bizDays = calcWorkingDays(task.startDate, task.endDate) || 1;
             tasks.push({
                 id: 'task-' + task.id,
-                name: parallelPrefix + priorityPrefix + jiraPrefix + namePrefix + domainPart + task.name + ' (' + assigneeName + ', ' + manDays + 'MD)',
+                name: parallelPrefix + priorityPrefix + jiraPrefix + namePrefix + domainPart + task.name + ' (' + assigneeName + ', ' + manDays + 'MD, ' + bizDays + '일)',
                 start: task.startDate,
                 end: addDays(task.endDate, 1),
                 progress: progress,
@@ -2969,7 +3390,8 @@ function convertToGanttTasks(data, projectName) {
                 _projectId: data.project ? data.project.id : null,
                 _domainSystem: ds.name,
                 _domainSystemColor: ds.color,
-                _jiraKey: task.jiraKey
+                _jiraKey: task.jiraKey,
+                _bizDays: bizDays
             });
         });
     });
@@ -2980,6 +3402,7 @@ function renderGantt(data) {
     var chartContainer = document.getElementById('gantt-chart');
 
     var tasks = convertToGanttTasks(data);
+    var _ganttBizDaysMap = buildBizDaysMap(tasks);
 
     if (tasks.length === 0) {
         chartContainer.innerHTML = '<div class="empty-state"><i class="bi bi-bar-chart-steps"></i><p>등록된 태스크가 없습니다.<br>태스크를 추가해주세요.</p></div>';
@@ -3023,7 +3446,7 @@ function renderGantt(data) {
             if (!svg || !svg.querySelector('.lower-text')) return;
 
             // 1. 주말 열 제거 (Day 모드)
-            removeGanttWeekends();
+            removeGanttWeekends(_ganttBizDaysMap);
 
             // 2. 드래그 완전 비활성화: bar의 drag 이벤트 제거
             var bars = document.querySelectorAll('#gantt-chart .bar-wrapper');
@@ -3283,7 +3706,7 @@ function setupGanttStickyHeader(chartEl) {
  * 간트차트 주말(토,일) 열 제거 — Day 모드에서만 동작
  * SVG 후처리로 주말 열을 제거하고 모든 요소 위치를 재조정
  */
-function removeGanttWeekends() {
+function removeGanttWeekends(bizDaysMap) {
     ganttWeekendsRemoved = false;
     if (!ganttInstance || currentViewMode !== 'Day') return;
 
@@ -3374,8 +3797,15 @@ function removeGanttWeekends() {
             var origX = parseFloat(bar.getAttribute('x'));
             var origW = parseFloat(bar.getAttribute('width'));
             var newX = origX - shiftForX(origX);
-            var newRight = (origX + origW) - shiftForX(origX + origW);
-            var newW = Math.max(newRight - newX, colWidth * 0.5);
+            var newW;
+
+            var taskId = wrapper.getAttribute('data-id');
+            if (bizDaysMap && taskId && bizDaysMap[taskId]) {
+                newW = bizDaysMap[taskId] * colWidth;
+            } else {
+                var newRight = (origX + origW) - shiftForX(origX + origW);
+                newW = Math.max(newRight - newX, colWidth * 0.5);
+            }
 
             bar.setAttribute('x', newX);
             bar.setAttribute('width', newW);
@@ -3465,35 +3895,49 @@ function getMilestoneColor(name) {
     return '#78909C';
 }
 
+var _milestoneTypeLabels = { ANALYSIS: '분석', DESIGN: '설계', DEVELOPMENT: '개발', DEV_TEST: '개발자테스트', QA: 'QA' };
+var _milestoneTypeOptions = '<option value="">-</option><option value="ANALYSIS">분석</option><option value="DESIGN">설계</option><option value="DEVELOPMENT">개발</option><option value="DEV_TEST">개발자테스트</option><option value="QA">QA</option>';
+
 async function loadProjectMilestones() {
     var projectId = currentDetailProjectId;
     if (!projectId) return;
     var tbody = document.getElementById('project-milestones-table');
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">로딩 중...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">로딩 중...</td></tr>';
     try {
         await loadHolidayDatesCache();
         var res = await apiCall('/api/v1/projects/' + projectId + '/milestones');
         var milestones = (res.success && res.data) ? res.data : [];
         if (milestones.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">등록된 마일스톤이 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">등록된 마일스톤이 없습니다.</td></tr>';
             return;
         }
         var html = '';
         milestones.forEach(function(ms) {
             html += '<tr data-milestone-id="' + ms.id + '">';
             html += '<td class="drag-handle" style="cursor:grab; text-align:center; color:#aaa;"><i class="bi bi-grip-vertical"></i></td>';
-            var msDays = calcWorkingDays(ms.startDate, ms.endDate);
-            var msDaysLabel = msDays != null ? ' <span class="text-muted" style="font-size:0.75rem;">(' + msDays + ' days)</span>' : '';
-            html += '<td><div class="d-flex align-items-center gap-1"><input type="text" class="form-control form-control-sm" value="' + escapeHtml(ms.name) + '" onchange="updateProjectMilestone(' + ms.id + ', \'name\', this.value)" style="width:120px;">' + msDaysLabel + '</div></td>';
-            html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + ms.startDate + '" onchange="updateProjectMilestone(' + ms.id + ', \'startDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.startDate) + '</small></div></td>';
-            html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + ms.endDate + '" onchange="updateProjectMilestone(' + ms.id + ', \'endDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.endDate) + '</small></div></td>';
+            // 유형
+            var typeOpts = _milestoneTypeOptions.replace('value="' + (ms.type || '') + '"', 'value="' + (ms.type || '') + '" selected');
+            html += '<td><select class="form-select form-select-sm" onchange="updateProjectMilestone(' + ms.id + ', \'type\', this.value)" style="width:110px; font-size:0.8rem;">' + typeOpts + '</select></td>';
+            // 이름
+            html += '<td><input type="text" class="form-control form-control-sm" value="' + escapeHtml(ms.name) + '" onchange="updateProjectMilestone(' + ms.id + ', \'name\', this.value)" style="width:200px;"></td>';
+            // 일수: DB에 days가 있으면 그 값(편집 가능), 없으면 시작~종료 working days 자동 계산 표시
+            var msCalcDays = (ms.startDate && ms.endDate) ? calcWorkingDays(ms.startDate, ms.endDate) : null;
+            var msDisplayDays = ms.days != null ? ms.days : (msCalcDays != null ? msCalcDays : '');
+            html += '<td><div class="d-flex align-items-center gap-1">'
+                + '<input type="number" class="form-control form-control-sm" value="' + (ms.days != null ? ms.days : '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'days\', this.value ? parseInt(this.value) : null)" style="width:60px;" min="1" placeholder="' + (msCalcDays != null ? msCalcDays : '') + '">'
+                + (ms.days == null && msCalcDays != null ? '<small class="text-muted text-nowrap">' + msCalcDays + 'd</small>' : '')
+                + '</div></td>';
+            // 시작일
+            html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.startDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'startDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.startDate) + '</small></div></td>';
+            // 종료일
+            html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.endDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'endDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.endDate) + '</small></div></td>';
             html += '<td class="text-center"><button class="btn btn-outline-danger btn-sm" onclick="deleteProjectMilestone(' + ms.id + ')"><i class="bi bi-trash"></i></button></td>';
             html += '</tr>';
         });
         tbody.innerHTML = html;
         initMilestoneDragDrop();
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">로드 실패</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">로드 실패</td></tr>';
     }
 }
 
@@ -3526,18 +3970,25 @@ async function saveMilestoneOrder() {
 
 async function addProjectMilestone() {
     var projectId = currentDetailProjectId;
+    var type = document.getElementById('proj-ms-type').value;
     var name = document.getElementById('proj-ms-name').value.trim();
+    var days = document.getElementById('proj-ms-days').value;
     var startDate = document.getElementById('proj-ms-start').value;
     var endDate = document.getElementById('proj-ms-end').value;
-    if (!name) { showToast('이름을 입력해주세요.', 'warning'); return; }
-    if (!startDate || !endDate) { showToast('시작일과 종료일을 입력해주세요.', 'warning'); return; }
+    if (!name && !type) { showToast('유형 또는 이름을 입력해주세요.', 'warning'); return; }
+    if (!name && type) name = _milestoneTypeLabels[type] || type;
+    var body = { name: name, sortOrder: null };
+    if (type) body.type = type;
+    if (days) body.days = parseInt(days);
+    if (startDate) body.startDate = startDate;
+    if (endDate) body.endDate = endDate;
     try {
-        var res = await apiCall('/api/v1/projects/' + projectId + '/milestones', 'POST', {
-            name: name, startDate: startDate, endDate: endDate, sortOrder: null
-        });
+        var res = await apiCall('/api/v1/projects/' + projectId + '/milestones', 'POST', body);
         if (res.success) {
             showToast('마일스톤이 추가되었습니다.', 'success');
+            document.getElementById('proj-ms-type').value = '';
             document.getElementById('proj-ms-name').value = '';
+            document.getElementById('proj-ms-days').value = '';
             document.getElementById('proj-ms-start').value = '';
             document.getElementById('proj-ms-end').value = '';
             await loadProjectMilestones();
@@ -3988,9 +4439,10 @@ async function showTaskModal(taskId, projectId) {
     if (taskId) {
         deleteModalBtn.style.display = '';
         deleteModalBtn.onclick = function() {
-            if (!confirmAction('이 태스크를 삭제하시겠습니까?')) return;
-            bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
-            deleteTask(taskId, true);
+            showConfirmDialog('이 태스크를 삭제하시겠습니까?', function() {
+                bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
+                deleteTask(taskId, true);
+            });
         };
     } else {
         deleteModalBtn.style.display = 'none';
@@ -4140,21 +4592,7 @@ async function saveTask() {
         showToast('태스크명을 입력해주세요.', 'warning');
         return;
     }
-    if (!domainSystemId) {
-        showToast('도메인 시스템을 선택해주세요.', 'warning');
-        return;
-    }
-    if (!assigneeId) {
-        showToast('담당자를 선택해주세요.', 'warning');
-        return;
-    }
-
     if (executionMode === 'SEQUENTIAL') {
-        // SEQUENTIAL 모드: 공수 필수
-        if (!manDays) {
-            showToast('SEQUENTIAL 모드에서는 공수(MD)를 입력해주세요.', 'warning');
-            return;
-        }
         // 첫 번째 태스크인 경우 시작일 필수
         if (isFirstTask && !startDate) {
             showToast('선행 태스크가 없으므로 시작일을 입력해주세요.', 'warning');
@@ -4190,8 +4628,8 @@ async function saveTask() {
     var body = {
         name: name,
         projectId: currentModalProjectId,
-        domainSystemId: parseInt(domainSystemId),
-        assigneeId: parseInt(assigneeId),
+        domainSystemId: domainSystemId ? parseInt(domainSystemId) : null,
+        assigneeId: assigneeId ? parseInt(assigneeId) : null,
         manDays: manDays ? parseFloat(manDays) : null,
         status: status,
         executionMode: executionMode,
@@ -4528,7 +4966,7 @@ function renderScheduleMemberList() {
         return;
     }
 
-    var roleOrder = { PM: 0, BE: 1, FE: 2, QA: 3, PLACEHOLDER: 4 };
+    var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
     members.sort(function(a, b) {
         if (_scheduleMemberSortField === 'role') {
             var ra = roleOrder[a.role] != null ? roleOrder[a.role] : 99;
@@ -6034,11 +6472,233 @@ async function deleteJiraConfig() {
  */
 var _jiraImportProjects = []; // 프로젝트 목록 캐시 (import 모달용)
 
+// ---- Jira Space Import ----
+
+async function showJiraSpaceImportModal() {
+    document.getElementById('jira-space-filter').style.display = '';
+    document.getElementById('jira-space-loading').style.display = 'none';
+    document.getElementById('jira-space-preview').style.display = 'none';
+    document.getElementById('jira-space-result').style.display = 'none';
+    document.getElementById('jira-space-error-msg').style.display = 'none';
+    var execBtn = document.getElementById('jira-space-exec-btn');
+    execBtn.style.display = 'none';
+    execBtn.disabled = false;
+    execBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
+    document.getElementById('jira-space-project-key').value = '';
+    document.getElementById('jira-space-created-after').value = '';
+    document.getElementById('jira-space-status-todo').checked = true;
+    document.getElementById('jira-space-status-inprogress').checked = false;
+    document.getElementById('jira-space-status-done').checked = false;
+    document.getElementById('jira-space-status-all').checked = false;
+
+    // 프로젝트 목록
+    try {
+        var res = await apiCall('/api/v1/projects');
+        var allProj = (res.success && res.data) ? res.data : [];
+        _jiraImportProjects = allProj.filter(function(p) { return p.status === 'PLANNING' || p.status === 'IN_PROGRESS'; });
+        var sel = document.getElementById('jira-space-default-project');
+        sel.innerHTML = '<option value="">선택...</option>';
+        _jiraImportProjects.forEach(function(p) {
+            sel.innerHTML += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
+        });
+    } catch (e) { _jiraImportProjects = []; }
+
+    new bootstrap.Modal(document.getElementById('jiraSpaceImportModal')).show();
+}
+
+async function startJiraSpacePreview() {
+    var isEpic = document.getElementById('jira-space-source-epic').checked;
+    var projectKey = document.getElementById('jira-space-project-key').value.trim();
+    var epicKey = document.getElementById('jira-space-epic-key').value.trim();
+    var createdAfter = document.getElementById('jira-space-created-after').value;
+    if (!isEpic && !projectKey) { showToast('Jira 프로젝트 키를 입력하세요.', 'warning'); return; }
+    if (isEpic && !epicKey) { showToast('Epic 키를 입력하세요.', 'warning'); return; }
+    if (!createdAfter) { showToast('생성일자 필터를 입력하세요.', 'warning'); return; }
+
+    var statusFilter = [];
+    if (!document.getElementById('jira-space-status-all').checked) {
+        document.querySelectorAll('.jira-space-status-cb:checked').forEach(function(cb) { statusFilter.push(cb.value); });
+    }
+
+    document.getElementById('jira-space-filter').style.display = 'none';
+    document.getElementById('jira-space-loading').style.display = '';
+
+    try {
+        var body = {
+            createdAfter: createdAfter,
+            statusFilter: statusFilter.length > 0 ? statusFilter : null
+        };
+        if (isEpic) body.jiraEpicKey = epicKey;
+        else body.jiraProjectKey = projectKey;
+        var res = await apiCall('/api/v1/jira/space/preview', 'POST', body);
+        document.getElementById('jira-space-loading').style.display = 'none';
+
+        if (!res.success) {
+            document.getElementById('jira-space-filter').style.display = '';
+            document.getElementById('jira-space-error-msg').style.display = '';
+            document.getElementById('jira-space-error-msg').textContent = res.message || '미리보기 실패';
+            return;
+        }
+
+        var preview = res.data;
+        document.getElementById('jira-space-create').textContent = preview.toCreate || 0;
+        document.getElementById('jira-space-update').textContent = preview.toUpdate || 0;
+        document.getElementById('jira-space-total').textContent = preview.totalIssues || 0;
+
+        // 프로젝트 옵션 (빈 값 포함)
+        var projectOptionsWithEmpty = '<option value="">-- 선택 --</option>';
+        var projectOptionsMap = {};
+        _jiraImportProjects.forEach(function(p) {
+            projectOptionsWithEmpty += '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>';
+            projectOptionsMap[p.id] = true;
+        });
+
+        var tbody = document.getElementById('jira-space-table');
+        var html = '';
+        var issues = preview.issues || [];
+        if (issues.length > 0) {
+            issues.forEach(function(item) {
+                var badge = item.action === 'CREATE' ? '<span class="badge bg-success">생성</span>'
+                    : item.action === 'UPDATE' ? '<span class="badge bg-warning text-dark">업데이트</span>'
+                    : '<span class="badge bg-secondary">스킵</span>';
+                var importable = (item.action === 'CREATE' || item.action === 'UPDATE');
+                var key = escapeHtml(item.jiraKey || '');
+                html += '<tr>';
+                html += '<td><input type="checkbox" class="jira-sp-cb" value="' + key + '"' + (importable ? ' checked' : ' disabled') + ' onchange="updateJiraSpaceSelectedCount()"></td>';
+                html += '<td><code>' + key + '</code></td>';
+                html += '<td style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(item.summary || '') + '">' + escapeHtml(item.summary || '') + '</td>';
+                html += '<td>' + badge + '</td>';
+                html += '<td>' + escapeHtml(item.mappedStatus || '') + '</td>';
+                html += '<td>' + escapeHtml(item.mappedAssigneeName || item.jiraAssignee || '-') + '</td>';
+                html += '<td><select class="form-select form-select-sm jira-sp-project" data-jira-key="' + key + '" data-existing-pid="' + (item.existingProjectId || '') + '" style="font-size:0.75rem; padding:2px 4px; min-width:120px;">' + projectOptionsWithEmpty + '</select></td>';
+                html += '</tr>';
+            });
+        } else {
+            html = '<tr><td colspan="7" class="text-center text-muted">가져올 이슈가 없습니다.</td></tr>';
+        }
+        tbody.innerHTML = html;
+        document.getElementById('jira-space-preview').style.display = '';
+        document.getElementById('jira-space-select-all').checked = true;
+
+        // UPDATE 이슈: 기존 프로젝트 자동 선택, CREATE 이슈: 기본 프로젝트 선택
+        var defaultPid = document.getElementById('jira-space-default-project').value;
+        document.querySelectorAll('.jira-sp-project').forEach(function(sel) {
+            var existingPid = sel.getAttribute('data-existing-pid');
+            if (existingPid && projectOptionsMap[existingPid]) {
+                sel.value = existingPid;
+            } else if (defaultPid) {
+                sel.value = defaultPid;
+            }
+        });
+        if ((preview.toCreate || 0) + (preview.toUpdate || 0) > 0) {
+            document.getElementById('jira-space-exec-btn').style.display = '';
+        }
+    } catch (e) {
+        document.getElementById('jira-space-loading').style.display = 'none';
+        document.getElementById('jira-space-filter').style.display = '';
+        document.getElementById('jira-space-error-msg').style.display = '';
+        document.getElementById('jira-space-error-msg').textContent = 'Jira Space 조회 중 오류가 발생했습니다.';
+    }
+}
+
+function updateJiraSpaceSelectedCount() {
+    var checked = document.querySelectorAll('#jira-space-table .jira-sp-cb:checked').length;
+    document.getElementById('jira-space-exec-btn').style.display = checked > 0 ? '' : 'none';
+}
+
+async function executeJiraSpaceImport() {
+    var execBtn = document.getElementById('jira-space-exec-btn');
+    if (execBtn.disabled) return;
+    execBtn.disabled = true;
+    execBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 가져오는 중...';
+
+    var isEpic = document.getElementById('jira-space-source-epic').checked;
+    var projectKey = document.getElementById('jira-space-project-key').value.trim();
+    var epicKey = document.getElementById('jira-space-epic-key').value.trim();
+    var createdAfter = document.getElementById('jira-space-created-after').value;
+    var defaultProjVal = document.getElementById('jira-space-default-project').value;
+    var defaultProjectId = defaultProjVal ? parseInt(defaultProjVal) : null;
+
+    var statusFilter = [];
+    if (!document.getElementById('jira-space-status-all').checked) {
+        document.querySelectorAll('.jira-space-status-cb:checked').forEach(function(cb) { statusFilter.push(cb.value); });
+    }
+
+    var selectedKeys = [];
+    var issueProjectMap = {};
+    document.querySelectorAll('#jira-space-table .jira-sp-cb:checked').forEach(function(cb) {
+        var key = cb.value;
+        selectedKeys.push(key);
+        var sel = cb.closest('tr').querySelector('.jira-sp-project');
+        if (sel && sel.value) {
+            var pid = parseInt(sel.value);
+            if (!isNaN(pid) && pid !== defaultProjectId) issueProjectMap[key] = pid;
+        }
+    });
+
+    try {
+        var importBody = {
+            createdAfter: createdAfter,
+            statusFilter: statusFilter.length > 0 ? statusFilter : null,
+            defaultProjectId: defaultProjectId,
+            selectedKeys: selectedKeys,
+            issueProjectMap: Object.keys(issueProjectMap).length > 0 ? issueProjectMap : null
+        };
+        if (isEpic) importBody.jiraEpicKey = epicKey;
+        else importBody.jiraProjectKey = projectKey;
+        var res = await apiCall('/api/v1/jira/space/import', 'POST', importBody);
+
+        document.getElementById('jira-space-preview').style.display = 'none';
+        execBtn.style.display = 'none';
+
+        if (res.success && res.data) {
+            var r = res.data;
+            document.getElementById('jira-space-result-summary').innerHTML = '<strong>Import 완료!</strong><br>생성: ' + (r.created||0) + '건, 업데이트: ' + (r.updated||0) + '건, 스킵: ' + (r.skipped||0) + '건';
+            document.getElementById('jira-space-result').style.display = '';
+            if (r.errors && r.errors.length > 0) {
+                var errHtml = '';
+                r.errors.forEach(function(e) { errHtml += '<li><strong>' + escapeHtml(e.jiraKey||'') + '</strong>: ' + escapeHtml(e.reason||'') + '</li>'; });
+                document.getElementById('jira-space-error-list').innerHTML = errHtml;
+                document.getElementById('jira-space-result-errors').style.display = '';
+            }
+            showToast('Jira Space 이슈 가져오기 완료', 'success');
+            loadProjects();
+        } else {
+            document.getElementById('jira-space-error-msg').style.display = '';
+            document.getElementById('jira-space-error-msg').textContent = res.message || 'Import 실패';
+            execBtn.style.display = '';
+            execBtn.disabled = false;
+            execBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
+        }
+    } catch (e) {
+        document.getElementById('jira-space-error-msg').style.display = '';
+        document.getElementById('jira-space-error-msg').textContent = 'Import 중 오류가 발생했습니다.';
+        execBtn.style.display = '';
+        execBtn.disabled = false;
+        execBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
+    }
+}
+
+function toggleJiraSpaceSource() {
+    var isEpic = document.getElementById('jira-space-source-epic').checked;
+    document.getElementById('jira-space-key-group').style.display = isEpic ? 'none' : '';
+    document.getElementById('jira-space-epic-group').style.display = isEpic ? '' : 'none';
+}
+
+function toggleJiraImportSource() {
+    var isEpic = document.getElementById('jira-import-source-epic').checked;
+    document.getElementById('jira-import-epic-group').style.display = isEpic ? '' : 'none';
+    document.getElementById('jira-import-board-group').style.display = isEpic ? 'none' : '';
+}
+
+// ---- Jira Board Import ----
+
 async function showJiraImportModal(projectId) {
     if (!projectId) return;
     jiraImportProjectId = projectId;
     jiraPreviewCreatedAfter = null;
     jiraPreviewStatusFilter = [];
+    jiraPreviewBoardId = null;
 
     // 모달 초기 상태: 필터 화면만 표시
     document.getElementById('jira-import-filter').style.display = '';
@@ -6058,11 +6718,31 @@ async function showJiraImportModal(projectId) {
     document.getElementById('jira-filter-status-done').checked = false;
     document.getElementById('jira-filter-status-all').checked = false;
 
-    // 프로젝트 목록 로드 (이슈별 프로젝트 선택용)
+    // 프로젝트 목록 로드 + 현재 프로젝트의 Board ID / Epic Key 기본값 세팅
+    var currentBoardId = '';
+    var currentEpicKey = '';
     try {
         var projRes = await apiCall('/api/v1/projects');
-        _jiraImportProjects = (projRes.success && projRes.data) ? projRes.data : [];
+        var allProj = (projRes.success && projRes.data) ? projRes.data : [];
+        _jiraImportProjects = allProj.filter(function(p) { return p.status === 'PLANNING' || p.status === 'IN_PROGRESS'; });
+        var currentProj = allProj.find(function(p) { return p.id === projectId; });
+        if (currentProj) {
+            if (currentProj.jiraBoardId) currentBoardId = currentProj.jiraBoardId;
+            if (currentProj.jiraEpicKey) currentEpicKey = currentProj.jiraEpicKey;
+        }
     } catch (e) { _jiraImportProjects = []; }
+
+    // Epic Key 기본값 (프로젝트 설정값)
+    document.getElementById('jira-import-epic-key').value = currentEpicKey;
+
+    // Board ID 입력 초기화
+    var boardIdInput = document.getElementById('jira-import-board-id');
+    if (boardIdInput) boardIdInput.value = currentBoardId;
+
+    // 검색 대상 라디오 초기화 (Epic 모드 기본)
+    document.getElementById('jira-import-source-epic').checked = true;
+    document.getElementById('jira-import-source-board').checked = false;
+    toggleJiraImportSource();
 
     var modal = new bootstrap.Modal(document.getElementById('jiraImportModal'));
     modal.show();
@@ -6150,6 +6830,25 @@ async function startJiraPreview() {
     }
     jiraPreviewStatusFilter = statusFilter; // executeJiraImport에서 재사용
 
+    // 검색 키 값 읽기 (선택된 모드에 따라)
+    var isEpicMode = document.getElementById('jira-import-source-epic').checked;
+    var epicKeyVal = isEpicMode ? document.getElementById('jira-import-epic-key').value.trim() : '';
+    var boardIdVal = !isEpicMode ? document.getElementById('jira-import-board-id').value.trim() : '';
+
+    if (isEpicMode && !epicKeyVal) {
+        document.getElementById('jira-import-error-msg').style.display = '';
+        document.getElementById('jira-import-error-msg').textContent = 'Epic 키를 입력해주세요.';
+        return;
+    }
+    if (!isEpicMode && !boardIdVal) {
+        document.getElementById('jira-import-error-msg').style.display = '';
+        document.getElementById('jira-import-error-msg').textContent = 'Board ID를 입력해주세요.';
+        return;
+    }
+
+    // 재실행 시 executeJiraImport에서 재사용하도록 저장
+    jiraPreviewBoardId = boardIdVal;
+
     // 필터 숨기고 로딩 표시
     document.getElementById('jira-import-filter').style.display = 'none';
     document.getElementById('jira-import-loading').style.display = '';
@@ -6160,13 +6859,15 @@ async function startJiraPreview() {
 
     try {
         var body = {};
-        if (jiraPreviewCreatedAfter) {
-            body.createdAfter = jiraPreviewCreatedAfter;
-        }
-        if (jiraPreviewStatusFilter && jiraPreviewStatusFilter.length > 0) {
-            body.statusFilter = jiraPreviewStatusFilter;
-        }
-        var res = await apiCall('/api/v1/projects/' + jiraImportProjectId + '/jira/preview', 'POST', body);
+        if (jiraPreviewCreatedAfter) body.createdAfter = jiraPreviewCreatedAfter;
+        if (jiraPreviewStatusFilter && jiraPreviewStatusFilter.length > 0) body.statusFilter = jiraPreviewStatusFilter;
+        if (isEpicMode) body.jiraEpicKey = epicKeyVal;
+        else if (boardIdVal) body.jiraBoardId = boardIdVal;
+
+        var previewUrl = isEpicMode
+            ? '/api/v1/jira/space/preview'
+            : '/api/v1/projects/' + jiraImportProjectId + '/jira/preview';
+        var res = await apiCall(previewUrl, 'POST', body);
         document.getElementById('jira-import-loading').style.display = 'none';
 
         if (!res.success) {
@@ -6268,9 +6969,9 @@ async function executeJiraImport() {
             selectedKeys.push(key);
             var row = cb.closest('tr');
             var projectSelect = row.querySelector('.jira-issue-project');
-            if (projectSelect) {
+            if (projectSelect && projectSelect.value) {
                 var pid = parseInt(projectSelect.value);
-                if (pid !== jiraImportProjectId) {
+                if (!isNaN(pid) && pid !== jiraImportProjectId) {
                     issueProjectMap[key] = pid;
                 }
             }
@@ -6280,7 +6981,17 @@ async function executeJiraImport() {
             importBody.issueProjectMap = issueProjectMap;
         }
 
-        var res = await apiCall('/api/v1/projects/' + jiraImportProjectId + '/jira/import', 'POST', importBody);
+        var isEpicMode = document.getElementById('jira-import-source-epic').checked;
+        if (isEpicMode) {
+            importBody.jiraEpicKey = document.getElementById('jira-import-epic-key').value.trim();
+            importBody.defaultProjectId = jiraImportProjectId;
+        } else if (jiraPreviewBoardId) {
+            importBody.jiraBoardId = jiraPreviewBoardId;
+        }
+        var importUrl = isEpicMode
+            ? '/api/v1/jira/space/import'
+            : '/api/v1/projects/' + jiraImportProjectId + '/jira/import';
+        var res = await apiCall(importUrl, 'POST', importBody);
         document.getElementById('jira-import-preview').style.display = 'none';
         executeBtn.style.display = 'none';
 
@@ -6716,3 +7427,128 @@ document.addEventListener('DOMContentLoaded', function() {
     window.addEventListener('hashchange', handleHashChange);
     handleHashChange();
 });
+
+// ---- 일정 계산 ----
+
+async function saveProjectMdOverride(val) {
+    var projectId = currentDetailProjectId;
+    if (!projectId) return;
+    var overrideVal = (val && parseFloat(val) > 0) ? parseFloat(val) : null;
+    try {
+        var projRes = await apiCall('/api/v1/projects/' + projectId);
+        var p = (projRes.success && projRes.data) ? projRes.data : {};
+        var body = {
+            name: p.name, projectType: p.projectType, description: p.description,
+            startDate: p.startDate || null, endDate: p.endDate || null,
+            status: p.status, jiraBoardId: p.jiraBoardId || null,
+            jiraEpicKey: p.jiraEpicKey || null,
+            totalManDaysOverride: overrideVal,
+            pplId: p.pplId || null, eplId: p.eplId || null,
+            quarter: p.quarter || null
+        };
+        var res = await apiCall('/api/v1/projects/' + projectId, 'PUT', body);
+        if (res.success) {
+            window._currentDetailProject = res.data;
+            showToast('Override MD가 저장되었습니다.', 'success');
+        }
+    } catch (e) { showToast('저장 실패', 'error'); }
+}
+
+function toggleAllScheduleCb(masterCb) {
+    document.querySelectorAll('.proj-schedule-cb').forEach(function(cb) { cb.checked = masterCb.checked; });
+    updateScheduleCalcBtn();
+}
+
+function updateScheduleCalcBtn() {
+    var checked = document.querySelectorAll('.proj-schedule-cb:checked');
+    var btn = document.getElementById('proj-schedule-calc-btn');
+    var countEl = document.getElementById('proj-schedule-count');
+    if (btn) btn.style.display = checked.length > 0 ? '' : 'none';
+    if (countEl) countEl.textContent = checked.length;
+    var masterCb = document.getElementById('proj-schedule-select-all');
+    var total = document.querySelectorAll('.proj-schedule-cb').length;
+    if (masterCb) masterCb.checked = (total > 0 && checked.length === total);
+}
+
+async function executeScheduleCalc() {
+    var checkedCbs = document.querySelectorAll('.proj-schedule-cb:checked');
+    if (checkedCbs.length === 0) { showToast('프로젝트를 선택해주세요.', 'warning'); return; }
+    var projectIds = [];
+    checkedCbs.forEach(function(cb) { projectIds.push(parseInt(cb.value)); });
+
+    var modal = new bootstrap.Modal(document.getElementById('scheduleCalcModal'));
+    document.getElementById('schedule-calc-loading').style.display = '';
+    document.getElementById('schedule-calc-result').innerHTML = '';
+    document.getElementById('schedule-calc-error').style.display = 'none';
+    modal.show();
+
+    try {
+        var res = await apiCall('/api/v1/projects/schedule-calculate', 'POST', { projectIds: projectIds });
+        document.getElementById('schedule-calc-loading').style.display = 'none';
+        if (!res.success) {
+            document.getElementById('schedule-calc-error').style.display = '';
+            document.getElementById('schedule-calc-error').textContent = res.message || '일정 계산 실패';
+            return;
+        }
+        renderScheduleCalcResult(res.data);
+    } catch (e) {
+        document.getElementById('schedule-calc-loading').style.display = 'none';
+        document.getElementById('schedule-calc-error').style.display = '';
+        document.getElementById('schedule-calc-error').textContent = '일정 계산 중 오류가 발생했습니다.';
+    }
+}
+
+function renderScheduleCalcResult(data) {
+    var html = '<table class="table table-bordered table-sm">';
+    html += '<thead class="table-light"><tr>';
+    html += '<th>프로젝트</th><th>시작일</th><th>개발종료</th><th>개발소요(일)</th>';
+    html += '<th>QA 시작</th><th>QA 종료</th><th>QA(일)</th><th>론치일</th>';
+    html += '<th>총 MD</th><th>BE</th><th>QA</th>';
+    html += '</tr></thead><tbody>';
+    data.forEach(function(r) {
+        var rowStyle = r.fixedSchedule ? ' style="background:#f8f9fa;"' : '';
+        html += '<tr' + rowStyle + '>';
+        html += '<td><strong>' + escapeHtml(r.projectName) + '</strong>';
+        if (r.fixedSchedule) html += ' <span class="badge bg-info" style="font-size:0.65rem;">고정</span>';
+        html += '</td>';
+        html += '<td>' + formatDateShort(r.startDate) + '</td>';
+        html += '<td>' + formatDateShort(r.devEndDate) + '</td>';
+        html += '<td class="text-center">' + (r.devDays || 0) + '</td>';
+        html += '<td>' + (r.qaStartDate ? formatDateShort(r.qaStartDate) : '-') + '</td>';
+        html += '<td>' + (r.qaEndDate ? formatDateShort(r.qaEndDate) : '-') + '</td>';
+        html += '<td class="text-center">' + (r.qaDays || '-') + '</td>';
+        html += '<td><strong>' + formatDateShort(r.launchDate) + '</strong></td>';
+        html += '<td class="text-center">' + r.totalMd + '</td>';
+        html += '<td class="text-center">' + r.beCount + '명';
+        if (r.beMembers && r.beMembers.length > 0) {
+            html += '<br><small class="text-muted">' + r.beMembers.map(function(m) { return m.name + '(' + m.capacity + ')'; }).join(', ') + '</small>';
+        }
+        if (r.busyMembers && r.busyMembers.length > 0) {
+            html += '<br><small class="text-danger" style="font-size:0.7rem;">투입불가: ' + r.busyMembers.map(function(m) { return m.name; }).join(', ') + '</small>';
+        }
+        html += '</td>';
+        html += '<td class="text-center">' + r.qaCount + '명';
+        if (r.qaMembers && r.qaMembers.length > 0) {
+            html += '<br><small class="text-muted">' + r.qaMembers.map(function(m) { return m.name; }).join(', ') + '</small>';
+        }
+        html += '</td>';
+        html += '</tr>';
+        if (r.warning) {
+            var warningText = escapeHtml(r.warning).replace(/(\d{4}-\d{2}-\d{2})/g, function(m) { return formatDateShort(m); });
+            html += '<tr><td colspan="11" class="text-warning" style="font-size:0.8rem; background:#fff8e1;"><i class="bi bi-exclamation-triangle-fill"></i> ' + escapeHtml(r.projectName) + ': ' + warningText + '</td></tr>';
+        }
+    });
+    html += '</tbody></table>';
+
+    // 요약
+    if (data.length > 0) {
+        var firstStart = data[0].startDate;
+        var lastLaunch = data[data.length - 1].launchDate;
+        html += '<div class="mt-2 p-2 bg-light rounded" style="font-size:0.85rem;">';
+        html += '<strong>전체 일정:</strong> ' + formatDateShort(firstStart) + ' ~ ' + formatDateShort(lastLaunch);
+        var totalMdSum = data.reduce(function(s, r) { return s + parseFloat(r.totalMd || 0); }, 0);
+        html += ' | 총 공수: ' + totalMdSum + ' MD';
+        html += '</div>';
+    }
+    document.getElementById('schedule-calc-result').innerHTML = html;
+}

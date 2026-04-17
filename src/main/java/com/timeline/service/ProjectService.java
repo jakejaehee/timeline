@@ -1,6 +1,7 @@
 package com.timeline.service;
 
 import com.timeline.domain.entity.*;
+import com.timeline.domain.enums.MemberRole;
 import com.timeline.domain.enums.TaskStatus;
 import com.timeline.domain.repository.*;
 import com.timeline.dto.DomainSystemDto;
@@ -12,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -51,11 +53,46 @@ public class ProjectService {
                         row -> (Long) row[1]
                 ));
 
+        // 프로젝트별 총 공수(MD) 합계 일괄 조회 (TODO, IN_PROGRESS만)
+        List<TaskStatus> activeStatuses = List.of(TaskStatus.TODO, TaskStatus.IN_PROGRESS);
+        Map<Long, BigDecimal> manDaysMap = taskRepository.sumManDaysByProjectGrouped(activeStatuses).stream()
+                .collect(Collectors.toMap(
+                        row -> (Long) row[0],
+                        row -> (row[1] instanceof BigDecimal) ? (BigDecimal) row[1] : new BigDecimal(row[1].toString())
+                ));
+
+        // 프로젝트별 BE 멤버 수 일괄 조회
+        Map<Long, Long> beCountMap = projectMemberRepository.countByProjectIdAndRoleGrouped(MemberRole.BE).stream()
+                .collect(Collectors.toMap(
+                        row -> (Long) row[0],
+                        row -> (Long) row[1]
+                ));
+
+        // 프로젝트별 BE 캐파 합계 일괄 조회
+        Map<Long, BigDecimal> beCapacityMap = projectMemberRepository.sumCapacityByProjectIdAndRoleGrouped(MemberRole.BE).stream()
+                .collect(Collectors.toMap(
+                        row -> (Long) row[0],
+                        row -> (row[1] instanceof BigDecimal) ? (BigDecimal) row[1] : new BigDecimal(row[1].toString())
+                ));
+
+        // 프로젝트별 BE 멤버 목록 일괄 조회
+        Map<Long, List<java.util.Map<String, Object>>> beMembersMap = new java.util.HashMap<>();
+        projectMemberRepository.findAll().stream()
+                .filter(pm -> pm.getMember().getRole() == MemberRole.BE && Boolean.TRUE.equals(pm.getMember().getActive()))
+                .forEach(pm -> beMembersMap.computeIfAbsent(pm.getProject().getId(), k -> new java.util.ArrayList<>())
+                        .add(java.util.Map.of("name", pm.getMember().getName(), "capacity", pm.getMember().getCapacity())));
+
         return projectRepository.findAllByOrderBySortOrderAscCreatedAtDesc().stream()
                 .map(project -> {
                     LocalDate expectedEndDate = calculateExpectedEndDate(project.getId());
                     long memberCount = memberCountMap.getOrDefault(project.getId(), 0L);
-                    return ProjectDto.Response.from(project, memberCount, expectedEndDate);
+                    BigDecimal taskManDays = manDaysMap.getOrDefault(project.getId(), BigDecimal.ZERO);
+                    BigDecimal totalManDays = (project.getTotalManDaysOverride() != null) ? project.getTotalManDaysOverride() : taskManDays;
+                    long beCount = beCountMap.getOrDefault(project.getId(), 0L);
+                    BigDecimal beCapacity = beCapacityMap.getOrDefault(project.getId(), BigDecimal.ZERO);
+                    BigDecimal estimatedDays = calculateEstimatedDays(totalManDays, beCapacity);
+                    List<java.util.Map<String, Object>> beMembers = beMembersMap.getOrDefault(project.getId(), java.util.List.of());
+                    return ProjectDto.Response.from(project, memberCount, expectedEndDate, totalManDays, beCount, estimatedDays, beMembers);
                 })
                 .collect(Collectors.toList());
     }
@@ -96,7 +133,12 @@ public class ProjectService {
                 .description(request.getDescription())
                 .startDate(request.getStartDate())
                 .endDate(request.getEndDate())
-                .jiraBoardId(validateJiraBoardId(request.getJiraBoardId()));
+                .jiraBoardId(validateJiraBoardId(request.getJiraBoardId()))
+                .jiraEpicKey(request.getJiraEpicKey())
+                .totalManDaysOverride(request.getTotalManDaysOverride())
+                .ppl(request.getPplId() != null ? memberRepository.findById(request.getPplId()).orElse(null) : null)
+                .epl(request.getEplId() != null ? memberRepository.findById(request.getEplId()).orElse(null) : null)
+                .quarter(request.getQuarter());
 
         // status가 null이면 @Builder.Default(PLANNING)가 적용됨
         if (request.getStatus() != null) {
@@ -125,6 +167,11 @@ public class ProjectService {
         project.setStartDate(request.getStartDate());
         project.setEndDate(request.getEndDate());
         project.setJiraBoardId(validateJiraBoardId(request.getJiraBoardId()));
+        project.setJiraEpicKey(request.getJiraEpicKey());
+        project.setTotalManDaysOverride(request.getTotalManDaysOverride());
+        project.setPpl(request.getPplId() != null ? memberRepository.findById(request.getPplId()).orElse(null) : null);
+        project.setEpl(request.getEplId() != null ? memberRepository.findById(request.getEplId()).orElse(null) : null);
+        project.setQuarter(request.getQuarter());
         if (request.getStatus() != null) {
             project.setStatus(request.getStatus());
         }
@@ -296,6 +343,16 @@ public class ProjectService {
         return taskRepository.findMaxEndDateByProjectId(projectId, INACTIVE_STATUSES);
     }
 
+    /**
+     * 예상 소요 일수 = 총 공수(MD) / BE 캐파 합계
+     * BE가 없거나 캐파가 0이면 null 반환
+     */
+    private BigDecimal calculateEstimatedDays(BigDecimal totalManDays, BigDecimal beCapacity) {
+        if (totalManDays == null || totalManDays.compareTo(BigDecimal.ZERO) == 0) return null;
+        if (beCapacity == null || beCapacity.compareTo(BigDecimal.ZERO) == 0) return null;
+        return totalManDays.divide(beCapacity, 1, java.math.RoundingMode.CEILING);
+    }
+
     // ---- 마일스톤 관리 ----
 
     public List<Map<String, Object>> getMilestones(Long projectId) {
@@ -308,14 +365,23 @@ public class ProjectService {
     @Transactional
     public Map<String, Object> createMilestone(Long projectId, Map<String, Object> body) {
         Project project = findProjectById(projectId);
-        ProjectMilestone milestone = ProjectMilestone.builder()
+        var builder = ProjectMilestone.builder()
                 .project(project)
                 .name((String) body.get("name"))
-                .startDate(LocalDate.parse((String) body.get("startDate")))
-                .endDate(LocalDate.parse((String) body.get("endDate")))
-                .sortOrder(body.get("sortOrder") != null ? ((Number) body.get("sortOrder")).intValue() : null)
-                .build();
-        ProjectMilestone saved = projectMilestoneRepository.save(milestone);
+                .sortOrder(body.get("sortOrder") != null ? ((Number) body.get("sortOrder")).intValue() : null);
+        if (body.get("type") != null && !((String) body.get("type")).isBlank()) {
+            builder.type(com.timeline.domain.enums.MilestoneType.valueOf((String) body.get("type")));
+        }
+        if (body.get("days") != null) {
+            builder.days(((Number) body.get("days")).intValue());
+        }
+        if (body.get("startDate") != null && !((String) body.get("startDate")).isBlank()) {
+            builder.startDate(LocalDate.parse((String) body.get("startDate")));
+        }
+        if (body.get("endDate") != null && !((String) body.get("endDate")).isBlank()) {
+            builder.endDate(LocalDate.parse((String) body.get("endDate")));
+        }
+        ProjectMilestone saved = projectMilestoneRepository.save(builder.build());
         log.info("마일스톤 생성: projectId={}, name={}", projectId, saved.getName());
         return milestoneToMap(saved);
     }
@@ -325,8 +391,21 @@ public class ProjectService {
         ProjectMilestone milestone = projectMilestoneRepository.findById(milestoneId)
                 .orElseThrow(() -> new EntityNotFoundException("마일스톤을 찾을 수 없습니다. id=" + milestoneId));
         if (body.containsKey("name")) milestone.setName((String) body.get("name"));
-        if (body.containsKey("startDate")) milestone.setStartDate(LocalDate.parse((String) body.get("startDate")));
-        if (body.containsKey("endDate")) milestone.setEndDate(LocalDate.parse((String) body.get("endDate")));
+        if (body.containsKey("type")) {
+            String typeStr = (String) body.get("type");
+            milestone.setType(typeStr != null && !typeStr.isBlank() ? com.timeline.domain.enums.MilestoneType.valueOf(typeStr) : null);
+        }
+        if (body.containsKey("days")) {
+            milestone.setDays(body.get("days") != null ? ((Number) body.get("days")).intValue() : null);
+        }
+        if (body.containsKey("startDate")) {
+            String sd = (String) body.get("startDate");
+            milestone.setStartDate(sd != null && !sd.isBlank() ? LocalDate.parse(sd) : null);
+        }
+        if (body.containsKey("endDate")) {
+            String ed = (String) body.get("endDate");
+            milestone.setEndDate(ed != null && !ed.isBlank() ? LocalDate.parse(ed) : null);
+        }
         if (body.containsKey("sortOrder")) milestone.setSortOrder(body.get("sortOrder") != null ? ((Number) body.get("sortOrder")).intValue() : null);
         ProjectMilestone saved = projectMilestoneRepository.save(milestone);
         log.info("마일스톤 수정: id={}, name={}", milestoneId, saved.getName());
@@ -340,12 +419,14 @@ public class ProjectService {
     }
 
     private Map<String, Object> milestoneToMap(ProjectMilestone m) {
-        return Map.of(
-                "id", m.getId(),
-                "name", m.getName(),
-                "startDate", m.getStartDate().toString(),
-                "endDate", m.getEndDate().toString(),
-                "sortOrder", m.getSortOrder() != null ? m.getSortOrder() : 0
-        );
+        var map = new java.util.LinkedHashMap<String, Object>();
+        map.put("id", m.getId());
+        map.put("name", m.getName());
+        map.put("type", m.getType() != null ? m.getType().name() : null);
+        map.put("startDate", m.getStartDate() != null ? m.getStartDate().toString() : null);
+        map.put("endDate", m.getEndDate() != null ? m.getEndDate().toString() : null);
+        map.put("days", m.getDays());
+        map.put("sortOrder", m.getSortOrder() != null ? m.getSortOrder() : 0);
+        return map;
     }
 }

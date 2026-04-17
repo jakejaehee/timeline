@@ -7,8 +7,10 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 프로젝트 요청/응답 DTO
@@ -27,6 +29,11 @@ public class ProjectDto {
         private LocalDate endDate;
         private ProjectStatus status;
         private String jiraBoardId;
+        private String jiraEpicKey;
+        private BigDecimal totalManDaysOverride;
+        private Long pplId;
+        private Long eplId;
+        private String quarter;
     }
 
     @Data
@@ -43,9 +50,20 @@ public class ProjectDto {
         private LocalDate expectedEndDate;    // 계산값: 프로젝트 내 모든 태스크의 최대 endDate
         private Boolean isDelayed;            // 계산값: expectedEndDate > endDate
         private ProjectStatus status;
+        private BigDecimal totalManDays;
+        private BigDecimal totalManDaysOverride;
+        private BigDecimal estimatedDays;         // 계산값: totalManDays / BE캐파합계
+        private Integer beCount;
+        private List<Map<String, Object>> beMembers;
         private Integer memberCount;
         private Integer sortOrder;
         private String jiraBoardId;
+        private String jiraEpicKey;
+        private Long pplId;
+        private String pplName;
+        private Long eplId;
+        private String eplName;
+        private String quarter;
         private List<MemberDto.Response> members;
         private List<DomainSystemDto.Response> domainSystems;
 
@@ -59,6 +77,13 @@ public class ProjectDto {
                     .endDate(project.getEndDate())
                     .status(project.getStatus())
                     .jiraBoardId(project.getJiraBoardId())
+                    .jiraEpicKey(project.getJiraEpicKey())
+                    .totalManDaysOverride(project.getTotalManDaysOverride())
+                    .pplId(project.getPpl() != null ? project.getPpl().getId() : null)
+                    .pplName(project.getPpl() != null ? project.getPpl().getName() : null)
+                    .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
+                    .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
+                    .quarter(project.getQuarter())
                     .sortOrder(project.getSortOrder())
                     .build();
         }
@@ -75,6 +100,13 @@ public class ProjectDto {
                     .endDate(project.getEndDate())
                     .status(project.getStatus())
                     .jiraBoardId(project.getJiraBoardId())
+                    .jiraEpicKey(project.getJiraEpicKey())
+                    .totalManDaysOverride(project.getTotalManDaysOverride())
+                    .pplId(project.getPpl() != null ? project.getPpl().getId() : null)
+                    .pplName(project.getPpl() != null ? project.getPpl().getName() : null)
+                    .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
+                    .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
+                    .quarter(project.getQuarter())
                     .sortOrder(project.getSortOrder())
                     .members(members)
                     .domainSystems(domainSystems)
@@ -84,7 +116,9 @@ public class ProjectDto {
         /**
          * 목록 조회용: memberCount + expectedEndDate (members/domainSystems 없음)
          */
-        public static Response from(Project project, long memberCount, LocalDate expectedEndDate) {
+        public static Response from(Project project, long memberCount, LocalDate expectedEndDate,
+                                     BigDecimal totalManDays, long beCount, BigDecimal estimatedDays,
+                                     List<Map<String, Object>> beMembers) {
             Boolean delayed = null;
             if (expectedEndDate != null && project.getEndDate() != null) {
                 delayed = expectedEndDate.isAfter(project.getEndDate());
@@ -100,8 +134,19 @@ public class ProjectDto {
                     .isDelayed(delayed)
                     .status(project.getStatus())
                     .jiraBoardId(project.getJiraBoardId())
+                    .jiraEpicKey(project.getJiraEpicKey())
+                    .totalManDaysOverride(project.getTotalManDaysOverride())
+                    .pplId(project.getPpl() != null ? project.getPpl().getId() : null)
+                    .pplName(project.getPpl() != null ? project.getPpl().getName() : null)
+                    .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
+                    .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
+                    .quarter(project.getQuarter())
                     .sortOrder(project.getSortOrder())
                     .memberCount((int) memberCount)
+                    .beCount((int) beCount)
+                    .beMembers(beMembers)
+                    .totalManDays(totalManDays)
+                    .estimatedDays(estimatedDays)
                     .build();
         }
 
@@ -124,6 +169,13 @@ public class ProjectDto {
                     .isDelayed(delayed)
                     .status(project.getStatus())
                     .jiraBoardId(project.getJiraBoardId())
+                    .jiraEpicKey(project.getJiraEpicKey())
+                    .totalManDaysOverride(project.getTotalManDaysOverride())
+                    .pplId(project.getPpl() != null ? project.getPpl().getId() : null)
+                    .pplName(project.getPpl() != null ? project.getPpl().getName() : null)
+                    .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
+                    .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
+                    .quarter(project.getQuarter())
                     .sortOrder(project.getSortOrder())
                     .members(members)
                     .domainSystems(domainSystems)

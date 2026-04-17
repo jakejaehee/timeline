@@ -233,6 +233,12 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             @Param("projectId") Long projectId,
             @Param("excludeStatuses") List<TaskStatus> excludeStatuses);
 
+    /**
+     * 프로젝트별 manDays 합계 조회 (N+1 방지용 일괄 쿼리)
+     */
+    @Query("SELECT t.project.id, COALESCE(SUM(t.manDays), 0) FROM Task t WHERE t.status IN :statuses GROUP BY t.project.id")
+    List<Object[]> sumManDaysByProjectGrouped(@Param("statuses") List<TaskStatus> statuses);
+
     List<Task> findByProjectId(Long projectId);
 
     List<Task> findByProjectIdAndStatus(Long projectId, TaskStatus status);

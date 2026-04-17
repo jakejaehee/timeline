@@ -56,15 +56,45 @@
         <div id="projects-section" class="section">
             <!-- 프로젝트 목록 뷰 -->
             <div id="project-list-view">
-                <div class="section-header">
+                <div class="section-header" style="margin-bottom:6px; padding-bottom:6px; border-bottom:none;">
                     <h2><i class="bi bi-folder"></i> 프로젝트</h2>
-                    <button class="btn btn-primary" onclick="showProjectModal()">
-                        <i class="bi bi-plus-lg"></i> 프로젝트 추가
-                    </button>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-warning" onclick="showJiraSpaceImportModal()">
+                            <i class="bi bi-cloud-download"></i> Jira Space 가져오기
+                        </button>
+                        <button class="btn btn-primary" onclick="showProjectModal()">
+                            <i class="bi bi-plus-lg"></i> 프로젝트 추가
+                        </button>
+                    </div>
                 </div>
-                <div class="d-flex align-items-center gap-2 mb-3" id="project-list-filter-bar">
-                    <span class="text-muted" style="font-size:0.85rem; white-space:nowrap;">상태 필터:</span>
-                    <div class="btn-group btn-group-sm" id="project-list-status-filter-group"></div>
+                <div class="mb-2" id="project-list-filter-bar">
+                    <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                        <input type="text" class="form-control form-control-sm" id="proj-filter-name" placeholder="프로젝트명 검색..." style="max-width:180px; font-size:0.8rem;" oninput="applyProjectListFilters()">
+                        <select class="form-select form-select-sm" id="proj-filter-ppl" style="max-width:130px; font-size:0.8rem;" onchange="applyProjectListFilters()">
+                            <option value="">PPL 전체</option>
+                        </select>
+                        <select class="form-select form-select-sm" id="proj-filter-epl" style="max-width:130px; font-size:0.8rem;" onchange="applyProjectListFilters()">
+                            <option value="">EPL 전체</option>
+                        </select>
+                        <div class="dropdown" id="proj-filter-type-dropdown">
+                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.8rem;" id="proj-filter-type-btn">유형</button>
+                            <div class="dropdown-menu p-2" style="min-width:160px; max-height:250px; overflow-y:auto; font-size:0.82rem;" id="proj-filter-type-menu"></div>
+                        </div>
+                        <div class="dropdown" id="proj-filter-quarter-dropdown">
+                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.8rem;" id="proj-filter-quarter-btn">분기</button>
+                            <div class="dropdown-menu p-2" style="min-width:140px; max-height:250px; overflow-y:auto; font-size:0.82rem;" id="proj-filter-quarter-menu"></div>
+                        </div>
+                        <div class="dropdown" id="proj-filter-status-dropdown">
+                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.8rem;" id="proj-filter-status-btn">상태</button>
+                            <div class="dropdown-menu p-2" style="min-width:140px; font-size:0.82rem;" id="proj-filter-status-menu"></div>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm" id="proj-sort-reset" style="display:none; font-size:0.78rem;" onclick="resetProjectListSort()">
+                            <i class="bi bi-arrow-counterclockwise"></i> 기본 순서
+                        </button>
+                        <button class="btn btn-primary btn-sm" id="proj-schedule-calc-btn" style="display:none; font-size:0.78rem;" onclick="executeScheduleCalc()">
+                            <i class="bi bi-calculator"></i> 일정 계산 (<span id="proj-schedule-count">0</span>)
+                        </button>
+                    </div>
                 </div>
                 <div class="card">
                     <div class="card-body">
@@ -72,21 +102,27 @@
                             <table class="table table-hover mb-0">
                                 <thead>
                                     <tr>
+                                        <th style="width:30px;"><input type="checkbox" id="proj-schedule-select-all" onclick="toggleAllScheduleCb(this)" title="전체 선택"></th>
                                         <th style="width:30px;"></th>
-                                        <th class="sortable-header" style="width:50px;" onclick="sortProjectList('sortOrder')">순서 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-sortOrder"></i></th>
+                                        <th style="width:30px;"></th>
+                                        <th style="width:30px;"></th>
                                         <th class="sortable-header" onclick="sortProjectList('name')">프로젝트명 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-name"></i></th>
+                                        <th>멤버</th>
+                                        <th>BE</th>
+                                        <th class="sortable-header" onclick="sortProjectList('totalManDays')">MD <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-totalManDays"></i></th>
+                                        <th class="sortable-header" onclick="sortProjectList('estimatedDays')">소요일 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-estimatedDays"></i></th>
                                         <th class="sortable-header" onclick="sortProjectList('startDate')">시작일 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-startDate"></i></th>
                                         <th class="sortable-header" onclick="sortProjectList('endDate')">론치일 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-endDate"></i></th>
+                                        <th>PPL</th>
+                                        <th>분기</th>
                                         <th class="sortable-header" onclick="sortProjectList('projectType')">유형 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-projectType"></i></th>
                                         <th class="sortable-header" onclick="sortProjectList('status')">상태 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-status"></i></th>
                                         <th>지연</th>
-                                        <th>멤버</th>
-                                        <th style="width:30px;"></th>
                                         <th class="text-center">액션</th>
                                     </tr>
                                 </thead>
                                 <tbody id="projects-table">
-                                    <tr><td colspan="11" class="text-center text-muted">로딩 중...</td></tr>
+                                    <tr><td colspan="15" class="text-center text-muted">로딩 중...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -108,8 +144,7 @@
                     </div>
                     <div class="d-flex gap-2">
                         <button class="btn btn-outline-warning btn-sm" id="jira-import-btn"
-                                onclick="showJiraImportModal(currentDetailProjectId)"
-                                style="display:none;">
+                                onclick="showJiraImportModal(currentDetailProjectId)">
                             <i class="bi bi-cloud-download"></i> Jira 가져오기
                         </button>
                         <button class="btn btn-outline-primary btn-sm" onclick="showProjectModal(currentDetailProjectId)">
@@ -155,7 +190,7 @@
                             </div>
                         </div>
                         <div id="proj-gantt-container" class="card">
-                            <div class="card-body p-0" style="overflow:auto; max-height:calc(100vh - 280px);">
+                            <div class="card-body p-0" style="overflow:auto; max-height:calc(100vh - 180px);">
                                 <div id="proj-gantt-chart">
                                     <div class="empty-state"><i class="bi bi-bar-chart-steps"></i><p>로딩 중...</p></div>
                                 </div>
@@ -172,7 +207,9 @@
                                     <thead>
                                         <tr>
                                             <th style="width:30px;"></th>
+                                            <th>유형</th>
                                             <th>이름</th>
+                                            <th>일수</th>
                                             <th>시작일</th>
                                             <th>종료일</th>
                                             <th class="text-center" style="width:60px;">액션</th>
@@ -187,8 +224,23 @@
                             <div class="card-body py-2">
                                 <div class="row g-2 align-items-end">
                                     <div class="col-auto">
+                                        <label class="form-label mb-0" style="font-size:0.8rem;">유형</label>
+                                        <select class="form-select form-select-sm" id="proj-ms-type" style="width:130px;">
+                                            <option value="">선택</option>
+                                            <option value="ANALYSIS">분석</option>
+                                            <option value="DESIGN">설계</option>
+                                            <option value="DEVELOPMENT">개발</option>
+                                            <option value="DEV_TEST">개발자테스트</option>
+                                            <option value="QA">QA</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-auto">
                                         <label class="form-label mb-0" style="font-size:0.8rem;">이름</label>
-                                        <input type="text" class="form-control form-control-sm" id="proj-ms-name" style="width:140px;" placeholder="예: 개발, QA">
+                                        <input type="text" class="form-control form-control-sm" id="proj-ms-name" style="width:200px;" placeholder="예: 1차 QA">
+                                    </div>
+                                    <div class="col-auto">
+                                        <label class="form-label mb-0" style="font-size:0.8rem;">일수</label>
+                                        <input type="number" class="form-control form-control-sm" id="proj-ms-days" style="width:70px;" min="1" placeholder="N">
                                     </div>
                                     <div class="col-auto">
                                         <label class="form-label mb-0" style="font-size:0.8rem;">시작일</label>
@@ -789,6 +841,7 @@
                             <option value="FE">FE</option>
                             <option value="QA">QA</option>
                             <option value="PM">PM</option>
+                            <option value="EM">EM</option>
                             <option value="PLACEHOLDER">PLACEHOLDER</option>
                         </select>
                     </div>
@@ -828,6 +881,10 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
+                    <div class="mb-3" style="position:relative;">
+                        <input type="text" class="form-control form-control-sm" id="proj-member-search" placeholder="멤버 이름 검색하여 추가..." oninput="filterProjMemberSearch()" autocomplete="off">
+                        <div id="proj-member-search-results" style="display:none; position:absolute; top:100%; left:0; right:0; z-index:1050; background:#fff; border:1px solid #dee2e6; border-radius:4px; box-shadow:0 4px 8px rgba(0,0,0,0.1); max-height:200px; overflow-y:auto;"></div>
+                    </div>
                     <div id="project-members-list"></div>
                 </div>
                 <div class="modal-footer">
@@ -922,12 +979,12 @@
                     </div>
                     <div class="row">
                         <div class="col-md-3 mb-3">
-                            <label for="project-start-date" class="form-label">시작일 <span class="text-danger">*</span></label>
-                            <input type="date" class="form-control" id="project-start-date" required>
+                            <label for="project-start-date" class="form-label">시작일</label>
+                            <input type="date" class="form-control" id="project-start-date">
                         </div>
                         <div class="col-md-3 mb-3">
-                            <label for="project-end-date" class="form-label">론치일 <span class="text-danger">*</span></label>
-                            <input type="date" class="form-control" id="project-end-date" required>
+                            <label for="project-end-date" class="form-label">론치일</label>
+                            <input type="date" class="form-control" id="project-end-date">
                         </div>
                         <div class="col-md-3 mb-3">
                             <label for="project-status" class="form-label">상태</label>
@@ -942,6 +999,34 @@
                             <label for="project-jira-board-id" class="form-label">Jira Board ID</label>
                             <input type="text" class="form-control" id="project-jira-board-id"
                                    placeholder="예: 123" maxlength="100">
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="project-jira-epic-key" class="form-label">Jira Epic Key</label>
+                            <input type="text" class="form-control" id="project-jira-epic-key"
+                                   placeholder="예: PROJ-123" maxlength="100">
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="project-total-md-override" class="form-label">총 MD (직접 입력)</label>
+                            <input type="number" class="form-control" id="project-total-md-override"
+                                   placeholder="미입력 시 태스크 합계" min="0" step="0.5">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-3 mb-3">
+                            <label for="project-quarter" class="form-label">분기</label>
+                            <input type="text" class="form-control" id="project-quarter" placeholder="예: 26Q1,26Q2" maxlength="200">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="project-ppl" class="form-label">PPL (Product Project Leader)</label>
+                            <select class="form-select" id="project-ppl">
+                                <option value="">선택 안함</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="project-epl" class="form-label">EPL (Engineering Project Leader)</label>
+                            <select class="form-select" id="project-epl">
+                                <option value="">선택 안함</option>
+                            </select>
                         </div>
                     </div>
                     <!-- 지연 경고 -->
@@ -991,7 +1076,7 @@
                     <!-- 2행: 담당자, 프로젝트, 도메인 시스템 -->
                     <div class="row">
                         <div class="col-md-4 mb-3">
-                            <label for="task-assignee" class="form-label">담당자 <span class="text-danger">*</span></label>
+                            <label for="task-assignee" class="form-label">담당자</label>
                             <select class="form-select" id="task-assignee">
                                 <option value="">선택하세요</option>
                             </select>
@@ -1003,7 +1088,7 @@
                             </select>
                         </div>
                         <div class="col-md-4 mb-3">
-                            <label for="task-domain-system" class="form-label">도메인 시스템 <span class="text-danger">*</span></label>
+                            <label for="task-domain-system" class="form-label">도메인 시스템</label>
                             <select class="form-select" id="task-domain-system">
                                 <option value="">선택하세요</option>
                             </select>
@@ -1012,8 +1097,8 @@
                     <!-- 3행: 공수, 시작일, 종료일 -->
                     <div class="row" id="task-dates-row">
                         <div class="col-md-4 mb-3">
-                            <label for="task-man-days" class="form-label">공수 (MD) <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" id="task-man-days" step="0.5" min="0.5" required>
+                            <label for="task-man-days" class="form-label">공수 (MD)</label>
+                            <input type="number" class="form-control" id="task-man-days" step="0.5" min="0">
                         </div>
                         <div class="col-md-4 mb-3" id="task-start-date-group">
                             <label for="task-start-date" class="form-label">시작일</label>
@@ -1159,8 +1244,126 @@
     </div>
 
     <!-- ==================== Jira Import 모달 ==================== -->
+    <!-- ==================== Jira Space Import 모달 ==================== -->
+    <div class="modal fade" id="jiraSpaceImportModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-cloud-download"></i> Jira Space 이슈 가져오기</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 1단계: 필터 -->
+                    <div id="jira-space-filter">
+                        <div class="mb-3">
+                            <label class="form-label">검색 대상 <span class="text-danger">*</span></label>
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="jira-space-source" id="jira-space-source-space" value="space" checked onchange="toggleJiraSpaceSource()">
+                                    <label class="form-check-label" for="jira-space-source-space">Space (프로젝트 키)</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="jira-space-source" id="jira-space-source-epic" value="epic" onchange="toggleJiraSpaceSource()">
+                                    <label class="form-check-label" for="jira-space-source-epic">Epic (하위 티켓)</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3" id="jira-space-key-group">
+                            <label class="form-label" id="jira-space-key-label">Jira 프로젝트 키 <small class="text-muted">(예: PROJ, SCM)</small></label>
+                            <input type="text" class="form-control" id="jira-space-project-key" style="max-width:250px;" placeholder="예: SCM">
+                        </div>
+                        <div class="mb-3" id="jira-space-epic-group" style="display:none;">
+                            <label class="form-label">Epic 키 <small class="text-muted">(예: PROJ-123)</small></label>
+                            <input type="text" class="form-control" id="jira-space-epic-key" style="max-width:250px;" placeholder="예: PROJ-123">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">생성일자 필터 <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="jira-space-created-after" style="max-width:250px;">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">상태 필터</label>
+                            <div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input jira-space-status-cb" type="checkbox" id="jira-space-status-todo" value="To Do" checked>
+                                    <label class="form-check-label" for="jira-space-status-todo">To Do</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input jira-space-status-cb" type="checkbox" id="jira-space-status-inprogress" value="In Progress">
+                                    <label class="form-check-label" for="jira-space-status-inprogress">In Progress</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input jira-space-status-cb" type="checkbox" id="jira-space-status-done" value="Done">
+                                    <label class="form-check-label" for="jira-space-status-done">Done</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" id="jira-space-status-all" value="ALL" onchange="if(this.checked){document.querySelectorAll('.jira-space-status-cb').forEach(function(c){c.checked=false;})}">
+                                    <label class="form-check-label" for="jira-space-status-all">전체</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">기본 프로젝트 <small class="text-muted">(미지정 시 '미분류' 프로젝트에 자동 배정)</small></label>
+                            <select class="form-select" id="jira-space-default-project" style="max-width:300px;"></select>
+                        </div>
+                        <button type="button" class="btn btn-primary" onclick="startJiraSpacePreview()">
+                            <i class="bi bi-search"></i> 미리보기
+                        </button>
+                    </div>
+                    <!-- 2단계: 로딩 -->
+                    <div id="jira-space-loading" class="text-center p-3" style="display:none;">
+                        <div class="spinner-border text-primary"></div>
+                        <p class="mt-2 text-muted">Jira Space에서 이슈를 불러오는 중...</p>
+                    </div>
+                    <!-- 3단계: 미리보기 -->
+                    <div id="jira-space-preview" style="display:none;">
+                        <div class="d-flex gap-3 mb-3">
+                            <span class="badge bg-success">신규 생성: <span id="jira-space-create">0</span></span>
+                            <span class="badge bg-warning text-dark">업데이트: <span id="jira-space-update">0</span></span>
+                            <span class="badge bg-info">전체: <span id="jira-space-total">0</span></span>
+                        </div>
+                        <div class="table-responsive" style="max-height:400px; overflow-y:auto;">
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th style="width:30px;"><input type="checkbox" id="jira-space-select-all" checked onchange="document.querySelectorAll('#jira-space-table .jira-sp-cb').forEach(function(c){c.checked=this.checked}.bind(this));updateJiraSpaceSelectedCount()"></th>
+                                        <th>Jira Key</th>
+                                        <th>요약</th>
+                                        <th>액션</th>
+                                        <th>상태</th>
+                                        <th>담당자</th>
+                                        <th>프로젝트</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jira-space-table"></tbody>
+                            </table>
+                        </div>
+                        <div class="mt-2">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('jira-space-filter').style.display='';document.getElementById('jira-space-preview').style.display='none';document.getElementById('jira-space-exec-btn').style.display='none';">
+                                <i class="bi bi-arrow-left"></i> 다시 필터 설정
+                            </button>
+                        </div>
+                    </div>
+                    <!-- 4단계: 결과 -->
+                    <div id="jira-space-result" style="display:none;">
+                        <div class="alert alert-success" id="jira-space-result-summary"></div>
+                        <div id="jira-space-result-errors" style="display:none;">
+                            <div class="alert alert-warning"><strong>오류:</strong><ul id="jira-space-error-list" class="mb-0 mt-1"></ul></div>
+                        </div>
+                    </div>
+                    <div id="jira-space-error-msg" class="alert alert-danger" style="display:none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
+                    <button type="button" class="btn btn-warning" id="jira-space-exec-btn" onclick="executeJiraSpaceImport()" style="display:none;">
+                        <i class="bi bi-cloud-download"></i> 가져오기 실행
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal fade" id="jiraImportModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-xl">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="bi bi-cloud-download"></i> Jira 이슈 가져오기</h5>
@@ -1169,6 +1372,27 @@
                 <div class="modal-body">
                     <!-- 1단계: 필터 설정 -->
                     <div id="jira-import-filter">
+                        <div class="mb-3">
+                            <label class="form-label">검색 대상</label>
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="jira-import-source" id="jira-import-source-epic" value="epic" checked onchange="toggleJiraImportSource()">
+                                    <label class="form-check-label" for="jira-import-source-epic">Epic (하위 티켓)</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="jira-import-source" id="jira-import-source-board" value="board" onchange="toggleJiraImportSource()">
+                                    <label class="form-check-label" for="jira-import-source-board">Board</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3" id="jira-import-epic-group">
+                            <label class="form-label">Epic 키 <small class="text-muted">(프로젝트에 설정된 Epic 기본값)</small></label>
+                            <input type="text" class="form-control" id="jira-import-epic-key" style="max-width:250px;" placeholder="예: PROJ-123">
+                        </div>
+                        <div class="mb-3" id="jira-import-board-group" style="display:none;">
+                            <label class="form-label">Board ID <small class="text-muted">(Jira Board 번호)</small></label>
+                            <input type="text" class="form-control" id="jira-import-board-id" style="max-width:250px;" placeholder="예: 123">
+                        </div>
                         <div class="mb-3">
                             <label for="jira-filter-created-after" class="form-label">
                                 생성일자 필터 <span class="text-danger">*</span> <small class="text-muted">(이 날짜 이후 생성된 이슈만 가져옵니다)</small>
@@ -1276,11 +1500,31 @@
         </div>
     </div>
 
+    <!-- 일정 계산 결과 모달 -->
+    <div class="modal fade" id="scheduleCalcModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-calculator"></i> 일정 계산 결과</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="schedule-calc-loading" class="text-center p-3" style="display:none;">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p class="mt-2 text-muted">일정 계산 중...</p>
+                    </div>
+                    <div id="schedule-calc-result"></div>
+                    <div id="schedule-calc-error" class="alert alert-danger" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
-    <script src="/js/app.js?v=20260413x"></script>
+    <script src="/js/app.js?v=20260417b"></script>
 </body>
 </html>

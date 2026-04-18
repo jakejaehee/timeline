@@ -8,7 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <link rel="stylesheet" href="/css/styles.css?v=20260413t">
+    <link rel="stylesheet" href="/css/styles.css?v=20260419h">
 </head>
 <body>
     <!-- 좌측 사이드바 -->
@@ -221,7 +221,7 @@
                                 <div class="row g-2 align-items-end">
                                     <div class="col-auto">
                                         <label class="form-label mb-0" style="font-size:0.8rem;">유형</label>
-                                        <select class="form-select form-select-sm" id="proj-ms-type" style="width:130px;">
+                                        <select class="form-select form-select-sm" id="proj-ms-type" style="width:130px;" onchange="onMsTypeChange(this.value)">
                                             <option value="">선택</option>
                                             <option value="ANALYSIS">분석</option>
                                             <option value="DESIGN">설계</option>
@@ -245,6 +245,24 @@
                                     <div class="col-auto">
                                         <label class="form-label mb-0" style="font-size:0.8rem;">종료일</label>
                                         <input type="date" class="form-control form-control-sm" id="proj-ms-end">
+                                    </div>
+                                    <div class="col-auto" id="proj-ms-qa-wrap" style="display:none;">
+                                        <label class="form-label mb-0" style="font-size:0.8rem;">QA 담당자</label>
+                                        <div class="qa-assignee-cell" id="proj-ms-qa-cell">
+                                            <div class="d-flex flex-wrap gap-1 mb-1" id="proj-ms-qa-badges"></div>
+                                            <div class="position-relative">
+                                                <input type="text"
+                                                       class="form-control form-control-sm"
+                                                       id="proj-ms-qa-search"
+                                                       placeholder="멤버 검색..."
+                                                       style="width:150px;"
+                                                       autocomplete="off">
+                                            </div>
+                                            <div class="list-group position-absolute qa-assignee-results"
+                                                 id="proj-ms-qa-results"
+                                                 style="z-index:1050; max-height:150px; overflow-y:auto; display:none; width:200px;">
+                                            </div>
+                                        </div>
                                     </div>
                                     <div class="col-auto">
                                         <button class="btn btn-primary btn-sm" onclick="addProjectMilestone()"><i class="bi bi-plus-lg"></i> 추가</button>
@@ -1628,6 +1646,6 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
-    <script src="/js/app.js?v=20260419c"></script>
+    <script src="/js/app.js?v=20260419h"></script>
 </body>
 </html>

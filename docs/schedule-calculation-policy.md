@@ -3,7 +3,10 @@
 ## 1. 기본 원칙 (Principles)
 
 ### P1. 순차 계산 원칙
-프로젝트는 **sortOrder 순서대로** 순차 계산한다. 앞 프로젝트의 계산 결과(론치일, 멤버 투입 기간)가 뒤 프로젝트의 입력값으로 사용된다.
+프로젝트 계산은 기본적으로 **sortOrder 순서**를 사용하되, 최종 반영은 **시간축(launchDate) 재계산**을 통해 보정한다.
+- 1차 계산: sortOrder 순
+- 2차 계산: 1차 결과의 launchDate 시간순
+- 목적: 정렬상 뒤 프로젝트라도 시간상 먼저 끝나면 해당 멤버 가용성을 다음 계산에 먼저 반영
 
 ### P2. 영업일 원칙
 모든 일정은 **영업일 기준**으로 계산한다.
@@ -26,6 +29,12 @@
 - 명시적 멤버 할당 > 자동 투입
 - 명시적 시작일/종료일 > 자동 계산 일자
 - `totalMdOverride` > 태스크 MD 합산
+- 특히 고정 일정(`startDate`, `endDate` 모두 지정)은 리소스 최적화보다 우선하며, 자동 계산으로 앞당기거나 늦추지 않는다
+
+### P6. 유휴 리소스 즉시 투입 원칙
+자동 계산 일정(시작일/론치일 미지정)에서는 **유효 리소스를 최대한 빠르게 투입**한다.
+- 일부 멤버가 바빠도, 투입 후보 중 유휴 멤버가 있으면 프로젝트는 즉시 시작 가능
+- 시작일 fallback은 "모든 멤버가 비는 시점(max)"이 아니라 **최조기 가용 시점(min)** 기준
 
 ---
 
@@ -45,7 +54,7 @@
 |------|------|------|
 | **고정 일정** (fixedSchedule) | startDate ≠ null AND endDate ≠ null | 시작일/론치일 고정, 기간 부족/여유 경고 |
 | **반고정 일정** | startDate ≠ null XOR endDate ≠ null | 지정된 값 사용, 나머지 자동 계산 |
-| **자동 일정** | startDate == null AND endDate == null | 시작일/론치일 모두 자동 계산 |
+| **자동 일정** | startDate == null AND endDate == null | 시작일/론치일 모두 자동 계산, 유휴 리소스 즉시 투입 |
 
 ### 2.3 멤버 할당 규칙
 
@@ -100,7 +109,6 @@ ELSE
 ```
 겹치는 바쁜 기간 중 가장 늦은 종료일 = latestEnd
 IF latestEnd == null → 즉시 가용 (null 반환)
-IF latestEnd < projStart → 즉시 가용 (null 반환)
 ELSE → getNextBusinessDay(latestEnd) 반환
 ```
 
@@ -166,10 +174,12 @@ REPEAT (최대 5회):
 ```
 IF fixedSchedule → project.startDate
 ELSE IF project.startDate ≠ null → project.startDate
-ELSE IF beMembers 비어있지 않음 → min(beMembers의 queueStartDate)
-ELSE (0 MD 등)
-    → memberBusyPeriods에서 스쿼드 멤버 풀의 max(period[1])
-    → getNextBusinessDay(max period[1])
+ELSE IF beMembers 비어있지 않음
+    → q = min(beMembers의 queueStartDate)
+    → IF q != null THEN startDate = q
+      ELSE startDate = min(beMembers별 busyPeriod 기반 가용일)
+ELSE (0 MD 등, beMembers 비어있음)
+    → memberBusyPeriods에서 스쿼드 멤버 풀의 max(period[1]) 다음 영업일
     → 없으면 today
 
 모든 경우: ensureBusinessDay(startDate) 적용
@@ -230,7 +240,7 @@ totalMd가 0인 프로젝트는 공수 미산정 상태를 의미한다.
 |------|------|
 | 자동 멤버 투입 | 0명 (자동 투입 블록 미진입) |
 | 수동 지정 멤버 | 있으면 그대로 표시 |
-| devEndDate | null (계산 불가) |
+| devEndDate | `devCalcStart` (=`ensureBusinessDay(max(startDate,today))`) |
 | launchDate | null (계산 불가) |
 | BE 추가 투입 경고 | 미생성 |
 | busy period 갱신 | 미수행 (launchDate = null) |
@@ -275,8 +285,9 @@ totalMd가 0인 프로젝트는 공수 미산정 상태를 의미한다.
 ```
 1. project.startDate (명시적 지정) — 최우선
 2. min(beMembers.queueStartDate) — 멤버 가용일 기반
-3. getNextBusinessDay(max(memberBusyPeriods)) — 바쁜 기간 종료 후
-4. today — 최후 fallback
+3. min(beMembers.availableFromByBusyPeriods) — 유휴 리소스 즉시 투입
+4. getNextBusinessDay(max(squadPoolBusyPeriods)) — beMembers 비어있을 때 fallback
+5. today — 최후 fallback
 → 모든 경우: ensureBusinessDay() + 과거날짜 보정
 ```
 
@@ -360,40 +371,11 @@ calculateSchedule(projectIds)
 │
 ├── 공휴일 캐시 로드 (2년치)
 ├── 멤버 ID→이름 맵 구성 (전체 멤버, 1회 조회)
-├── memberBusyPeriods = {} (프로젝트 간 전달)
-├── qaAssigneeBusyPeriods = {} (프로젝트 간 전달)
 │
-└── FOR EACH project (sortOrder 순):
-    │
-    ├── [KTLO/미분류] → skipped 결과 추가 → CONTINUE
-    │
-    ├── calculateSingleProject()
-    │   │
-    │   ├── Step 1: BE 멤버 결정
-    │   │   ├── [명시적 멤버 있음] → 명시적 할당 경로
-    │   │   │   ├── isMemberBusy() → busyMembers 분리
-    │   │   │   ├── getMemberAvailableFrom() → lateJoinDates
-    │   │   │   └── 인원 부족 경고 생성
-    │   │   └── [명시적 멤버 없음] → 자동 투입 경로
-    │   │       ├── getSquadMemberPool() → BE 풀
-    │   │       ├── [totalMd == 0] → 자동 투입 스킵
-    │   │       ├── filterAvailableMembers() → 가용 멤버
-    │   │       ├── [기간 지정] → selectByCapacity() + 경고
-    │   │       ├── [기간 미지정] → getTargetMemberCount() → 인원 선택
-    │   │       └── getMemberAvailableFrom() → lateJoinDates
-    │   │
-    │   ├── Step 2: 일정 계산
-    │   │   ├── calculateDevDaysWithLeaves() → devDays (휴가 보정)
-    │   │   ├── startDate 결정 (우선순위 규칙 적용)
-    │   │   ├── devEndDate 계산
-    │   │   ├── QA 기간 계산
-    │   │   ├── launchDate 결정 (우선순위 규칙 적용)
-    │   │   └── [자동 투입] lateJoinDate > devEndDate 멤버 제외 (R11)
-    │   │
-    │   ├── 경고 병합 (기간 부족/여유 + BE 부족 + QA 중복)
-    │   └── 결과 Map 반환
-    │
-    └── memberBusyPeriods 갱신
-        └── [startDate & launchDate 모두 non-null일 때만]
-            → allBeMemberIds 각각에 [startDate, launchDate] 추가
+├── 1차 패스: sortOrder 순 계산
+│   └── 패스 내부에서 memberBusyPeriods / qaAssigneeBusyPeriods 누적
+├── 1차 결과 기준 launchDate 시간순 재정렬
+├── 2차 패스: 시간순 재계산 (선행 론치 멤버 가용성 우선 반영)
+│   └── 패스 내부에서 동일 규칙으로 busy period 누적
+└── 최종 반환: UI 정렬 일관성을 위해 sortOrder 순으로 결과 재배열
 ```

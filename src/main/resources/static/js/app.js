@@ -4006,6 +4006,7 @@ async function loadProjectMilestones() {
         ]);
         var res = results[0];
         _msAllMembers = (results[1].success && results[1].data) ? results[1].data : [];
+        initMsFormQaSearch(); // QA 담당자 검색 초기화 (early return 이전에 호출)
         var milestones = (res.success && res.data) ? res.data : [];
         if (milestones.length === 0) {
             tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">등록된 마일스톤이 없습니다.</td></tr>';
@@ -4088,6 +4089,12 @@ async function saveMilestoneOrder() {
     } catch (e) { showToast('순서 변경에 실패했습니다.', 'error'); }
 }
 
+function _qaOutsideClickHandler(e) {
+    if (!e.target.closest('.qa-assignee-cell')) {
+        document.querySelectorAll('.qa-assignee-results').forEach(function(el) { el.style.display = 'none'; });
+    }
+}
+
 function initQaAssigneeSearch() {
     document.querySelectorAll('.qa-assignee-search').forEach(function(input) {
         var msId = input.getAttribute('data-ms-id');
@@ -4106,19 +4113,85 @@ function initQaAssigneeSearch() {
                 resultsEl.innerHTML = '<div class="list-group-item text-muted small">검색 결과 없음</div>';
             } else {
                 resultsEl.innerHTML = matched.map(function(m) {
-                    return '<button type="button" class="list-group-item list-group-item-action py-1 px-2" onclick="addQaAssignee(' + msId + ', ' + m.id + ')">' + escapeHtml(m.name) + ' <span class="badge badge-role badge-' + m.role + '" style="font-size:0.65rem;">' + m.role + '</span></button>';
+                    return '<button type="button" class="list-group-item list-group-item-action py-1 px-2" onclick="addQaAssignee(' + msId + ', ' + m.id + ')">' + escapeHtml(m.name) + ' <span class="badge badge-role badge-' + escapeHtml(m.role) + '" style="font-size:0.65rem;">' + escapeHtml(m.role) + '</span></button>';
                 }).join('');
             }
             resultsEl.style.display = '';
         };
         input.onfocus = function() { if (this.value.trim().length > 0) this.oninput(); };
+        input.onkeydown = function(e) {
+            if (e.key === 'Escape') { resultsEl.style.display = 'none'; this.blur(); }
+        };
     });
-    // 외부 클릭 시 닫기
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('.qa-assignee-cell')) {
-            document.querySelectorAll('.qa-assignee-results').forEach(function(el) { el.style.display = 'none'; });
+    // 외부 클릭 시 닫기 (named function으로 중복 등록 방지)
+    document.removeEventListener('click', _qaOutsideClickHandler);
+    document.addEventListener('click', _qaOutsideClickHandler);
+}
+
+// 마일스톤 추가 폼 QA 담당자 검색 초기화
+function initMsFormQaSearch() {
+    var input = document.getElementById('proj-ms-qa-search');
+    var resultsEl = document.getElementById('proj-ms-qa-results');
+    if (!input || !resultsEl) return;
+    input.oninput = function() {
+        var q = this.value.trim().toLowerCase();
+        if (q.length === 0) { resultsEl.style.display = 'none'; return; }
+        var currentIds = getMsFormQaIds();
+        var matched = (_msAllMembers || []).filter(function(m) {
+            return currentIds.indexOf(String(m.id)) === -1 &&
+                   (m.name.toLowerCase().indexOf(q) !== -1 || m.role.toLowerCase().indexOf(q) !== -1);
+        });
+        if (matched.length === 0) {
+            resultsEl.innerHTML = '<div class="list-group-item text-muted small">검색 결과 없음</div>';
+        } else {
+            resultsEl.innerHTML = matched.map(function(m) {
+                return '<button type="button" class="list-group-item list-group-item-action py-1 px-2" onclick="addMsFormQaAssignee(' + m.id + ')">' + escapeHtml(m.name) + ' <span class="badge badge-role badge-' + escapeHtml(m.role) + '" style="font-size:0.65rem;">' + escapeHtml(m.role) + '</span></button>';
+            }).join('');
         }
-    });
+        resultsEl.style.display = '';
+    };
+    input.onfocus = function() { if (this.value.trim().length > 0) this.oninput(); };
+    // Escape 키로 검색 결과 닫기
+    input.onkeydown = function(e) {
+        if (e.key === 'Escape') { resultsEl.style.display = 'none'; this.blur(); }
+    };
+}
+
+function addMsFormQaAssignee(memberId) {
+    memberId = parseInt(memberId);
+    if (isNaN(memberId)) return;
+    var m = (_msAllMembers || []).find(function(mm) { return mm.id === memberId; });
+    if (!m) return;
+    var badges = document.getElementById('proj-ms-qa-badges');
+    if (!badges) return;
+    // 중복 체크
+    if (getMsFormQaIds().indexOf(String(memberId)) !== -1) return;
+    var span = document.createElement('span');
+    span.className = 'badge bg-light text-dark border';
+    span.style.fontSize = '0.75rem';
+    span.setAttribute('data-member-id', String(memberId));
+    span.innerHTML = escapeHtml(m.name) + ' <button type="button" class="btn-close" style="font-size:0.5rem;" onclick="removeMsFormQaAssignee(' + memberId + ')"></button>';
+    badges.appendChild(span);
+    var search = document.getElementById('proj-ms-qa-search');
+    if (search) search.value = '';
+    var results = document.getElementById('proj-ms-qa-results');
+    if (results) { results.innerHTML = ''; results.style.display = 'none'; }
+}
+
+function removeMsFormQaAssignee(memberId) {
+    memberId = parseInt(memberId);
+    if (isNaN(memberId)) return;
+    var badges = document.getElementById('proj-ms-qa-badges');
+    if (!badges) return;
+    var badge = badges.querySelector('[data-member-id="' + memberId + '"]');
+    if (badge) badge.remove();
+}
+
+function getMsFormQaIds() {
+    var badges = document.querySelectorAll('#proj-ms-qa-badges [data-member-id]');
+    var ids = [];
+    badges.forEach(function(el) { ids.push(el.getAttribute('data-member-id')); });
+    return ids;
 }
 
 function getCurrentQaIds(msId) {
@@ -4153,6 +4226,23 @@ async function removeQaAssignee(msId, memberId) {
     } catch (e) { showToast('QA 담당자 제거 실패', 'error'); }
 }
 
+function onMsTypeChange(typeValue) {
+    var wrap = document.getElementById('proj-ms-qa-wrap');
+    if (!wrap) return;
+    if (typeValue === 'QA') {
+        wrap.style.display = '';
+    } else {
+        wrap.style.display = 'none';
+        // 뱃지 및 검색란 초기화
+        var badges = document.getElementById('proj-ms-qa-badges');
+        if (badges) badges.innerHTML = '';
+        var search = document.getElementById('proj-ms-qa-search');
+        if (search) search.value = '';
+        var results = document.getElementById('proj-ms-qa-results');
+        if (results) { results.innerHTML = ''; results.style.display = 'none'; }
+    }
+}
+
 async function addProjectMilestone() {
     var projectId = currentDetailProjectId;
     var type = document.getElementById('proj-ms-type').value;
@@ -4167,6 +4257,11 @@ async function addProjectMilestone() {
     if (days) body.days = parseInt(days);
     if (startDate) body.startDate = startDate;
     if (endDate) body.endDate = endDate;
+    // QA 유형이면 qaAssignees 포함
+    if (type === 'QA') {
+        var qaIds = getMsFormQaIds();
+        body.qaAssignees = qaIds.join(',');
+    }
     try {
         var res = await apiCall('/api/v1/projects/' + projectId + '/milestones', 'POST', body);
         if (res.success) {
@@ -4176,6 +4271,7 @@ async function addProjectMilestone() {
             document.getElementById('proj-ms-days').value = '';
             document.getElementById('proj-ms-start').value = '';
             document.getElementById('proj-ms-end').value = '';
+            onMsTypeChange(''); // QA 입력란 숨김 및 뱃지 초기화
             await loadProjectMilestones();
         }
     } catch (e) { showToast('마일스톤 추가에 실패했습니다.', 'error'); }
@@ -7902,13 +7998,13 @@ async function executeScheduleCalc() {
     }
 }
 
-var BE_WARNING_TOOLTIP_HTML = '<table class="table table-sm table-bordered mb-0" style="font-size:0.75rem; min-width:140px;">'
-    + '<thead class="table-dark"><tr><th>총 공수(MD)</th><th>목표 인원</th></tr></thead>'
+var BE_WARNING_TOOLTIP_HTML = '<table style=\'font-size:0.75rem; min-width:160px; width:100%; border-collapse:collapse; color:#fff; background:#000;\'>'
+    + '<thead><tr style=\'background:#000; color:#fff;\'><th style=\'border:1px solid #444; padding:4px;\'>총 공수(MD)</th><th style=\'border:1px solid #444; padding:4px;\'>목표 인원</th></tr></thead>'
     + '<tbody>'
-    + '<tr><td>1 ~ 5</td><td>1명</td></tr>'
-    + '<tr><td>6 ~ 15</td><td>2명</td></tr>'
-    + '<tr><td>16 ~ 30</td><td>3명</td></tr>'
-    + '<tr><td>31+</td><td>4명</td></tr>'
+    + '<tr style=\'background:#000; color:#fff;\'><td style=\'border:1px solid #444; padding:4px;\'>1 ~ 5</td><td style=\'border:1px solid #444; padding:4px;\'>1명</td></tr>'
+    + '<tr style=\'background:#000; color:#fff;\'><td style=\'border:1px solid #444; padding:4px;\'>6 ~ 15</td><td style=\'border:1px solid #444; padding:4px;\'>2명</td></tr>'
+    + '<tr style=\'background:#000; color:#fff;\'><td style=\'border:1px solid #444; padding:4px;\'>16 ~ 30</td><td style=\'border:1px solid #444; padding:4px;\'>3명</td></tr>'
+    + '<tr style=\'background:#000; color:#fff;\'><td style=\'border:1px solid #444; padding:4px;\'>31+</td><td style=\'border:1px solid #444; padding:4px;\'>4명</td></tr>'
     + '</tbody></table>';
 
 function isBeMemberWarning(text) {
@@ -7974,12 +8070,12 @@ function renderScheduleCalcResult(data) {
             var renderedSegments = segments.map(function(seg) {
                 var displayText = escapeHtml(seg).replace(/(\d{4}-\d{2}-\d{2})/g, function(m) { return formatDateShort(m); });
                 if (isBeMemberWarning(seg)) {
-                    return '<span data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-theme="dark" title="' + escapeHtml(BE_WARNING_TOOLTIP_HTML) + '" style="cursor:help; border-bottom:1px dotted #ffc107;">' + displayText + '</span>';
+                    return '<span data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-custom-class="be-warning-tooltip" title="' + BE_WARNING_TOOLTIP_HTML + '" style="cursor:help; border-bottom:1px dotted #856404; color:#856404; font-weight:600;">' + displayText + '</span>';
                 }
-                return displayText;
+                return '<span style="color:#856404;">' + displayText + '</span>';
             });
             var warningText = renderedSegments.join(' / ');
-            html += '<tr><td colspan="7" style="font-size:0.8rem; background:#fff8e1; color:#856404;"><i class="bi bi-exclamation-triangle-fill"></i> ' + escapeHtml(r.projectName) + ': ' + warningText + '</td></tr>';
+            html += '<tr class="schedule-calc-warning-row"><td colspan="7" style="font-size:0.8rem; background:#fff8e1; color:#856404 !important;"><i class="bi bi-exclamation-triangle-fill"></i> <span style="color:#856404 !important; font-weight:600;">' + escapeHtml(r.projectName) + ': </span>' + warningText + '</td></tr>';
         }
     });
     html += '</tbody></table>';
@@ -8014,6 +8110,10 @@ function renderScheduleCalcResult(data) {
 
     // BE 투입 경고 tooltip 초기화
     document.querySelectorAll('#schedule-calc-result [data-bs-toggle="tooltip"]').forEach(function(el) {
-        new bootstrap.Tooltip(el, { html: true });
+        new bootstrap.Tooltip(el, {
+            html: true,
+            container: 'body',
+            customClass: 'be-warning-tooltip'
+        });
     });
 }

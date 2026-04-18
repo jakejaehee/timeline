@@ -918,6 +918,51 @@ body.sidebar-collapsed #main-content {
     border-left-color: #17a2b8;
 }
 
+/* 일정 계산 결과 - BE 경고 툴팁 가독성 개선 */
+.schedule-calc-warning-row,
+.schedule-calc-warning-row td,
+.schedule-calc-warning-row span,
+.schedule-calc-warning-row small {
+    background-color: #fff8e1 !important;
+    color: #856404 !important;
+}
+
+.be-warning-tooltip .tooltip-inner {
+    background-color: #000 !important;
+    color: #fff !important;
+    border: 1px solid #222;
+    max-width: 360px;
+    opacity: 1 !important;
+}
+
+.be-warning-tooltip {
+    z-index: 2000;
+}
+
+.be-warning-tooltip .tooltip-inner table,
+.be-warning-tooltip .tooltip-inner th,
+.be-warning-tooltip .tooltip-inner td {
+    background: #000 !important;
+    color: #fff !important;
+    border-color: #444 !important;
+}
+
+.be-warning-tooltip.bs-tooltip-top .tooltip-arrow::before {
+    border-top-color: #000;
+}
+
+.be-warning-tooltip.bs-tooltip-bottom .tooltip-arrow::before {
+    border-bottom-color: #000;
+}
+
+.be-warning-tooltip.bs-tooltip-start .tooltip-arrow::before {
+    border-left-color: #000;
+}
+
+.be-warning-tooltip.bs-tooltip-end .tooltip-arrow::before {
+    border-right-color: #000;
+}
+
 /* ---- 반응형 ---- */
 @media (max-width: 768px) {
     #sidebar {

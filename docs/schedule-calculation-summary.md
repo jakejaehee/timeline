@@ -2,13 +2,14 @@
 
 ## 1. 일정 계산 개요
 
-프로젝트의 일정을 **프로젝트 sortOrder 순**으로 순차 자동 계산한다. 각 프로젝트에 대해 BE 멤버를 결정하고, 공수(MD) 기반으로 개발 기간 → QA 기간 → 론치일을 산출한다.
+프로젝트 일정을 계산할 때 기본 정렬은 `sortOrder`를 사용하되, 멤버 가용성은 **멤버별 busy period**로 독립 추적한다. 따라서 정렬상 뒤 프로젝트라도 투입 멤버가 비어 있으면 앞 프로젝트 론치를 기다리지 않고 동시(또는 더 이른 시점) 시작할 수 있다.
 
 ### 1.1 핵심 구조
 
 ```
 ScheduleCalculationService.calculateSchedule()
-  ├── 프로젝트 목록을 sortOrder 순으로 순회
+  ├── 1차: 프로젝트 목록을 sortOrder 순으로 계산
+  ├── 2차: 1차 결과의 launchDate 시간순으로 재계산 (시간상 선행 론치 우선 반영)
   ├── KTLO / 미분류 프로젝트 → skipped 처리 (결과 화면에 미표시)
   ├── calculateSingleProject() 호출
   │   ├── Step 1: BE 멤버 결정 (명시적 할당 or 자동 투입)
@@ -39,7 +40,7 @@ ELSE (활성 BE 없음 또는 ProjectMember 자체 없음)
 ### 2.2 명시적 할당 경로 (autoAssigned = false)
 
 1. 명시적 BE 멤버 중 "바쁜 멤버"를 분리 (`isMemberBusy` 판정)
-2. 바쁜 기간이 프로젝트 개발기간 전체에 걸치는 멤버 → `busyMembers`
+2. 바쁜 기간이 `projEstimatedEnd`까지 이어지는 멤버 → `busyMembers`
 3. 바쁜 기간이 도중에 끝나는 멤버 → `beMembers`에 포함 (지연 합류)
 4. 지연 합류 멤버의 `availableFrom` (가용 시작일) 계산
 5. **기간 미지정**(startDate == null AND endDate == null)이고 totalMd > 0인 경우:
@@ -63,6 +64,7 @@ ELSE (활성 BE 없음 또는 ProjectMember 자체 없음)
 ```
 
 - `filterEndDate = project.getEndDate()` (실제 론치일 기준)
+- 예외: `개발영업일수 <= 0`이면 필요 capacity 계산을 생략하고 가용 멤버 전원을 선택
 
 #### 기간 미지정 프로젝트
 
@@ -96,13 +98,23 @@ ELSE (활성 BE 없음 또는 ProjectMember 자체 없음)
 
 **기간 지정** (fixedSchedule): 별도 기간 부족/여유 경고 (4.5절 참고)
 
+### 2.5 `projEstimatedEnd` 기준일 정의
+
+- `isMemberBusy()`/`getMemberAvailableFrom()`의 종료 기준은 `projEstimatedEnd`
+- 자동 투입 경로:
+  - 기간 지정: `projEstimatedEnd = project.endDate` (실제 론치일)
+  - 기간 미지정: `projEstimatedEnd = autoEstEnd` (1명 기준 최악 상한 종료일)
+- 명시적 할당 경로:
+  - 기간 지정: `projEstimatedEnd = project.endDate`
+  - 기간 미지정: `projEstimatedEnd = 1명 기준 추정 종료일`
+
 ---
 
 ## 3. 가용 멤버 판정 로직
 
 ### 3.1 `isMemberBusy(memberId, projStart, projEstimatedEnd, memberBusyPeriods)`
 
-멤버가 프로젝트 기간 동안 **완전히 바쁜지** 판단한다.
+멤버가 `projStart ~ projEstimatedEnd` 구간 동안 **투입 불가인지** 판단한다.
 
 ```java
 // period[0] = 바쁜 기간 시작일, period[1] = 론치일 (inclusive end)
@@ -127,7 +139,6 @@ if (overlaps && !period[1].isBefore(projEstimatedEnd)) {
 LocalDate latestEnd = max(겹치는 period[1] 값들);
 
 if (latestEnd == null) return null;                    // 겹치는 기간 없음 → 즉시 가용
-if (latestEnd.isBefore(projStart)) return null;        // 바쁜 기간이 시작일 전에 끝남 → 즉시 가용
 return getNextBusinessDay(latestEnd, holidays);         // 론치일 다음 영업일이 가용 시작일
 ```
 
@@ -169,8 +180,10 @@ devDays = ceil(totalMd / beCapacity)
 #### 기간 미지정 프로젝트
 - `startDate = earliestMemberStart` (멤버의 queueStartDate 최솟값)
 - `earliestMemberStart`가 null인 경우 (0 MD 등 beMembers가 비어있는 경우):
-  - `memberBusyPeriods`에서 스쿼드 멤버의 바쁜 기간 종료일 최대값을 조회
-  - 그 **다음 영업일**을 startDate로 사용 (없으면 today)
+  - **우선** `memberBusyPeriods`에서 실제 투입 대상 `beMembers`별 가용 시작일을 계산
+  - 그중 **가장 빠른 가용일(min)**을 startDate로 사용 (인력 활용 최적화)
+  - 값이 없고 `beMembers`가 비어있으면(0 MD 등) 기존처럼 스쿼드 멤버 풀 기준 최대 종료일 다음 영업일 사용 (없으면 today)
+- 결과적으로 정렬상 뒤 프로젝트라도 투입 멤버 중 유휴 인력이 있으면 앞 프로젝트 론치를 기다리지 않고 시작 가능
 - 비가용일(주말/공휴일) 보정: `ensureBusinessDay(startDate, holidays)`
 
 ### 4.3 론치일(launchDate) 계산
@@ -197,6 +210,7 @@ ELSE
 qaEndDate = launchDate - 1영업일
 qaStartDate = qaFixedStartDate ?? (qaEndDate - (qaDays-1)영업일)
 ```
+- `qaDays <= 0` 또는 `qaDays == null`이면 QA 기간 계산 자체를 스킵 (`qaStartDate`, `qaEndDate` 모두 null)
 
 #### non-fixedSchedule (순산 방식)
 ```
@@ -204,6 +218,7 @@ qaStartDate = ensureBusinessDay(qaFixedStartDate) ?? getNextBusinessDay(devEndDa
 qaEndDate = calculateEndDate(qaStartDate, qaDays)
 ```
 - qaFixedStartDate가 있으면 `ensureBusinessDay()` 비가용일 보정 후 사용
+- `qaDays <= 0` 또는 `qaDays == null`이면 QA 기간 계산 자체를 스킵 (`qaStartDate`, `qaEndDate` 모두 null)
 
 ### 4.5 기간 부족/여유 경고 (fixedSchedule 전용)
 
@@ -217,6 +232,7 @@ ratio = remainingBizDays / totalNeededDays
 IF ratio < 0.7 → "남은 기간({N}일)이 예상 소요일({M}일)보다 {X}% 부족합니다. → 론치일을 {date}로 변경을 권장합니다."
 IF ratio > 2.0 → "남은 기간({N}일)이 예상 소요일({M}일) 대비 {X}% 여유가 있습니다. → 론치일을 {date}로 앞당길 수 있습니다."
 ```
+- `totalNeededDays <= 0`이면 ratio 계산/경고 생성을 생략
 
 ### 4.6 totalMd 계산
 
@@ -258,7 +274,7 @@ totalMd가 0인 프로젝트는 "공수 산정 미완료"를 의미한다.
 |------|------|
 | 자동 멤버 투입 | 0명 (자동 투입 블록 진입 안 함) |
 | 수동 지정 멤버 | 있으면 그대로 표시 |
-| 개발 종료일 | devCalcStart (= ensureBusinessDay(max(startDate, today))). devDays=0이므로 시작일과 동일 |
+| 개발 종료일 | devCalcStart (= ensureBusinessDay(max(startDate, today))). devDays=0이므로 `devEndDate = devCalcStart` (startDate가 과거면 startDate와 다를 수 있음) |
 | 론치일 | null (계산 불가) |
 | BE 추가 투입 경고 | 미생성 |
 | busy period 갱신 | 미수행 (launchDate = null) |
@@ -367,6 +383,9 @@ totalMd가 0인 프로젝트는 "공수 산정 미완료"를 의미한다.
   - BE 추가 투입 필요 (+ 예상 론치일)
   - QA 중복 충돌
   - 기간 여유/부족 알림
+- 표시 조건 메모:
+  - 자동 투입 + 기간 미지정의 BE 인원 부족은 경고를 생성하지 않음
+  - 명시적 할당 + 기간 미지정의 BE 인원 부족만 경고 생성
 
 ### 9.4 하단 요약
 
@@ -421,15 +440,24 @@ totalMd가 0인 프로젝트는 "공수 산정 미완료"를 의미한다.
 - `getMemberAvailableFrom()`: 즉시가용 조건 `<=` → `<`, 반환값에 `getNextBusinessDay()` 적용
 - NPE 방지: 겹치는 바쁜 기간이 없는 경우 null 체크
 
+### 10.10 #48 - 동시 시작 규칙 반영 (투입 멤버 기준 시작일)
+- 기간 미지정 시작일 fallback에서 스쿼드 전체가 아니라 실제 투입 `beMembers`의 바쁜 기간을 우선 반영
+- 정렬상 뒤 프로젝트라도 투입 멤버가 가용하면 앞 프로젝트 론치를 기다리지 않고 시작 가능
+
+### 10.11 #49 - 인력 활용 최적화 (최조기 가용 인력 우선 시작)
+- 기간 미지정 시작일 fallback을 "투입 멤버 중 가장 늦은 종료일" 기준에서 "투입 멤버 중 가장 빠른 가용일(min)" 기준으로 변경
+- 일부 멤버가 다른 프로젝트에 묶여 있어도 유휴 멤버가 있으면 프로젝트를 즉시 시작하도록 개선
+
 ---
 
 ## 11. 핵심 비즈니스 규칙 요약
 
-1. **프로젝트는 sortOrder 순으로 순차 계산** — 앞 프로젝트의 결과가 뒤 프로젝트에 영향
-2. **멤버는 론치일까지 바쁨** (inclusive) — 다음 프로젝트는 론치 다음 영업일부터 참여 가능
-3. **자동 투입은 totalMd > 0인 경우만** — 0 MD는 공수 미산정으로 자동 투입 안 함
-4. **개발 기간 후 투입 가능 멤버는 제외** — lateJoinDate > devEndDate면 개발/QA/론치 모두 불참
-5. **시작일은 비가용일 불가** — 주말/공휴일이면 다음 영업일로 보정
-6. **KTLO/미분류는 계산 제외** — 결과 화면에 미표시
-7. **수동 지정 멤버는 0 MD에서도 표시** — 자동 투입만 차단, 수동은 유지
-8. **QA 담당자는 이름으로 표시** — ID→이름 변환, 레거시 데이터 fallback
+1. **기본 정렬은 sortOrder, 가용성은 멤버별 독립 추적** — 정렬상 뒤 프로젝트도 투입 멤버가 가용하면 앞 프로젝트 론치 전 시작 가능
+2. **시작일은 투입 멤버 중 최조기 가용일(min) 우선** — 일부 멤버가 바빠도 유휴 멤버가 있으면 즉시 시작
+3. **멤버는 론치일까지 바쁨** (inclusive) — 다음 프로젝트는 론치 다음 영업일부터 참여 가능
+4. **자동 투입은 totalMd > 0인 경우만** — 0 MD는 공수 미산정으로 자동 투입 안 함
+5. **개발 기간 후 투입 가능 멤버는 제외** — lateJoinDate > devEndDate면 개발/QA/론치 모두 불참
+6. **시작일은 비가용일 불가** — 주말/공휴일이면 다음 영업일로 보정
+7. **KTLO/미분류는 계산 제외** — 결과 화면에 미표시
+8. **수동 지정 멤버는 0 MD에서도 표시** — 자동 투입만 차단, 수동은 유지
+9. **QA 담당자는 이름으로 표시** — ID→이름 변환, 레거시 데이터 fallback

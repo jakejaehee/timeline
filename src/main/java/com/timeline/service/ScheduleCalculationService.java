@@ -50,15 +50,54 @@ public class ScheduleCalculationService {
         Map<Long, String> memberIdToName = memberRepository.findAll().stream()
                 .collect(Collectors.toMap(Member::getId, Member::getName));
 
+        List<Project> projects = projectIds.stream()
+                .map(projectId -> projectRepository.findById(projectId)
+                        .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다. id=" + projectId)))
+                .sorted(Comparator.comparing(Project::getSortOrder, Comparator.nullsLast(Integer::compareTo))
+                        .thenComparing(Project::getId))
+                .collect(Collectors.toList());
+
+        // 1차: sortOrder 순 계산
+        List<Map<String, Object>> firstPass = calculateSchedulePass(projects, holidays, rangeStart, rangeEnd, memberIdToName);
+
+        // 2차: 1차 결과의 launchDate 시간순 계산 (정렬순서 뒤 프로젝트라도 먼저 론치하면 선반영)
+        List<Project> temporalProjects = orderProjectsByLaunchDate(projects, firstPass);
+        List<Map<String, Object>> secondPass = temporalProjects.equals(projects)
+                ? firstPass
+                : calculateSchedulePass(temporalProjects, holidays, rangeStart, rangeEnd, memberIdToName);
+
+        // 반환 순서는 기존 UI 정렬(sortOrder) 유지
+        Map<Long, Map<String, Object>> resultByProjectId = secondPass.stream()
+                .filter(r -> r.get("projectId") != null)
+                .collect(Collectors.toMap(
+                        r -> ((Number) r.get("projectId")).longValue(),
+                        r -> r,
+                        (a, b) -> a,
+                        LinkedHashMap::new
+                ));
+
+        List<Map<String, Object>> orderedResults = new ArrayList<>();
+        for (Project project : projects) {
+            Map<String, Object> result = resultByProjectId.get(project.getId());
+            if (result != null) {
+                orderedResults.add(result);
+            }
+        }
+        return orderedResults;
+    }
+
+    private List<Map<String, Object>> calculateSchedulePass(List<Project> projects,
+                                                            Set<LocalDate> holidays,
+                                                            LocalDate rangeStart, LocalDate rangeEnd,
+                                                            Map<Long, String> memberIdToName) {
         List<Map<String, Object>> results = new ArrayList<>();
         // 멤버별 바쁜 기간 추적: memberId -> (startDate, endDate) 리스트
         Map<Long, List<LocalDate[]>> memberBusyPeriods = new HashMap<>();
         // QA 담당자별 바쁜 기간 추적: qaName -> Object[]{qaStartDate, qaEndDate, projectName} 리스트
         Map<String, List<Object[]>> qaAssigneeBusyPeriods = new HashMap<>();
 
-        for (Long projectId : projectIds) {
-            Project project = projectRepository.findById(projectId)
-                    .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다. id=" + projectId));
+        for (Project project : projects) {
+            Long projectId = project.getId();
 
             // KTLO 프로젝트는 일정 계산에서 제외
             if (Boolean.TRUE.equals(project.getKtlo())) {
@@ -103,6 +142,33 @@ public class ScheduleCalculationService {
         }
 
         return results;
+    }
+
+    private List<Project> orderProjectsByLaunchDate(List<Project> projects, List<Map<String, Object>> results) {
+        Map<Long, LocalDate> launchDateByProjectId = new HashMap<>();
+        for (Map<String, Object> result : results) {
+            Object pid = result.get("projectId");
+            Object launchStr = result.get("launchDate");
+            if (pid == null || launchStr == null) continue;
+            launchDateByProjectId.put(((Number) pid).longValue(), LocalDate.parse(launchStr.toString()));
+        }
+
+        List<Project> ordered = new ArrayList<>(projects);
+        ordered.sort((a, b) -> {
+            LocalDate la = launchDateByProjectId.get(a.getId());
+            LocalDate lb = launchDateByProjectId.get(b.getId());
+            if (la == null && lb == null) {
+                int bySort = Comparator.nullsLast(Integer::compareTo).compare(a.getSortOrder(), b.getSortOrder());
+                return bySort != 0 ? bySort : a.getId().compareTo(b.getId());
+            }
+            if (la == null) return 1;
+            if (lb == null) return -1;
+            int byLaunch = la.compareTo(lb);
+            if (byLaunch != 0) return byLaunch;
+            int bySort = Comparator.nullsLast(Integer::compareTo).compare(a.getSortOrder(), b.getSortOrder());
+            return bySort != 0 ? bySort : a.getId().compareTo(b.getId());
+        });
+        return ordered;
     }
 
     private Map<String, Object> calculateSingleProject(Project project,
@@ -303,123 +369,21 @@ public class ScheduleCalculationService {
         boolean fixedSchedule = (project.getStartDate() != null && project.getEndDate() != null);
 
         Set<LocalDate> beUnavailable = new HashSet<>(holidays);
-        Map<Member, Set<LocalDate>> beMemberLeaves = new HashMap<>();
-        for (Member m : beMembers) {
-            beMemberLeaves.put(m, memberLeaveService.getMemberLeaveDatesBetween(m.getId(), rangeStart, rangeEnd));
-        }
-
-        int devDays = 0;
-        if (totalMd.compareTo(BigDecimal.ZERO) > 0 && beCapacity.compareTo(BigDecimal.ZERO) > 0) {
-            devDays = calculateDevDaysWithLeaves(totalMd, beCapacity, beMembers, beMemberLeaves, beUnavailable, project, null);
-        }
-
         // QA 비가용일: 공휴일만 적용 (qaAssignees는 이름 문자열이라 Member 조회 복잡성 회피)
         Set<LocalDate> qaUnavailable = new HashSet<>(holidays);
 
-        LocalDate today = LocalDate.now();
-        LocalDate startDate;
-        LocalDate launchDate;
-        LocalDate devEndDate;
-        LocalDate qaStartDate = null;
-        LocalDate qaEndDate = null;
-        String warning = null;
+        TimelineComputation timeline = computeTimeline(
+                project, projectId, totalMd, beMembers, beCapacity, qaDays, qaFixedStartDate,
+                holidays, beUnavailable, qaUnavailable, rangeStart, rangeEnd, memberBusyPeriods
+        );
 
-        if (fixedSchedule) {
-            startDate = project.getStartDate();
-            launchDate = project.getEndDate();
-
-            LocalDate devCalcBase = startDate.isBefore(today) ? today : startDate;
-            LocalDate devCalcStart = bizDayCalc.ensureBusinessDay(devCalcBase, beUnavailable);
-            if (devDays > 0) {
-                devEndDate = bizDayCalc.calculateEndDate(devCalcStart, new BigDecimal(devDays), BigDecimal.ONE, beUnavailable);
-            } else {
-                devEndDate = devCalcStart;
-            }
-
-            if (qaDays != null && qaDays > 0) {
-                qaEndDate = subtractBusinessDays(launchDate, 1, qaUnavailable);
-                if (qaFixedStartDate != null) {
-                    qaStartDate = qaFixedStartDate;
-                } else {
-                    qaStartDate = subtractBusinessDays(qaEndDate, qaDays - 1, qaUnavailable);
-                }
-            }
-
-            LocalDate effectiveStart = startDate.isBefore(today) ? today : startDate;
-            int totalNeededDays = devDays + (qaDays != null ? qaDays : 0);
-            if (totalNeededDays > 0) {
-                int remainingBizDays = countBusinessDays(effectiveStart, launchDate, beUnavailable);
-                double ratio = (double) remainingBizDays / totalNeededDays;
-                LocalDate recommendedQaEnd = bizDayCalc.calculateEndDate(
-                        bizDayCalc.ensureBusinessDay(effectiveStart, beUnavailable),
-                        new BigDecimal(totalNeededDays), BigDecimal.ONE, beUnavailable);
-                LocalDate recommendedLaunch = bizDayCalc.getNextBusinessDay(recommendedQaEnd, holidays);
-                String recommendedStr = recommendedLaunch.toString();
-                if (ratio < 0.7) {
-                    warning = "남은 기간(" + remainingBizDays + "일)이 예상 소요일(" + totalNeededDays + "일)보다 "
-                            + Math.round((1 - ratio) * 100) + "% 부족합니다. → 론치일을 " + recommendedStr + "로 변경을 권장합니다.";
-                } else if (ratio > 2.0) {
-                    warning = "남은 기간(" + remainingBizDays + "일)이 예상 소요일(" + totalNeededDays + "일) 대비 "
-                            + Math.round((ratio - 1) * 100) + "% 여유가 있습니다. → 론치일을 " + recommendedStr + "로 앞당길 수 있습니다.";
-                }
-            }
-        } else {
-            if (project.getStartDate() != null) {
-                startDate = project.getStartDate();
-            } else {
-                LocalDate earliestMemberStart = beMembers.stream()
-                        .map(Member::getQueueStartDate)
-                        .filter(Objects::nonNull)
-                        .min(LocalDate::compareTo)
-                        .orElse(null);
-
-                // 0 MD 등으로 beMembers가 비어 earliestMemberStart가 null인 경우:
-                // memberBusyPeriods에서 스쿼드 멤버 풀의 바쁜 기간 종료일 최대값의 다음 영업일을 시작일로 사용
-                if (earliestMemberStart == null) {
-                    List<Member> poolForStart = getSquadMemberPool(projectId);
-                    LocalDate latestBusyEnd = poolForStart.stream()
-                            .map(Member::getId)
-                            .filter(memberBusyPeriods::containsKey)
-                            .flatMap(mid -> memberBusyPeriods.get(mid).stream())
-                            .map(period -> period[1])
-                            .max(LocalDate::compareTo)
-                            .orElse(null);
-                    startDate = latestBusyEnd != null
-                            ? bizDayCalc.getNextBusinessDay(latestBusyEnd, holidays)
-                            : LocalDate.now();
-                } else {
-                    startDate = earliestMemberStart;
-                }
-                startDate = bizDayCalc.ensureBusinessDay(startDate, holidays);  // 비가용일 보정
-            }
-
-            LocalDate calcBaseDate = startDate.isBefore(today) ? today : startDate;
-            LocalDate devCalcStart = bizDayCalc.ensureBusinessDay(calcBaseDate, beUnavailable);
-            devEndDate = devCalcStart;
-
-            if (devDays > 0) {
-                devEndDate = bizDayCalc.calculateEndDate(devCalcStart, new BigDecimal(devDays), BigDecimal.ONE, beUnavailable);
-            }
-
-            if (qaDays != null && qaDays > 0) {
-                if (qaFixedStartDate != null) {
-                    qaStartDate = bizDayCalc.ensureBusinessDay(qaFixedStartDate, qaUnavailable);
-                } else {
-                    qaStartDate = bizDayCalc.getNextBusinessDay(devEndDate, qaUnavailable);
-                }
-                qaEndDate = bizDayCalc.calculateEndDate(qaStartDate, new BigDecimal(qaDays), BigDecimal.ONE, qaUnavailable);
-            }
-
-            if (totalMd.compareTo(BigDecimal.ZERO) == 0 && project.getEndDate() == null) {
-                launchDate = null;  // 기간 미지정 0 MD: 계산 불가
-            } else if (project.getEndDate() != null) {
-                launchDate = project.getEndDate();
-            } else if (qaEndDate != null) {
-                launchDate = bizDayCalc.getNextBusinessDay(qaEndDate, holidays);
-            } else {
-                launchDate = bizDayCalc.getNextBusinessDay(devEndDate, holidays);
-            }
-        }
+        int devDays = timeline.devDays;
+        LocalDate startDate = timeline.startDate;
+        LocalDate launchDate = timeline.launchDate;
+        LocalDate devEndDate = timeline.devEndDate;
+        LocalDate qaStartDate = timeline.qaStartDate;
+        LocalDate qaEndDate = timeline.qaEndDate;
+        String warning = timeline.warning;
 
         // 자동 투입된 멤버 중 lateJoinDate > devEndDate인 멤버 제외
         if (autoAssigned && devEndDate != null && !lateJoinDates.isEmpty()) {
@@ -439,6 +403,20 @@ public class ScheduleCalculationService {
                 beCapacity = beMembers.stream()
                         .map(m -> m.getCapacity() != null ? m.getCapacity() : BigDecimal.ONE)
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
+                autoAssignedMembers = new ArrayList<>(beMembers);
+
+                // 제외된 최종 인원 기준으로 일정 재계산
+                timeline = computeTimeline(
+                        project, projectId, totalMd, beMembers, beCapacity, qaDays, qaFixedStartDate,
+                        holidays, beUnavailable, qaUnavailable, rangeStart, rangeEnd, memberBusyPeriods
+                );
+                devDays = timeline.devDays;
+                startDate = timeline.startDate;
+                launchDate = timeline.launchDate;
+                devEndDate = timeline.devEndDate;
+                qaStartDate = timeline.qaStartDate;
+                qaEndDate = timeline.qaEndDate;
+                warning = timeline.warning;
             }
         }
 
@@ -660,6 +638,175 @@ public class ScheduleCalculationService {
     }
 
     // ===== 기존 계산 헬퍼 =====
+
+    private static class TimelineComputation {
+        final int devDays;
+        final LocalDate startDate;
+        final LocalDate launchDate;
+        final LocalDate devEndDate;
+        final LocalDate qaStartDate;
+        final LocalDate qaEndDate;
+        final String warning;
+
+        private TimelineComputation(int devDays, LocalDate startDate, LocalDate launchDate,
+                                    LocalDate devEndDate, LocalDate qaStartDate, LocalDate qaEndDate,
+                                    String warning) {
+            this.devDays = devDays;
+            this.startDate = startDate;
+            this.launchDate = launchDate;
+            this.devEndDate = devEndDate;
+            this.qaStartDate = qaStartDate;
+            this.qaEndDate = qaEndDate;
+            this.warning = warning;
+        }
+    }
+
+    private TimelineComputation computeTimeline(Project project, Long projectId,
+                                                BigDecimal totalMd, List<Member> beMembers, BigDecimal beCapacity,
+                                                Integer qaDays, LocalDate qaFixedStartDate,
+                                                Set<LocalDate> holidays, Set<LocalDate> beUnavailable, Set<LocalDate> qaUnavailable,
+                                                LocalDate rangeStart, LocalDate rangeEnd,
+                                                Map<Long, List<LocalDate[]>> memberBusyPeriods) {
+        Map<Member, Set<LocalDate>> beMemberLeaves = new HashMap<>();
+        for (Member m : beMembers) {
+            beMemberLeaves.put(m, memberLeaveService.getMemberLeaveDatesBetween(m.getId(), rangeStart, rangeEnd));
+        }
+
+        int devDays = 0;
+        if (totalMd.compareTo(BigDecimal.ZERO) > 0 && beCapacity.compareTo(BigDecimal.ZERO) > 0) {
+            devDays = calculateDevDaysWithLeaves(totalMd, beCapacity, beMembers, beMemberLeaves, beUnavailable, project, null);
+        }
+
+        LocalDate today = LocalDate.now();
+        LocalDate startDate;
+        LocalDate launchDate;
+        LocalDate devEndDate;
+        LocalDate qaStartDate = null;
+        LocalDate qaEndDate = null;
+        String warning = null;
+        boolean fixedSchedule = (project.getStartDate() != null && project.getEndDate() != null);
+
+        if (fixedSchedule) {
+            startDate = project.getStartDate();
+            launchDate = project.getEndDate();
+
+            LocalDate devCalcBase = startDate.isBefore(today) ? today : startDate;
+            LocalDate devCalcStart = bizDayCalc.ensureBusinessDay(devCalcBase, beUnavailable);
+            if (devDays > 0) {
+                devEndDate = bizDayCalc.calculateEndDate(devCalcStart, new BigDecimal(devDays), BigDecimal.ONE, beUnavailable);
+            } else {
+                devEndDate = devCalcStart;
+            }
+
+            if (qaDays != null && qaDays > 0) {
+                qaEndDate = subtractBusinessDays(launchDate, 1, qaUnavailable);
+                if (qaFixedStartDate != null) {
+                    qaStartDate = qaFixedStartDate;
+                } else {
+                    qaStartDate = subtractBusinessDays(qaEndDate, qaDays - 1, qaUnavailable);
+                }
+            }
+
+            LocalDate effectiveStart = startDate.isBefore(today) ? today : startDate;
+            int totalNeededDays = devDays + (qaDays != null ? qaDays : 0);
+            if (totalNeededDays > 0) {
+                int remainingBizDays = countBusinessDays(effectiveStart, launchDate, beUnavailable);
+                double ratio = (double) remainingBizDays / totalNeededDays;
+                LocalDate recommendedQaEnd = bizDayCalc.calculateEndDate(
+                        bizDayCalc.ensureBusinessDay(effectiveStart, beUnavailable),
+                        new BigDecimal(totalNeededDays), BigDecimal.ONE, beUnavailable);
+                LocalDate recommendedLaunch = bizDayCalc.getNextBusinessDay(recommendedQaEnd, holidays);
+                String recommendedStr = recommendedLaunch.toString();
+                if (ratio < 0.7) {
+                    warning = "남은 기간(" + remainingBizDays + "일)이 예상 소요일(" + totalNeededDays + "일)보다 "
+                            + Math.round((1 - ratio) * 100) + "% 부족합니다. → 론치일을 " + recommendedStr + "로 변경을 권장합니다.";
+                } else if (ratio > 2.0) {
+                    warning = "남은 기간(" + remainingBizDays + "일)이 예상 소요일(" + totalNeededDays + "일) 대비 "
+                            + Math.round((ratio - 1) * 100) + "% 여유가 있습니다. → 론치일을 " + recommendedStr + "로 앞당길 수 있습니다.";
+                }
+            }
+        } else {
+            if (project.getStartDate() != null) {
+                startDate = project.getStartDate();
+            } else {
+                LocalDate earliestMemberStart = beMembers.stream()
+                        .map(Member::getQueueStartDate)
+                        .filter(Objects::nonNull)
+                        .min(LocalDate::compareTo)
+                        .orElse(null);
+
+                // queueStartDate가 없으면 실제 투입 대상(beMembers) 중 "가장 빨리 가용한 멤버" 기준으로 시작
+                // (인력 활용 최적화: 일부 멤버가 바쁘더라도 유휴 멤버가 있으면 즉시 시작)
+                if (earliestMemberStart == null) {
+                    LocalDate earliestAvailableFromBusy = beMembers.stream()
+                            .map(Member::getId)
+                            .map(mid -> {
+                                List<LocalDate[]> periods = memberBusyPeriods.get(mid);
+                                if (periods == null || periods.isEmpty()) return LocalDate.now();
+                                LocalDate latestBusyEnd = periods.stream()
+                                        .map(period -> period[1])
+                                        .max(LocalDate::compareTo)
+                                        .orElse(null);
+                                return latestBusyEnd != null
+                                        ? bizDayCalc.getNextBusinessDay(latestBusyEnd, holidays)
+                                        : LocalDate.now();
+                            })
+                            .min(LocalDate::compareTo)
+                            .orElse(null);
+
+                    // 0 MD 등으로 beMembers 자체가 비어 있으면 기존처럼 스쿼드 풀 기준으로 fallback
+                    if (earliestAvailableFromBusy == null && beMembers.isEmpty()) {
+                        List<Member> poolForStart = getSquadMemberPool(projectId);
+                        LocalDate latestBusyEnd = poolForStart.stream()
+                                .map(Member::getId)
+                                .filter(memberBusyPeriods::containsKey)
+                                .flatMap(mid -> memberBusyPeriods.get(mid).stream())
+                                .map(period -> period[1])
+                                .max(LocalDate::compareTo)
+                                .orElse(null);
+                        earliestAvailableFromBusy = latestBusyEnd != null
+                                ? bizDayCalc.getNextBusinessDay(latestBusyEnd, holidays)
+                                : null;
+                    }
+                    startDate = earliestAvailableFromBusy != null
+                            ? earliestAvailableFromBusy
+                            : LocalDate.now();
+                } else {
+                    startDate = earliestMemberStart;
+                }
+                startDate = bizDayCalc.ensureBusinessDay(startDate, holidays);  // 비가용일 보정
+            }
+
+            LocalDate calcBaseDate = startDate.isBefore(today) ? today : startDate;
+            LocalDate devCalcStart = bizDayCalc.ensureBusinessDay(calcBaseDate, beUnavailable);
+            devEndDate = devCalcStart;
+
+            if (devDays > 0) {
+                devEndDate = bizDayCalc.calculateEndDate(devCalcStart, new BigDecimal(devDays), BigDecimal.ONE, beUnavailable);
+            }
+
+            if (qaDays != null && qaDays > 0) {
+                if (qaFixedStartDate != null) {
+                    qaStartDate = bizDayCalc.ensureBusinessDay(qaFixedStartDate, qaUnavailable);
+                } else {
+                    qaStartDate = bizDayCalc.getNextBusinessDay(devEndDate, qaUnavailable);
+                }
+                qaEndDate = bizDayCalc.calculateEndDate(qaStartDate, new BigDecimal(qaDays), BigDecimal.ONE, qaUnavailable);
+            }
+
+            if (totalMd.compareTo(BigDecimal.ZERO) == 0 && project.getEndDate() == null) {
+                launchDate = null;  // 기간 미지정 0 MD: 계산 불가
+            } else if (project.getEndDate() != null) {
+                launchDate = project.getEndDate();
+            } else if (qaEndDate != null) {
+                launchDate = bizDayCalc.getNextBusinessDay(qaEndDate, holidays);
+            } else {
+                launchDate = bizDayCalc.getNextBusinessDay(devEndDate, holidays);
+            }
+        }
+
+        return new TimelineComputation(devDays, startDate, launchDate, devEndDate, qaStartDate, qaEndDate, warning);
+    }
 
     private int calculateDevDaysWithLeaves(BigDecimal totalMd, BigDecimal beCapacity,
                                             List<Member> beMembers, Map<Member, Set<LocalDate>> beMemberLeaves,

@@ -7902,6 +7902,19 @@ async function executeScheduleCalc() {
     }
 }
 
+var BE_WARNING_TOOLTIP_HTML = '<table class="table table-sm table-bordered mb-0" style="font-size:0.75rem; min-width:140px;">'
+    + '<thead class="table-dark"><tr><th>총 공수(MD)</th><th>목표 인원</th></tr></thead>'
+    + '<tbody>'
+    + '<tr><td>1 ~ 5</td><td>1명</td></tr>'
+    + '<tr><td>6 ~ 15</td><td>2명</td></tr>'
+    + '<tr><td>16 ~ 30</td><td>3명</td></tr>'
+    + '<tr><td>31+</td><td>4명</td></tr>'
+    + '</tbody></table>';
+
+function isBeMemberWarning(text) {
+    return text.startsWith('BE ') && text.indexOf('추가 투입 필요') !== -1;
+}
+
 function renderScheduleCalcResult(data) {
     var html = '<table class="table table-bordered table-sm">';
     html += '<thead class="table-light"><tr>';
@@ -7909,19 +7922,20 @@ function renderScheduleCalcResult(data) {
     html += '<th>BE</th><th>QA</th>';
     html += '</tr></thead><tbody>';
     data.forEach(function(r) {
-        if (r.skipped) {
-            html += '<tr style="background:#f0f0f0;"><td><strong>' + escapeHtml(r.projectName) + '</strong> <span class="badge bg-secondary" style="font-size:0.65rem;">KTLO</span></td>';
-            html += '<td colspan="6" class="text-muted" style="font-size:0.8rem;">' + escapeHtml(r.skipReason) + '</td></tr>';
-            return;
-        }
-        var rowStyle = r.fixedSchedule ? ' style="background:#f8f9fa;"' : '';
-        html += '<tr' + rowStyle + '>';
+        if (r.skipped) return;
+        html += '<tr>';
         html += '<td><strong>' + escapeHtml(r.projectName) + '</strong>';
-        if (r.fixedSchedule) html += ' <span class="badge bg-info" style="font-size:0.65rem;">고정</span>';
         html += '</td>';
-        html += '<td class="text-center">' + r.totalMd + '</td>';
+        html += '<td class="text-center">' + escapeHtml(String(r.totalMd)) + '</td>';
         // 개발: 시작~종료 Ndays
-        var devText = formatDateShort(r.startDate) + '-' + formatDateShort(r.devEndDate) + ' ' + (r.devDays || 0) + 'd';
+        var autoLabel = '<span class="badge bg-secondary" style="font-size:0.6rem; margin-left:2px;">자동</span>';
+        var devStartStr = formatDateShort(r.startDate) + (r.autoStartDate ? autoLabel : '');
+        var devText;
+        if (r.totalMd == null || parseFloat(r.totalMd) === 0) {
+            devText = devStartStr + '~';
+        } else {
+            devText = devStartStr + '-' + formatDateShort(r.devEndDate) + ' ' + (r.devDays || 0) + 'd';
+        }
         html += '<td style="white-space:nowrap;">' + devText + '</td>';
         // QA: 시작~종료 Ndays
         var qaText = '-';
@@ -7929,41 +7943,77 @@ function renderScheduleCalcResult(data) {
             qaText = formatDateShort(r.qaStartDate) + '-' + formatDateShort(r.qaEndDate) + ' ' + (r.qaDays || 0) + 'd';
         }
         html += '<td style="white-space:nowrap;">' + qaText + '</td>';
-        html += '<td><strong>' + formatDateShort(r.launchDate) + '</strong></td>';
+        if (r.launchDate) {
+            var launchAutoLabel = r.autoLaunchDate ? ' <span class="badge bg-secondary" style="font-size:0.6rem;">자동</span>' : '';
+            html += '<td><strong>' + formatDateShort(r.launchDate) + '</strong>' + launchAutoLabel + '</td>';
+        } else {
+            html += '<td class="text-muted">-</td>';
+        }
         html += '<td class="text-center">' + r.beCount + '명';
         if (r.beMembers && r.beMembers.length > 0) {
             var beMemberLabels = r.beMembers.map(function(m) {
                 var isAuto = r.autoAssignedMembers && r.autoAssignedMembers.some(function(am) { return am.name === m.name; });
-                return m.name + '(' + m.capacity + ')' + (isAuto ? '<span class="badge bg-warning text-dark" style="font-size:0.55rem; margin-left:2px;">자동</span>' : '');
+                var dateLabel = m.availableFrom ? '<span class="text-info" style="font-size:0.65rem;">(' + formatDateShort(m.availableFrom) + '~)</span>' : '';
+                return escapeHtml(m.name) + '(' + escapeHtml(String(m.capacity)) + ')' + dateLabel
+                    + (isAuto ? '<span class="badge bg-warning text-dark" style="font-size:0.55rem; margin-left:2px;">자동</span>' : '');
             });
             html += '<br><small class="text-muted">' + beMemberLabels.join(', ') + '</small>';
         }
         if (r.busyMembers && r.busyMembers.length > 0) {
-            html += '<br><small class="text-danger" style="font-size:0.7rem;">투입불가: ' + r.busyMembers.map(function(m) { return m.name; }).join(', ') + '</small>';
+            html += '<br><small class="text-danger" style="font-size:0.7rem;">투입불가: ' + r.busyMembers.map(function(m) { return escapeHtml(m.name); }).join(', ') + '</small>';
         }
         html += '</td>';
         html += '<td class="text-center">' + r.qaCount + '명';
         if (r.qaMembers && r.qaMembers.length > 0) {
-            html += '<br><small class="text-muted">' + r.qaMembers.map(function(m) { return m.name; }).join(', ') + '</small>';
+            html += '<br><small class="text-muted">' + r.qaMembers.map(function(m) { return escapeHtml(m.name); }).join(', ') + '</small>';
         }
         html += '</td>';
         html += '</tr>';
         if (r.warning) {
-            var warningText = escapeHtml(r.warning).replace(/(\d{4}-\d{2}-\d{2})/g, function(m) { return formatDateShort(m); });
-            html += '<tr><td colspan="7" class="text-warning" style="font-size:0.8rem; background:#fff8e1;"><i class="bi bi-exclamation-triangle-fill"></i> ' + escapeHtml(r.projectName) + ': ' + warningText + '</td></tr>';
+            var segments = r.warning.split(' / ');
+            var renderedSegments = segments.map(function(seg) {
+                var displayText = escapeHtml(seg).replace(/(\d{4}-\d{2}-\d{2})/g, function(m) { return formatDateShort(m); });
+                if (isBeMemberWarning(seg)) {
+                    return '<span data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-theme="dark" title="' + escapeHtml(BE_WARNING_TOOLTIP_HTML) + '" style="cursor:help; border-bottom:1px dotted #ffc107;">' + displayText + '</span>';
+                }
+                return displayText;
+            });
+            var warningText = renderedSegments.join(' / ');
+            html += '<tr><td colspan="7" style="font-size:0.8rem; background:#fff8e1; color:#856404;"><i class="bi bi-exclamation-triangle-fill"></i> ' + escapeHtml(r.projectName) + ': ' + warningText + '</td></tr>';
         }
     });
     html += '</tbody></table>';
 
     // 요약
-    if (data.length > 0) {
-        var firstStart = data[0].startDate;
-        var lastLaunch = data[data.length - 1].launchDate;
+    var validItems = data.filter(function(r) { return !r.skipped && r.launchDate; });
+    if (validItems.length > 0) {
+        var firstStart = validItems[0].startDate;
+        var lastLaunch = validItems[validItems.length - 1].launchDate;
         html += '<div class="mt-2 p-2 bg-light rounded" style="font-size:0.85rem;">';
         html += '<strong>전체 일정:</strong> ' + formatDateShort(firstStart) + ' ~ ' + formatDateShort(lastLaunch);
-        var totalMdSum = data.reduce(function(s, r) { return s + parseFloat(r.totalMd || 0); }, 0);
+        var totalMdSum = validItems.reduce(function(s, r) { return s + parseFloat(r.totalMd || 0); }, 0);
         html += ' | 총 공수: ' + totalMdSum + ' MD';
         html += '</div>';
     }
+    // 기존 tooltip 인스턴스 정리 (메모리 누수 방지)
+    document.querySelectorAll('#schedule-calc-result [data-bs-toggle="tooltip"]').forEach(function(el) {
+        var existing = bootstrap.Tooltip.getInstance(el);
+        if (existing) existing.dispose();
+    });
+
     document.getElementById('schedule-calc-result').innerHTML = html;
+
+    // Bootstrap tooltip allowList 확장 (table 관련 태그 + style 속성 허용)
+    var tooltipAllowList = bootstrap.Tooltip.Default.allowList;
+    tooltipAllowList.table = ['style'];
+    tooltipAllowList.thead = [];
+    tooltipAllowList.tbody = [];
+    tooltipAllowList.tr = [];
+    tooltipAllowList.th = [];
+    tooltipAllowList.td = [];
+
+    // BE 투입 경고 tooltip 초기화
+    document.querySelectorAll('#schedule-calc-result [data-bs-toggle="tooltip"]').forEach(function(el) {
+        new bootstrap.Tooltip(el, { html: true });
+    });
 }

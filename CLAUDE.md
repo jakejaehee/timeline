@@ -48,9 +48,20 @@ exception/           Custom exceptions + GlobalExceptionHandler
 - `js/app.js` — All UI logic in vanilla JS, fetches REST APIs with `fetch()`
 - `css/styles.css` — Custom styles on top of Bootstrap 5.3
 
-## Schema Sync Rule
+## Schema & Backup Sync Rule
 
-- When JPA entities (`domain/entity/`) are modified (add/remove/rename fields, change types, add new entities), **always update `docs/schema.sql`** to reflect the current schema.
+### docs/schema.sql 동기화
+- JPA 엔티티(`domain/entity/`)를 수정(필드 추가/삭제/이름변경, 타입변경, 새 엔티티)할 때 **반드시 `docs/schema.sql`도 함께 수정**하여 현재 스키마를 반영
+- `docs/schema.sql`은 DB의 **전체 테이블 정의**를 담고 있어야 함 (설정 테이블 포함)
+
+### BackupDto / DataBackupService 동기화
+- 테이블이나 컬럼이 추가/변경되면 **반드시 `BackupDto`와 `DataBackupService`도 함께 수정**
+- `BackupDto.Snapshot`에 모든 데이터 테이블의 Row 클래스가 포함되어야 함
+- `DataBackupService.exportAll()`에서 모든 테이블을 빠짐없이 export
+- `DataBackupService.importAll()`에서 모든 테이블을 빠짐없이 import (FK 순서 준수)
+- `DataBackupService.deleteAllInOrder()`에서 모든 테이블을 FK 역순으로 삭제
+- `DataBackupService.resetSequences()`에서 모든 테이블의 sequence 리셋
+- 각 Row 클래스는 해당 테이블의 **모든 컬럼**을 포함해야 함 (누락 금지)
 
 ## Conventions
 

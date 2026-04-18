@@ -23,11 +23,12 @@ public class BackupDto {
         private String schemaVersion;
         private LocalDateTime exportedAt;
         private List<MemberRow> members;
-        private List<DomainSystemRow> domainSystems;
+        private List<SquadRow> squads;
         private List<ProjectRow> projects;
         private List<HolidayRow> holidays;
+        private List<SquadMemberRow> squadMembers;
         private List<ProjectMemberRow> projectMembers;
-        private List<ProjectDomainSystemRow> projectDomainSystems;
+        private List<ProjectSquadRow> projectSquads;
         private List<TaskRow> tasks;
         private List<MemberLeaveRow> memberLeaves;
         private List<TaskLinkRow> taskLinks;
@@ -54,7 +55,7 @@ public class BackupDto {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DomainSystemRow {
+    public static class SquadRow {
         private Long id;
         private String name;
         private String description;
@@ -70,7 +71,6 @@ public class BackupDto {
     public static class ProjectRow {
         private Long id;
         private String name;
-        private String projectType;
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
@@ -97,6 +97,17 @@ public class BackupDto {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
+    public static class SquadMemberRow {
+        private Long id;
+        private Long squadId;
+        private Long memberId;
+        private LocalDateTime createdAt;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class ProjectMemberRow {
         private Long id;
         private Long projectId;
@@ -108,10 +119,10 @@ public class BackupDto {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class ProjectDomainSystemRow {
+    public static class ProjectSquadRow {
         private Long id;
         private Long projectId;
-        private Long domainSystemId;
+        private Long squadId;
         private LocalDateTime createdAt;
     }
 
@@ -122,7 +133,7 @@ public class BackupDto {
     public static class TaskRow {
         private Long id;
         private Long projectId;
-        private Long domainSystemId;
+        private Long squadId;
         private Long assigneeId;
         private String name;
         private String description;
@@ -183,11 +194,12 @@ public class BackupDto {
     @AllArgsConstructor
     public static class ImportResult {
         private int members;
-        private int domainSystems;
+        private int squads;
+        private int squadMembers;
         private int projects;
         private int holidays;
         private int projectMembers;
-        private int projectDomainSystems;
+        private int projectSquads;
         private int tasks;
         private int memberLeaves;
         private int taskLinks;
@@ -195,11 +207,11 @@ public class BackupDto {
 
         public String toSummaryMessage() {
             return String.format(
-                    "members: %d, domainSystems: %d, projects: %d, holidays: %d, " +
-                    "projectMembers: %d, projectDomainSystems: %d, tasks: %d, " +
+                    "members: %d, squads: %d, squadMembers: %d, projects: %d, holidays: %d, " +
+                    "projectMembers: %d, projectSquads: %d, tasks: %d, " +
                     "memberLeaves: %d, taskLinks: %d, taskDependencies: %d",
-                    members, domainSystems, projects, holidays,
-                    projectMembers, projectDomainSystems, tasks,
+                    members, squads, squadMembers, projects, holidays,
+                    projectMembers, projectSquads, tasks,
                     memberLeaves, taskLinks, taskDependencies
             );
         }

@@ -45,6 +45,9 @@ public class ProjectMilestone {
     @Column
     private Integer days;
 
+    @Column(name = "qa_assignees", length = 500)
+    private String qaAssignees;
+
     @Column(name = "sort_order")
     private Integer sortOrder;
 

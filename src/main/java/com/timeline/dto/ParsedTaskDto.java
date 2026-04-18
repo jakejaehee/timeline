@@ -18,31 +18,31 @@ import java.util.List;
 public class ParsedTaskDto {
 
     /**
-     * 도메인 시스템별 파싱 결과 목록
+     * 스쿼드별 파싱 결과 목록
      */
-    private List<DomainSystemParsed> domainSystems;
+    private List<SquadParsed> squads;
 
     /**
-     * 도메인 시스템 파싱 결과
+     * 스쿼드 파싱 결과
      */
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DomainSystemParsed {
+    public static class SquadParsed {
 
         /**
-         * 도메인 시스템명 (AI가 추출한 이름)
+         * 스쿼드명 (AI가 추출한 이름)
          */
         private String name;
 
         /**
-         * DB의 도메인 시스템과 매칭 여부
+         * DB의 스쿼드와 매칭 여부
          */
-        private Boolean domainSystemMatched;
+        private Boolean squadMatched;
 
         /**
-         * 해당 도메인 시스템의 태스크 목록
+         * 해당 스쿼드의 태스크 목록
          */
         private List<TaskParsed> tasks;
     }

@@ -31,9 +31,6 @@ public class Project {
     @Column(nullable = false, length = 200)
     private String name;
 
-    @Column(name = "project_type", length = 100)
-    private String projectType;
-
     @Column(columnDefinition = "TEXT")
     private String description;
 
@@ -67,6 +64,10 @@ public class Project {
 
     @Column(name = "total_man_days_override", precision = 10, scale = 1)
     private BigDecimal totalManDaysOverride;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private Boolean ktlo = false;
 
     @Column(name = "sort_order")
     private Integer sortOrder;

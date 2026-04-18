@@ -23,7 +23,6 @@ public class ProjectDto {
     @AllArgsConstructor
     public static class Request {
         private String name;
-        private String projectType;
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
@@ -34,6 +33,7 @@ public class ProjectDto {
         private Long pplId;
         private Long eplId;
         private String quarter;
+        private Boolean ktlo;
     }
 
     @Data
@@ -43,7 +43,6 @@ public class ProjectDto {
     public static class Response {
         private Long id;
         private String name;
-        private String projectType;
         private String description;
         private LocalDate startDate;
         private LocalDate endDate;
@@ -55,6 +54,7 @@ public class ProjectDto {
         private BigDecimal estimatedDays;         // 계산값: totalManDays / BE캐파합계
         private Integer beCount;
         private List<Map<String, Object>> beMembers;
+        private List<Map<String, Object>> allMembers;
         private Integer memberCount;
         private Integer sortOrder;
         private String jiraBoardId;
@@ -64,14 +64,15 @@ public class ProjectDto {
         private Long eplId;
         private String eplName;
         private String quarter;
+        private Boolean ktlo;
         private List<MemberDto.Response> members;
-        private List<DomainSystemDto.Response> domainSystems;
+        private List<SquadDto.Response> squads;
 
         public static Response from(Project project) {
             return Response.builder()
                     .id(project.getId())
                     .name(project.getName())
-                    .projectType(project.getProjectType())
+
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
@@ -84,17 +85,18 @@ public class ProjectDto {
                     .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
                     .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
                     .quarter(project.getQuarter())
+                    .ktlo(Boolean.TRUE.equals(project.getKtlo()))
                     .sortOrder(project.getSortOrder())
                     .build();
         }
 
         public static Response from(Project project,
                                      List<MemberDto.Response> members,
-                                     List<DomainSystemDto.Response> domainSystems) {
+                                     List<SquadDto.Response> squads) {
             return Response.builder()
                     .id(project.getId())
                     .name(project.getName())
-                    .projectType(project.getProjectType())
+
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
@@ -107,18 +109,20 @@ public class ProjectDto {
                     .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
                     .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
                     .quarter(project.getQuarter())
+                    .ktlo(Boolean.TRUE.equals(project.getKtlo()))
                     .sortOrder(project.getSortOrder())
                     .members(members)
-                    .domainSystems(domainSystems)
+                    .squads(squads)
                     .build();
         }
 
         /**
-         * 목록 조회용: memberCount + expectedEndDate (members/domainSystems 없음)
+         * 목록 조회용: memberCount + expectedEndDate (members/squads 없음)
          */
         public static Response from(Project project, long memberCount, LocalDate expectedEndDate,
                                      BigDecimal totalManDays, long beCount, BigDecimal estimatedDays,
-                                     List<Map<String, Object>> beMembers) {
+                                     List<Map<String, Object>> beMembers, List<SquadDto.Response> squads,
+                                     List<Map<String, Object>> allMembers) {
             Boolean delayed = null;
             if (expectedEndDate != null && project.getEndDate() != null) {
                 delayed = expectedEndDate.isAfter(project.getEndDate());
@@ -126,7 +130,7 @@ public class ProjectDto {
             return Response.builder()
                     .id(project.getId())
                     .name(project.getName())
-                    .projectType(project.getProjectType())
+
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
@@ -141,18 +145,21 @@ public class ProjectDto {
                     .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
                     .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
                     .quarter(project.getQuarter())
+                    .ktlo(Boolean.TRUE.equals(project.getKtlo()))
                     .sortOrder(project.getSortOrder())
                     .memberCount((int) memberCount)
                     .beCount((int) beCount)
                     .beMembers(beMembers)
                     .totalManDays(totalManDays)
                     .estimatedDays(estimatedDays)
+                    .squads(squads)
+                    .allMembers(allMembers)
                     .build();
         }
 
         public static Response from(Project project,
                                      List<MemberDto.Response> members,
-                                     List<DomainSystemDto.Response> domainSystems,
+                                     List<SquadDto.Response> squads,
                                      LocalDate expectedEndDate) {
             Boolean delayed = null;
             if (expectedEndDate != null && project.getEndDate() != null) {
@@ -161,7 +168,7 @@ public class ProjectDto {
             return Response.builder()
                     .id(project.getId())
                     .name(project.getName())
-                    .projectType(project.getProjectType())
+
                     .description(project.getDescription())
                     .startDate(project.getStartDate())
                     .endDate(project.getEndDate())
@@ -176,9 +183,10 @@ public class ProjectDto {
                     .eplId(project.getEpl() != null ? project.getEpl().getId() : null)
                     .eplName(project.getEpl() != null ? project.getEpl().getName() : null)
                     .quarter(project.getQuarter())
+                    .ktlo(Boolean.TRUE.equals(project.getKtlo()))
                     .sortOrder(project.getSortOrder())
                     .members(members)
-                    .domainSystems(domainSystems)
+                    .squads(squads)
                     .build();
         }
     }
@@ -194,12 +202,12 @@ public class ProjectDto {
     }
 
     /**
-     * 프로젝트에 도메인 시스템 추가 요청
+     * 프로젝트에 스쿼드 추가 요청
      */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class AddDomainSystemRequest {
-        private Long domainSystemId;
+    public static class AddSquadRequest {
+        private Long squadId;
     }
 }

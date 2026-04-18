@@ -43,7 +43,7 @@ var projectListStatusFilter = (function() {
     catch(e) { return _defaultProjectStatusFilter.slice(); }
 })();
 var ganttShowJiraKey = false;  // 간트차트 티켓번호 표시 여부
-var ganttShowDomain = false;   // 간트차트 도메인명 표시 여부
+var ganttShowSquad = false;   // 간트차트 스쿼드명 표시 여부
 var taskDepSearchBound = false; // 선행 태스크 검색 이벤트 바인딩 여부
 
 // ========================================
@@ -220,13 +220,6 @@ function roleBadge(role) {
     return '<span class="badge-status badge-' + role + '">' + role + '</span>';
 }
 
-/**
- * 프로젝트 유형 배지 HTML (자유 문자열 대응)
- */
-function typeBadge(type) {
-    if (!type) return '';
-    return '<span class="badge-project-type">' + escapeHtml(type) + '</span>';
-}
 
 /**
  * 우선순위 배지 HTML
@@ -826,39 +819,47 @@ async function deleteMember(id) {
 // Domain Systems
 // ========================================
 
-async function loadDomainSystems() {
+async function loadSquads() {
     try {
-        var res = await apiCall('/api/v1/domain-systems');
-        var domainSystems = (res.success && res.data) ? res.data : [];
-        var tbody = document.getElementById('domain-systems-table');
+        var res = await apiCall('/api/v1/squads');
+        var squads = (res.success && res.data) ? res.data : [];
+        var tbody = document.getElementById('squads-table');
 
-        if (domainSystems.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">등록된 도메인 시스템이 없습니다.</td></tr>';
+        if (squads.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">등록된 스쿼드가 없습니다.</td></tr>';
             return;
         }
 
+        // 각 스쿼드의 멤버 수를 병렬로 조회
+        var memberCounts = await Promise.all(squads.map(function(ds) {
+            return apiCall('/api/v1/squads/' + ds.id + '/members').then(function(r) {
+                return (r.success && r.data) ? r.data.length : 0;
+            }).catch(function() { return 0; });
+        }));
+
         var html = '';
-        domainSystems.forEach(function(ds) {
+        squads.forEach(function(ds, idx) {
             html += '<tr>';
             html += '<td>' + escapeHtml(ds.name) + '</td>';
             html += '<td>' + escapeHtml(ds.description || '-') + '</td>';
             html += '<td><span class="color-preview" style="background-color:' + sanitizeColor(ds.color) + '"></span>' + escapeHtml(ds.color || '-') + '</td>';
+            html += '<td><a href="javascript:void(0)" onclick="showSquadMemberModal(' + ds.id + ', \'' + escapeJsString(escapeHtml(ds.name)) + '\')" style="text-decoration:none;">' + memberCounts[idx] + '명</a></td>';
             html += '<td class="text-center">';
             html += '<div class="action-buttons">';
-            html += '<button class="btn btn-outline-primary btn-sm" onclick="showDomainSystemModal(' + ds.id + ')" title="수정"><i class="bi bi-pencil"></i></button>';
-            html += '<button class="btn btn-outline-danger btn-sm" onclick="deleteDomainSystem(' + ds.id + ')" title="삭제"><i class="bi bi-trash"></i></button>';
+            html += '<button class="btn btn-outline-primary btn-sm" onclick="showSquadModal(' + ds.id + ')" title="수정"><i class="bi bi-pencil"></i></button>';
+            html += '<button class="btn btn-outline-danger btn-sm" onclick="deleteSquad(' + ds.id + ')" title="삭제"><i class="bi bi-trash"></i></button>';
             html += '</div>';
             html += '</td>';
             html += '</tr>';
         });
         tbody.innerHTML = html;
     } catch (e) {
-        console.error('도메인 시스템 목록 로드 실패:', e);
-        showToast('도메인 시스템 목록을 불러오는데 실패했습니다.', 'error');
+        console.error('스쿼드 목록 로드 실패:', e);
+        showToast('스쿼드 목록을 불러오는데 실패했습니다.', 'error');
     }
 }
 
-async function showDomainSystemModal(dsId) {
+async function showSquadModal(dsId) {
     document.getElementById('ds-id').value = '';
     document.getElementById('ds-name').value = '';
     document.getElementById('ds-description').value = '';
@@ -866,9 +867,9 @@ async function showDomainSystemModal(dsId) {
     document.getElementById('ds-color-label').textContent = '#4A90D9';
 
     if (dsId) {
-        document.getElementById('domainSystemModalTitle').textContent = '도메인 시스템 수정';
+        document.getElementById('squadModalTitle').textContent = '스쿼드 수정';
         try {
-            var res = await apiCall('/api/v1/domain-systems/' + dsId);
+            var res = await apiCall('/api/v1/squads/' + dsId);
             if (res.success && res.data) {
                 var ds = res.data;
                 document.getElementById('ds-id').value = ds.id;
@@ -878,18 +879,18 @@ async function showDomainSystemModal(dsId) {
                 document.getElementById('ds-color-label').textContent = ds.color || '#4A90D9';
             }
         } catch (e) {
-            showToast('도메인 시스템 정보를 불러오는데 실패했습니다.', 'error');
+            showToast('스쿼드 정보를 불러오는데 실패했습니다.', 'error');
             return;
         }
     } else {
-        document.getElementById('domainSystemModalTitle').textContent = '도메인 시스템 추가';
+        document.getElementById('squadModalTitle').textContent = '스쿼드 추가';
     }
 
-    var modal = new bootstrap.Modal(document.getElementById('domainSystemModal'));
+    var modal = new bootstrap.Modal(document.getElementById('squadModal'));
     modal.show();
 }
 
-async function saveDomainSystem() {
+async function saveSquad() {
     var id = document.getElementById('ds-id').value;
     var name = document.getElementById('ds-name').value.trim();
     var description = document.getElementById('ds-description').value.trim();
@@ -905,46 +906,167 @@ async function saveDomainSystem() {
     try {
         var res;
         if (id) {
-            res = await apiCall('/api/v1/domain-systems/' + id, 'PUT', body);
+            res = await apiCall('/api/v1/squads/' + id, 'PUT', body);
         } else {
-            res = await apiCall('/api/v1/domain-systems', 'POST', body);
+            res = await apiCall('/api/v1/squads', 'POST', body);
         }
 
         if (res.success) {
-            showToast(id ? '도메인 시스템이 수정되었습니다.' : '도메인 시스템이 추가되었습니다.', 'success');
-            bootstrap.Modal.getInstance(document.getElementById('domainSystemModal')).hide();
-            loadDomainSystems();
+            showToast(id ? '스쿼드이 수정되었습니다.' : '스쿼드이 추가되었습니다.', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('squadModal')).hide();
+            loadSquads();
         } else {
             showToast(res.message || '저장에 실패했습니다.', 'error');
         }
     } catch (e) {
-        console.error('도메인 시스템 저장 실패:', e);
-        showToast('도메인 시스템 저장에 실패했습니다.', 'error');
+        console.error('스쿼드 저장 실패:', e);
+        showToast('스쿼드 저장에 실패했습니다.', 'error');
     }
 }
 
-async function deleteDomainSystem(id) {
-    if (!confirmAction('이 도메인 시스템을 삭제하시겠습니까?')) return;
+async function deleteSquad(id) {
+    if (!confirmAction('이 스쿼드을 삭제하시겠습니까?')) return;
 
     try {
-        var res = await apiCall('/api/v1/domain-systems/' + id, 'DELETE');
+        var res = await apiCall('/api/v1/squads/' + id, 'DELETE');
         if (res.success) {
-            showToast('도메인 시스템이 삭제되었습니다.', 'success');
-            loadDomainSystems();
+            showToast('스쿼드이 삭제되었습니다.', 'success');
+            loadSquads();
         } else {
             showToast(res.message || '삭제에 실패했습니다.', 'error');
         }
     } catch (e) {
-        console.error('도메인 시스템 삭제 실패:', e);
-        showToast('도메인 시스템 삭제에 실패했습니다.', 'error');
+        console.error('스쿼드 삭제 실패:', e);
+        showToast('스쿼드 삭제에 실패했습니다.', 'error');
     }
+}
+
+// ---- 스쿼드 멤버 관리 ----
+
+var _squadMemberAvailable = []; // 추가 가능한 멤버 캐시
+
+async function showSquadMemberModal(squadId, squadName) {
+    document.getElementById('squad-member-squad-id').value = squadId;
+    document.getElementById('squadMemberModalTitle').textContent = squadName + ' - 멤버 관리';
+    document.getElementById('squad-member-search').value = '';
+    document.getElementById('squad-member-search-results').style.display = 'none';
+
+    var results = await Promise.all([
+        apiCall('/api/v1/members'),
+        apiCall('/api/v1/squads/' + squadId + '/members')
+    ]);
+    var allMembers = (results[0].success && results[0].data) ? results[0].data : [];
+    var squadMembers = (results[1].success && results[1].data) ? results[1].data : [];
+    var squadMemberIds = squadMembers.map(function(m) { return m.id; });
+
+    _squadMemberAvailable = allMembers.filter(function(m) { return squadMemberIds.indexOf(m.id) === -1; });
+
+    renderSquadMemberList(squadMembers, squadId);
+
+    var modal = new bootstrap.Modal(document.getElementById('squadMemberModal'));
+    modal.show();
+
+    // 검색 이벤트 바인딩 (중복 방지)
+    var searchInput = document.getElementById('squad-member-search');
+    searchInput.oninput = function() { filterSquadMemberSearch(this.value); };
+    searchInput.onfocus = function() { if (this.value.length > 0) filterSquadMemberSearch(this.value); };
+}
+
+function filterSquadMemberSearch(query) {
+    var resultsEl = document.getElementById('squad-member-search-results');
+    var q = query.trim().toLowerCase();
+    if (q.length === 0) {
+        resultsEl.style.display = 'none';
+        return;
+    }
+    var matched = _squadMemberAvailable.filter(function(m) {
+        return m.name.toLowerCase().indexOf(q) !== -1 || m.role.toLowerCase().indexOf(q) !== -1;
+    });
+    if (matched.length === 0) {
+        resultsEl.innerHTML = '<div class="list-group-item text-muted small">검색 결과 없음</div>';
+        resultsEl.style.display = '';
+        return;
+    }
+    var html = '';
+    matched.forEach(function(m) {
+        html += '<button type="button" class="list-group-item list-group-item-action py-1 px-2 d-flex justify-content-between align-items-center" onclick="selectSquadMember(' + m.id + ')">';
+        html += '<span>' + escapeHtml(m.name) + ' <span class="badge badge-role badge-' + m.role + '" style="font-size:0.7rem;">' + m.role + '</span></span>';
+        html += '<span class="text-muted small">캐파 ' + (m.capacity != null ? m.capacity : 1.0) + '</span>';
+        html += '</button>';
+    });
+    resultsEl.innerHTML = html;
+    resultsEl.style.display = '';
+}
+
+async function selectSquadMember(memberId) {
+    var squadId = document.getElementById('squad-member-squad-id').value;
+    document.getElementById('squad-member-search').value = '';
+    document.getElementById('squad-member-search-results').style.display = 'none';
+    try {
+        var res = await apiCall('/api/v1/squads/' + squadId + '/members', 'POST', { memberId: memberId });
+        if (res.success) {
+            showToast('멤버가 추가되었습니다.', 'success');
+            await refreshSquadMemberModal(squadId);
+            loadSquads();
+        } else {
+            showToast(res.message || '추가 실패', 'error');
+        }
+    } catch (e) { showToast('멤버 추가 실패', 'error'); }
+}
+
+function renderSquadMemberList(members, squadId) {
+    var listEl = document.getElementById('squad-member-list');
+    if (members.length === 0) {
+        listEl.innerHTML = '<div class="text-muted text-center">등록된 멤버가 없습니다.</div>';
+        return;
+    }
+    var html = '<table class="table table-sm mb-0"><thead><tr><th>이름</th><th>역할</th><th>캐파</th><th class="text-center">액션</th></tr></thead><tbody>';
+    members.forEach(function(m) {
+        html += '<tr>';
+        html += '<td>' + escapeHtml(m.name) + '</td>';
+        html += '<td><span class="badge badge-role badge-' + m.role + '">' + m.role + '</span></td>';
+        html += '<td>' + (m.capacity != null ? m.capacity : 1.0) + '</td>';
+        html += '<td class="text-center"><button class="btn btn-outline-danger btn-sm" onclick="removeSquadMemberFromModal(' + squadId + ', ' + m.id + ')" title="제거"><i class="bi bi-x-lg"></i></button></td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    listEl.innerHTML = html;
+}
+
+async function removeSquadMemberFromModal(squadId, memberId) {
+    try {
+        var res = await apiCall('/api/v1/squads/' + squadId + '/members/' + memberId, 'DELETE');
+        if (res.success) {
+            showToast('멤버가 제거되었습니다.', 'success');
+            await refreshSquadMemberModal(squadId);
+            loadSquads();
+        } else {
+            showToast(res.message || '제거 실패', 'error');
+        }
+    } catch (e) { showToast('멤버 제거 실패', 'error'); }
+}
+
+async function refreshSquadMemberModal(squadId) {
+    var results = await Promise.all([
+        apiCall('/api/v1/members'),
+        apiCall('/api/v1/squads/' + squadId + '/members')
+    ]);
+    var allMembers = (results[0].success && results[0].data) ? results[0].data : [];
+    var squadMembers = (results[1].success && results[1].data) ? results[1].data : [];
+    var squadMemberIds = squadMembers.map(function(m) { return m.id; });
+
+    _squadMemberAvailable = allMembers.filter(function(m) { return squadMemberIds.indexOf(m.id) === -1; });
+
+    document.getElementById('squad-member-search').value = '';
+    document.getElementById('squad-member-search-results').style.display = 'none';
+
+    renderSquadMemberList(squadMembers, squadId);
 }
 
 // ========================================
 // Projects
 // ========================================
 
-var _projFilterType = [];
 var _projFilterQuarter = [];
 
 function applyProjectListStatusFilter(projects) {
@@ -968,10 +1090,6 @@ function applyProjectListStatusFilter(projects) {
     var eplFilter = (document.getElementById('proj-filter-epl') || {}).value || '';
     if (eplFilter) {
         result = result.filter(function(p) { return p.eplName === eplFilter; });
-    }
-    // 유형 필터
-    if (_projFilterType.length > 0) {
-        result = result.filter(function(p) { return _projFilterType.indexOf(p.projectType) !== -1; });
     }
     // 분기 필터
     if (_projFilterQuarter.length > 0) {
@@ -997,14 +1115,6 @@ function onProjFilterStatusChange() {
     applyProjectListFilters();
 }
 
-function onProjFilterTypeChange() {
-    _projFilterType = [];
-    document.querySelectorAll('.proj-filter-type-cb:checked').forEach(function(cb) { _projFilterType.push(cb.value); });
-    var btn = document.getElementById('proj-filter-type-btn');
-    if (btn) btn.textContent = _projFilterType.length > 0 ? '유형 (' + _projFilterType.length + ')' : '유형';
-    applyProjectListFilters();
-}
-
 function onProjFilterQuarterChange() {
     _projFilterQuarter = [];
     document.querySelectorAll('.proj-filter-quarter-cb:checked').forEach(function(cb) { _projFilterQuarter.push(cb.value); });
@@ -1015,11 +1125,10 @@ function onProjFilterQuarterChange() {
 
 function populateProjectFilterOptions(projects) {
     // PPL/EPL 드롭다운
-    var ppls = {}, epls = {}, types = {}, quarters = {};
+    var ppls = {}, epls = {}, quarters = {};
     projects.forEach(function(p) {
         if (p.pplName) ppls[p.pplName] = true;
         if (p.eplName) epls[p.eplName] = true;
-        if (p.projectType) types[p.projectType] = true;
         if (p.quarter) p.quarter.split(',').forEach(function(q) { q = q.trim(); if (q) quarters[q] = true; });
     });
 
@@ -1036,19 +1145,6 @@ function populateProjectFilterOptions(projects) {
         eplSel.innerHTML = '<option value="">EPL 전체</option>';
         Object.keys(epls).sort().forEach(function(n) { eplSel.innerHTML += '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>'; });
         eplSel.value = curEpl;
-    }
-    // 유형 드롭다운 체크박스
-    var typeMenu = document.getElementById('proj-filter-type-menu');
-    if (typeMenu) {
-        var typeHtml = '';
-        var typeKeys = Object.keys(types).sort();
-        typeKeys.forEach(function(t) {
-            var checked = _projFilterType.indexOf(t) !== -1 ? ' checked' : '';
-            typeHtml += '<div class="form-check"><input class="form-check-input proj-filter-type-cb" type="checkbox" value="' + escapeHtml(t) + '" id="pft-' + escapeHtml(t) + '"' + checked + ' onchange="onProjFilterTypeChange()"><label class="form-check-label" for="pft-' + escapeHtml(t) + '">' + escapeHtml(t) + '</label></div>';
-        });
-        typeMenu.innerHTML = typeHtml || '<div class="text-muted">유형 없음</div>';
-        var typeBtn = document.getElementById('proj-filter-type-btn');
-        if (typeBtn) typeBtn.textContent = _projFilterType.length > 0 ? '유형 (' + _projFilterType.length + ')' : '유형';
     }
     // 분기 드롭다운 체크박스
     var qMenu = document.getElementById('proj-filter-quarter-menu');
@@ -1096,7 +1192,7 @@ function renderProjectsTable(projects) {
     var filtered = applyProjectListStatusFilter(projects);
 
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="15" class="text-center text-muted">해당 상태의 프로젝트가 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="14" class="text-center text-muted">해당 상태의 프로젝트가 없습니다.</td></tr>';
         updateProjSortIcons();
         return;
     }
@@ -1136,22 +1232,21 @@ function renderProjectsTable(projects) {
         var descTooltip = p.description ? ' data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-custom-class="tooltip-left-align" title="' + escapeHtml(p.description).replace(/\n/g, '<br>') + '"' : '';
         html += '<td class="text-center" style="padding:4px;"><button class="btn btn-sm p-0 border-0 text-info" onclick="showProjectLinksPopup(' + p.id + ', this, event)" title="링크"><i class="bi bi-link-45deg"></i></button></td>';
         html += '<td class="cursor-pointer" onclick="showProjectDetail(' + p.id + ')"' + descTooltip + '><strong>' + escapeHtml(p.name) + '</strong></td>';
-        html += '<td><a href="javascript:void(0)" onclick="event.stopPropagation(); showProjectMembersModal(' + p.id + ', \'' + escapeJsString(escapeHtml(p.name)) + '\')" style="text-decoration:none;">' + memberCount + '명</a></td>';
-        var beCount = p.beCount != null ? p.beCount : 0;
-        var beTooltip = '';
-        if (p.beMembers && p.beMembers.length > 0) {
-            beTooltip = ' data-bs-toggle="tooltip" data-bs-placement="bottom" title="' + p.beMembers.map(function(m) { return escapeHtml(m.name) + '(' + m.capacity + ')'; }).join(', ') + '"';
+        var squadNames = (p.squads && p.squads.length > 0) ? p.squads.map(function(s) { return escapeHtml(s.name); }).join(', ') : '-';
+        html += '<td style="font-size:0.8rem;">' + squadNames + '</td>';
+        var memberTooltip = '';
+        if (p.allMembers && p.allMembers.length > 0) {
+            memberTooltip = ' data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-html="true" title="' + p.allMembers.map(function(m) { return escapeHtml(m.name) + '(' + m.role + ')'; }).join(', ') + '"';
         }
-        html += '<td style="font-size:0.85rem; text-align:center; cursor:default;"' + beTooltip + '>' + (beCount > 0 ? beCount : '-') + '</td>';
+        html += '<td' + memberTooltip + '><a href="javascript:void(0)" onclick="event.stopPropagation(); showProjectMembersModal(' + p.id + ', \'' + escapeJsString(escapeHtml(p.name)) + '\')" style="text-decoration:none;">' + memberCount + '명</a></td>';
         var mdVal = p.totalManDays != null && p.totalManDays > 0 ? p.totalManDays : '-';
         html += '<td style="font-size:0.85rem; text-align:center;">' + mdVal + '</td>';
         var estDays = p.estimatedDays != null && p.estimatedDays > 0 ? p.estimatedDays : '-';
         html += '<td style="font-size:0.85rem; text-align:center;">' + estDays + '</td>';
-        html += '<td>' + formatDateWithDay(p.startDate) + '</td>';
-        html += '<td>' + formatDateWithDay(p.endDate) + '</td>';
+        html += '<td>' + formatDateShort(p.startDate) + '</td>';
+        html += '<td>' + formatDateShort(p.endDate) + '</td>';
         html += '<td style="font-size:0.8rem;">' + escapeHtml(p.pplName || '-') + '</td>';
         html += '<td style="font-size:0.8rem;">' + escapeHtml(p.quarter || '-') + '</td>';
-        html += '<td>' + typeBadge(p.projectType) + '</td>';
         html += '<td>' + statusBadge(p.status) + '</td>';
         html += '<td>' + delayHtml + '</td>';
         html += '<td class="text-center">';
@@ -1255,7 +1350,7 @@ function resetProjectListSort() {
 }
 
 function updateProjSortIcons() {
-    var fields = ['name', 'totalManDays', 'estimatedDays', 'projectType', 'status', 'startDate', 'endDate'];
+    var fields = ['name', 'totalManDays', 'estimatedDays', 'status', 'startDate', 'endDate'];
     fields.forEach(function(f) {
         var icon = document.getElementById('proj-sort-icon-' + f);
         if (!icon) return;
@@ -1318,8 +1413,8 @@ async function toggleProjectMilestones(projectId, btn) {
                 + '<td style="padding-left:8px; color:' + getMilestoneColor(ms.name) + ';">' + msNameDisplay + '</td>'
                 + '<td></td><td></td><td></td>'
                 + '<td style="text-align:center;">' + msEstDays + '</td>'
-                + '<td>' + formatDateWithDay(ms.startDate) + '</td>'
-                + '<td>' + formatDateWithDay(ms.endDate) + '</td>'
+                + '<td>' + formatDateShort(ms.startDate) + '</td>'
+                + '<td>' + formatDateShort(ms.endDate) + '</td>'
                 + (msPadCols > 0 ? '<td colspan="' + msPadCols + '"></td>' : '');
             projectRow.after(msRow);
         }
@@ -1437,7 +1532,6 @@ function renderProjectDetailHeader(p) {
     // 인라인 메타 렌더링
     var metaEl = document.getElementById('project-detail-meta');
     var metaHtml = '';
-    metaHtml += typeBadge(p.projectType) + ' ';
     metaHtml += statusBadge(p.status) + ' ';
     metaHtml += '<span class="text-muted" style="font-size:0.88rem;">';
     metaHtml += formatDateWithDay(p.startDate) + ' ~ ' + formatDateWithDay(p.endDate);
@@ -1500,12 +1594,12 @@ async function loadProjectTasks(projectId) {
         }
         var allTasks = [];
         var inactiveTasks = []; // HOLD, CANCELLED
-        if (res.data.domainSystems) {
-            res.data.domainSystems.forEach(function(ds) {
+        if (res.data.squads) {
+            res.data.squads.forEach(function(ds) {
                 if (ds.tasks) {
                     ds.tasks.forEach(function(t) {
-                        t._domainSystemName = ds.name;
-                        t._domainSystemColor = ds.color;
+                        t._squadName = ds.name;
+                        t._squadColor = ds.color;
                         if (t.status === 'HOLD' || t.status === 'CANCELLED') {
                             inactiveTasks.push(t);
                         } else {
@@ -2045,8 +2139,8 @@ function renderProjectTaskItem(t, orderNum, projectId, draggable, showAssignee) 
     }
     html += '<div class="flex-grow-1">';
     html += '<div><strong>' + escapeHtml(t.name) + '</strong>';
-    if (t._domainSystemName) {
-        html += ' <span class="text-muted" style="font-size:0.78rem;">(' + escapeHtml(t._domainSystemName) + ')</span>';
+    if (t._squadName) {
+        html += ' <span class="text-muted" style="font-size:0.78rem;">(' + escapeHtml(t._squadName) + ')</span>';
     }
     html += '</div>';
     html += '<div class="text-muted" style="font-size:0.78rem;">';
@@ -2508,8 +2602,8 @@ async function showProjectModal(projectId) {
     // 폼 초기화
     document.getElementById('project-id').value = '';
     document.getElementById('project-name').value = '';
-    document.getElementById('project-type').value = '';
     document.getElementById('project-description').value = '';
+    document.getElementById('project-ktlo').checked = false;
     document.getElementById('project-start-date').value = '';
     document.getElementById('project-end-date').value = '';
     document.getElementById('project-status').value = 'PLANNING';
@@ -2522,23 +2616,14 @@ async function showProjectModal(projectId) {
     document.getElementById('project-delay-warning').style.display = 'none';
     document.getElementById('project-delay-warning').innerHTML = '';
 
-    // 도메인시스템/프로젝트 유형/멤버 병렬 로드
+    // 스쿼드/멤버 병렬 로드
     var checklistResults = await Promise.all([
-        apiCall('/api/v1/domain-systems'),
-        apiCall('/api/v1/projects/types'),
+        apiCall('/api/v1/squads'),
         apiCall('/api/v1/members')
     ]);
     var dsRes = checklistResults[0];
-    var typesRes = checklistResults[1];
-    var membersRes = checklistResults[2];
+    var membersRes = checklistResults[1];
 
-    // datalist 채우기
-    if (typesRes.success && typesRes.data) {
-        var datalist = document.getElementById('project-type-list');
-        datalist.innerHTML = typesRes.data.map(function(t) {
-            return '<option value="' + escapeHtml(t) + '">';
-        }).join('');
-    }
     // PPL/EPL 멤버 드롭다운 채우기
     var allMembers = (membersRes.success && membersRes.data) ? membersRes.data : [];
     var memberOptHtml = '<option value="">선택 안함</option>';
@@ -2560,8 +2645,8 @@ async function showProjectModal(projectId) {
                 var p = res.data;
                 document.getElementById('project-id').value = p.id;
                 document.getElementById('project-name').value = p.name || '';
-                document.getElementById('project-type').value = p.projectType || '';
                 document.getElementById('project-description').value = p.description || '';
+                document.getElementById('project-ktlo').checked = p.ktlo === true;
                 document.getElementById('project-start-date').value = p.startDate || '';
                 document.getElementById('project-end-date').value = p.endDate || '';
                 document.getElementById('project-status').value = p.status || 'PLANNING';
@@ -2571,7 +2656,7 @@ async function showProjectModal(projectId) {
                 document.getElementById('project-ppl').value = p.pplId || '';
                 document.getElementById('project-epl').value = p.eplId || '';
                 document.getElementById('project-quarter').value = p.quarter || '';
-                currentDs = p.domainSystems ? p.domainSystems.map(function(d) { return d.id; }) : [];
+                currentDs = p.squads ? p.squads.map(function(d) { return d.id; }) : [];
 
                 // 지연 경고 표시
                 var delayWarning = document.getElementById('project-delay-warning');
@@ -2598,7 +2683,7 @@ async function showProjectModal(projectId) {
         document.getElementById('projectModalTitle').textContent = '프로젝트 추가';
     }
 
-    // 도메인 시스템 체크리스트 렌더링
+    // 스쿼드 체크리스트 렌더링
     var dsHtml = '';
     allDs.forEach(function(ds) {
         var checked = currentDs.indexOf(ds.id) >= 0 ? 'checked' : '';
@@ -2610,7 +2695,7 @@ async function showProjectModal(projectId) {
         dsHtml += '</label>';
         dsHtml += '</div>';
     });
-    document.getElementById('project-ds-checklist').innerHTML = dsHtml || '<span class="text-muted">등록된 도메인 시스템이 없습니다.</span>';
+    document.getElementById('project-ds-checklist').innerHTML = dsHtml || '<span class="text-muted">등록된 스쿼드이 없습니다.</span>';
 
     var modal = new bootstrap.Modal(document.getElementById('projectModal'));
     modal.show();
@@ -2619,7 +2704,6 @@ async function showProjectModal(projectId) {
 async function saveProject() {
     var id = document.getElementById('project-id').value;
     var name = document.getElementById('project-name').value.trim();
-    var type = document.getElementById('project-type').value.trim() || null;
     var description = document.getElementById('project-description').value.trim();
     var startDate = document.getElementById('project-start-date').value;
     var endDate = document.getElementById('project-end-date').value;
@@ -2627,6 +2711,15 @@ async function saveProject() {
 
     if (!name) {
         showToast('프로젝트명을 입력해주세요.', 'warning');
+        return;
+    }
+    // 스쿼드 필수 검증
+    var selectedSquads = [];
+    document.querySelectorAll('#project-ds-checklist input[type="checkbox"]:checked').forEach(function(cb) {
+        selectedSquads.push(parseInt(cb.value));
+    });
+    if (selectedSquads.length === 0) {
+        showToast('스쿼드를 1개 이상 선택해주세요.', 'warning');
         return;
     }
     // startDate, endDate는 선택사항 (nullable)
@@ -2640,7 +2733,6 @@ async function saveProject() {
 
     var body = {
         name: name,
-        projectType: type,
         description: description,
         startDate: startDate || null,
         endDate: endDate || null,
@@ -2650,7 +2742,8 @@ async function saveProject() {
         totalManDaysOverride: totalManDaysOverride,
         pplId: pplVal ? parseInt(pplVal) : null,
         eplId: eplVal ? parseInt(eplVal) : null,
-        quarter: document.getElementById('project-quarter').value.trim() || null
+        quarter: document.getElementById('project-quarter').value.trim() || null,
+        ktlo: document.getElementById('project-ktlo').checked
     };
 
     try {
@@ -2664,9 +2757,9 @@ async function saveProject() {
         if (res.success) {
             var projectId = id || (res.data ? res.data.id : null);
 
-            // 도메인 시스템 업데이트
+            // 스쿼드 업데이트
             if (projectId) {
-                await updateProjectDomainSystems(projectId);
+                await updateProjectSquads(projectId);
             }
 
             showToast(id ? '프로젝트가 수정되었습니다.' : '프로젝트가 추가되었습니다.', 'success');
@@ -2682,17 +2775,17 @@ async function saveProject() {
 }
 
 /**
- * 프로젝트 도메인 시스템 업데이트 (체크리스트 기반)
+ * 프로젝트 스쿼드 업데이트 (체크리스트 기반)
  */
-async function updateProjectDomainSystems(projectId) {
-    // 현재 프로젝트 도메인 시스템 조회
+async function updateProjectSquads(projectId) {
+    // 현재 프로젝트 스쿼드 조회
     var projectRes = await apiCall('/api/v1/projects/' + projectId);
     var currentDs = [];
-    if (projectRes.success && projectRes.data && projectRes.data.domainSystems) {
-        currentDs = projectRes.data.domainSystems.map(function(d) { return d.id; });
+    if (projectRes.success && projectRes.data && projectRes.data.squads) {
+        currentDs = projectRes.data.squads.map(function(d) { return d.id; });
     }
 
-    // 체크된 도메인 시스템 ID 수집
+    // 체크된 스쿼드 ID 수집
     var selectedDs = [];
     var checkboxes = document.querySelectorAll('#project-ds-checklist input[type="checkbox"]:checked');
     checkboxes.forEach(function(cb) {
@@ -2702,14 +2795,14 @@ async function updateProjectDomainSystems(projectId) {
     // 추가
     for (var i = 0; i < selectedDs.length; i++) {
         if (currentDs.indexOf(selectedDs[i]) < 0) {
-            await apiCall('/api/v1/projects/' + projectId + '/domain-systems', 'POST', { domainSystemId: selectedDs[i] });
+            await apiCall('/api/v1/projects/' + projectId + '/squads', 'POST', { squadId: selectedDs[i] });
         }
     }
 
     // 제거
     for (var j = 0; j < currentDs.length; j++) {
         if (selectedDs.indexOf(currentDs[j]) < 0) {
-            await apiCall('/api/v1/projects/' + projectId + '/domain-systems/' + currentDs[j], 'DELETE');
+            await apiCall('/api/v1/projects/' + projectId + '/squads/' + currentDs[j], 'DELETE');
         }
     }
 }
@@ -2864,18 +2957,18 @@ function renderProjectGantt() {
 
     // 옵션 읽기
     var showJira = document.getElementById('proj-gantt-show-jira-key');
-    var showDomain = document.getElementById('proj-gantt-show-domain');
+    var showDomain = document.getElementById('proj-gantt-show-squad');
     var savedJira = ganttShowJiraKey;
-    var savedDomain = ganttShowDomain;
+    var savedDomain = ganttShowSquad;
     ganttShowJiraKey = showJira ? showJira.checked : true;
-    ganttShowDomain = showDomain ? showDomain.checked : false;
+    ganttShowSquad = showDomain ? showDomain.checked : false;
 
     var tasks = convertToGanttTasks(_projGanttData);
     var _projBizDaysMap = buildBizDaysMap(tasks);
 
     // 글로벌 상태 복원
     ganttShowJiraKey = savedJira;
-    ganttShowDomain = savedDomain;
+    ganttShowSquad = savedDomain;
 
     if (tasks.length === 0) {
         chartEl.innerHTML = '<div class="empty-state"><i class="bi bi-bar-chart-steps"></i><p>표시할 태스크가 없습니다.</p></div>';
@@ -3352,8 +3445,8 @@ function convertToGanttTasks(data, projectName) {
         });
     }
 
-    if (!data.domainSystems) return tasks;
-    data.domainSystems.forEach(function(ds) {
+    if (!data.squads) return tasks;
+    data.squads.forEach(function(ds) {
         if (!ds.tasks || ds.tasks.length === 0) return;
         ds.tasks.forEach(function(task) {
             // HOLD/CANCELLED 제외
@@ -3376,11 +3469,11 @@ function convertToGanttTasks(data, projectName) {
 
             var namePrefix = projectName ? '[' + projectName + '] ' : '';
             var jiraPrefix = (ganttShowJiraKey && task.jiraKey) ? '[' + task.jiraKey + '] ' : '';
-            var domainPart = ganttShowDomain ? '[' + ds.name + '] ' : '';
+            var squadPart = ganttShowSquad ? '[' + ds.name + '] ' : '';
             var bizDays = calcWorkingDays(task.startDate, task.endDate) || 1;
             tasks.push({
                 id: 'task-' + task.id,
-                name: parallelPrefix + priorityPrefix + jiraPrefix + namePrefix + domainPart + task.name + ' (' + assigneeName + ', ' + manDays + 'MD, ' + bizDays + '일)',
+                name: parallelPrefix + priorityPrefix + jiraPrefix + namePrefix + squadPart + task.name + ' (' + assigneeName + ', ' + manDays + 'MD, ' + bizDays + '일)',
                 start: task.startDate,
                 end: addDays(task.endDate, 1),
                 progress: progress,
@@ -3388,8 +3481,8 @@ function convertToGanttTasks(data, projectName) {
                 custom_class: barClass,
                 _taskId: task.id,
                 _projectId: data.project ? data.project.id : null,
-                _domainSystem: ds.name,
-                _domainSystemColor: ds.color,
+                _squad: ds.name,
+                _squadColor: ds.color,
                 _jiraKey: task.jiraKey,
                 _bizDays: bizDays
             });
@@ -3898,17 +3991,24 @@ function getMilestoneColor(name) {
 var _milestoneTypeLabels = { ANALYSIS: '분석', DESIGN: '설계', DEVELOPMENT: '개발', DEV_TEST: '개발자테스트', QA: 'QA' };
 var _milestoneTypeOptions = '<option value="">-</option><option value="ANALYSIS">분석</option><option value="DESIGN">설계</option><option value="DEVELOPMENT">개발</option><option value="DEV_TEST">개발자테스트</option><option value="QA">QA</option>';
 
+var _msAllMembers = []; // 마일스톤 QA 담당자 검색용 멤버 캐시
+
 async function loadProjectMilestones() {
     var projectId = currentDetailProjectId;
     if (!projectId) return;
     var tbody = document.getElementById('project-milestones-table');
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">로딩 중...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">로딩 중...</td></tr>';
     try {
         await loadHolidayDatesCache();
-        var res = await apiCall('/api/v1/projects/' + projectId + '/milestones');
+        var results = await Promise.all([
+            apiCall('/api/v1/projects/' + projectId + '/milestones'),
+            apiCall('/api/v1/members')
+        ]);
+        var res = results[0];
+        _msAllMembers = (results[1].success && results[1].data) ? results[1].data : [];
         var milestones = (res.success && res.data) ? res.data : [];
         if (milestones.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">등록된 마일스톤이 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">등록된 마일스톤이 없습니다.</td></tr>';
             return;
         }
         var html = '';
@@ -3931,13 +4031,33 @@ async function loadProjectMilestones() {
             html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.startDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'startDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.startDate) + '</small></div></td>';
             // 종료일
             html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.endDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'endDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.endDate) + '</small></div></td>';
+            // QA 담당자 (QA 유형일 때만 편집 가능)
+            if (ms.type === 'QA') {
+                var qaIds = ms.qaAssignees ? ms.qaAssignees.split(',').filter(function(s) { return s.trim(); }) : [];
+                var qaNames = qaIds.map(function(id) {
+                    var m = (_msAllMembers || []).find(function(mm) { return String(mm.id) === id.trim(); });
+                    return m ? m.name : id;
+                });
+                html += '<td><div class="qa-assignee-cell" data-milestone-id="' + ms.id + '">';
+                html += '<div class="d-flex flex-wrap gap-1 mb-1">';
+                qaIds.forEach(function(id, idx) {
+                    html += '<span class="badge bg-light text-dark border" style="font-size:0.75rem;">' + escapeHtml(qaNames[idx]) + ' <button type="button" class="btn-close" style="font-size:0.5rem;" onclick="removeQaAssignee(' + ms.id + ', \'' + id.trim() + '\')"></button></span>';
+                });
+                html += '</div>';
+                html += '<div class="position-relative"><input type="text" class="form-control form-control-sm qa-assignee-search" data-ms-id="' + ms.id + '" placeholder="멤버 검색..." style="width:150px;" autocomplete="off"></div>';
+                html += '<div class="list-group position-absolute qa-assignee-results" data-ms-id="' + ms.id + '" style="z-index:1050; max-height:150px; overflow-y:auto; display:none; width:200px;"></div>';
+                html += '</div></td>';
+            } else {
+                html += '<td class="text-muted" style="font-size:0.8rem;">-</td>';
+            }
             html += '<td class="text-center"><button class="btn btn-outline-danger btn-sm" onclick="deleteProjectMilestone(' + ms.id + ')"><i class="bi bi-trash"></i></button></td>';
             html += '</tr>';
         });
         tbody.innerHTML = html;
         initMilestoneDragDrop();
+        initQaAssigneeSearch();
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">로드 실패</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">로드 실패</td></tr>';
     }
 }
 
@@ -3966,6 +4086,71 @@ async function saveMilestoneOrder() {
         await Promise.all(promises);
         showToast('마일스톤 순서가 변경되었습니다.', 'success');
     } catch (e) { showToast('순서 변경에 실패했습니다.', 'error'); }
+}
+
+function initQaAssigneeSearch() {
+    document.querySelectorAll('.qa-assignee-search').forEach(function(input) {
+        var msId = input.getAttribute('data-ms-id');
+        var resultsEl = input.parentElement.parentElement.querySelector('.qa-assignee-results[data-ms-id="' + msId + '"]');
+        input.oninput = function() {
+            var q = this.value.trim().toLowerCase();
+            if (q.length === 0) { resultsEl.style.display = 'none'; return; }
+            // 현재 할당된 ID 목록
+            var cell = this.closest('.qa-assignee-cell');
+            var currentIds = getCurrentQaIds(parseInt(msId));
+            var matched = _msAllMembers.filter(function(m) {
+                return currentIds.indexOf(String(m.id)) === -1 &&
+                       (m.name.toLowerCase().indexOf(q) !== -1 || m.role.toLowerCase().indexOf(q) !== -1);
+            });
+            if (matched.length === 0) {
+                resultsEl.innerHTML = '<div class="list-group-item text-muted small">검색 결과 없음</div>';
+            } else {
+                resultsEl.innerHTML = matched.map(function(m) {
+                    return '<button type="button" class="list-group-item list-group-item-action py-1 px-2" onclick="addQaAssignee(' + msId + ', ' + m.id + ')">' + escapeHtml(m.name) + ' <span class="badge badge-role badge-' + m.role + '" style="font-size:0.65rem;">' + m.role + '</span></button>';
+                }).join('');
+            }
+            resultsEl.style.display = '';
+        };
+        input.onfocus = function() { if (this.value.trim().length > 0) this.oninput(); };
+    });
+    // 외부 클릭 시 닫기
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.qa-assignee-cell')) {
+            document.querySelectorAll('.qa-assignee-results').forEach(function(el) { el.style.display = 'none'; });
+        }
+    });
+}
+
+function getCurrentQaIds(msId) {
+    // 현재 마일스톤의 qaAssignees를 DOM에서 파싱
+    var badges = document.querySelectorAll('.qa-assignee-cell[data-milestone-id="' + msId + '"] .badge .btn-close');
+    var ids = [];
+    badges.forEach(function(btn) {
+        var onclick = btn.getAttribute('onclick');
+        var match = onclick.match(/removeQaAssignee\(\d+,\s*'(\d+)'\)/);
+        if (match) ids.push(match[1]);
+    });
+    return ids;
+}
+
+async function addQaAssignee(msId, memberId) {
+    var currentIds = getCurrentQaIds(msId);
+    currentIds.push(String(memberId));
+    try {
+        await apiCall('/api/v1/projects/' + currentDetailProjectId + '/milestones/' + msId, 'PUT', { qaAssignees: currentIds.join(',') });
+        showToast('QA 담당자가 추가되었습니다.', 'success');
+        await loadProjectMilestones();
+    } catch (e) { showToast('QA 담당자 추가 실패', 'error'); }
+}
+
+async function removeQaAssignee(msId, memberId) {
+    var currentIds = getCurrentQaIds(msId);
+    currentIds = currentIds.filter(function(id) { return id !== String(memberId); });
+    try {
+        await apiCall('/api/v1/projects/' + currentDetailProjectId + '/milestones/' + msId, 'PUT', { qaAssignees: currentIds.length > 0 ? currentIds.join(',') : '' });
+        showToast('QA 담당자가 제거되었습니다.', 'success');
+        await loadProjectMilestones();
+    } catch (e) { showToast('QA 담당자 제거 실패', 'error'); }
 }
 
 async function addProjectMilestone() {
@@ -4151,7 +4336,7 @@ async function onTaskDateChange(task, start, end) {
             var execMode = taskData.executionMode || 'SEQUENTIAL';
             var body = {
                 name: taskData.name,
-                domainSystemId: taskData.domainSystem ? taskData.domainSystem.id : null,
+                squadId: taskData.squad ? taskData.squad.id : null,
                 assigneeId: taskData.assignee ? taskData.assignee.id : null,
                 manDays: taskData.manDays,
                 status: taskData.status,
@@ -4228,7 +4413,7 @@ async function showTaskDetail(taskId, options) {
         var assigneeCell = task.assignee ? escapeHtml(task.assignee.name) + ' (' + escapeHtml(task.assignee.role) + ') <button class="btn btn-outline-secondary btn-sm ms-1" style="padding:0 4px; font-size:0.7rem;" onclick="showUnavailableDatesPopup(' + task.assignee.id + ', \'' + escapeJsString(escapeHtml(task.assignee.name)) + '\')" title="비가용일 조회"><i class="bi bi-calendar-x"></i></button>' : '-';
         html += '<tr><th>담당자</th><td>' + assigneeCell + '</td></tr>';
         html += '<tr><th>프로젝트</th><td>' + escapeHtml(task.project ? task.project.name : '-') + '</td></tr>';
-        html += '<tr><th>도메인 시스템</th><td>' + (task.domainSystem ? escapeHtml(task.domainSystem.name) : '-') + '</td></tr>';
+        html += '<tr><th>스쿼드</th><td>' + (task.squad ? escapeHtml(task.squad.name) : '-') + '</td></tr>';
         html += '<tr><th>공수 (MD)</th><td>' + (task.manDays || '-') + '</td></tr>';
         html += '<tr><th>시작일</th><td>' + formatDateWithDay(task.startDate) + '</td></tr>';
         html += '<tr><th>종료일</th><td>' + formatDateWithDay(task.endDate) + '</td></tr>';
@@ -4312,7 +4497,7 @@ async function showTaskModal(taskId, projectId) {
     // 초기화
     document.getElementById('task-id').value = '';
     document.getElementById('task-name').value = '';
-    document.getElementById('task-domain-system').value = '';
+    document.getElementById('task-squad').value = '';
     document.getElementById('task-assignee').value = '';
     if (taskStartDatePicker) taskStartDatePicker.clear();
     document.getElementById('task-end-date').value = '';
@@ -4358,13 +4543,13 @@ async function showTaskModal(taskId, projectId) {
     var assigneeSelect = document.getElementById('task-assignee');
     assigneeSelect.innerHTML = '<option value="">선택하세요</option>';
 
-    // 프로젝트 선택 시 도메인 시스템 & 담당자 & 의존관계 갱신
+    // 프로젝트 선택 시 스쿼드 & 담당자 & 의존관계 갱신
     projectSelect.onchange = function() {
         currentModalProjectId = this.value ? parseInt(this.value) : null;
         loadTaskModalProjectData(currentModalProjectId, null, []);
     };
 
-    // 도메인 시스템 로드 (현재 프로젝트)
+    // 스쿼드 로드 (현재 프로젝트)
     await loadTaskModalProjectData(resolvedProjectId, null, []);
 
     var currentDependencies = [];
@@ -4405,9 +4590,9 @@ async function showTaskModal(taskId, projectId) {
                     });
                 }
 
-                // 프로젝트 변경 시 도메인 시스템 & 의존관계 재로드
+                // 프로젝트 변경 시 스쿼드 & 의존관계 재로드
                 await loadTaskModalProjectData(t.project ? t.project.id : null, taskId, currentDependencies);
-                document.getElementById('task-domain-system').value = t.domainSystem ? t.domainSystem.id : '';
+                document.getElementById('task-squad').value = t.squad ? t.squad.id : '';
 
                 // 담당자가 있으면 개인 휴가 반영하여 flatpickr 재초기화
                 if (t.assignee && t.assignee.id) {
@@ -4489,11 +4674,11 @@ async function showTaskModalForScheduleMember() {
 }
 
 /**
- * 태스크 모달 내 프로젝트 변경 시 도메인 시스템 & 의존관계 로드
+ * 태스크 모달 내 프로젝트 변경 시 스쿼드 & 의존관계 로드
  */
 async function loadTaskModalProjectData(projectId, taskId, currentDependencies) {
-    // 도메인 시스템 드롭다운
-    var dsSelect = document.getElementById('task-domain-system');
+    // 스쿼드 드롭다운
+    var dsSelect = document.getElementById('task-squad');
     var dsOptHtml = '<option value="">선택하세요</option>';
 
     // 의존관계 섹션
@@ -4515,12 +4700,12 @@ async function loadTaskModalProjectData(projectId, taskId, currentDependencies) 
         return;
     }
 
-    // 프로젝트 상세에서 도메인 시스템 + 멤버 로드
+    // 프로젝트 상세에서 스쿼드 + 멤버 로드
     try {
         var projectRes = await apiCall('/api/v1/projects/' + projectId);
         if (projectRes.success && projectRes.data) {
-            if (projectRes.data.domainSystems) {
-                projectRes.data.domainSystems.forEach(function(ds) {
+            if (projectRes.data.squads) {
+                projectRes.data.squads.forEach(function(ds) {
                     dsOptHtml += '<option value="' + ds.id + '">' + escapeHtml(ds.name) + '</option>';
                 });
             }
@@ -4549,9 +4734,9 @@ async function loadTaskModalProjectData(projectId, taskId, currentDependencies) 
             }
         } catch (e) { /* ignore */ }
     }
-    if (ganttData && ganttData.domainSystems) {
+    if (ganttData && ganttData.squads) {
         var depsHtml = '';
-        ganttData.domainSystems.forEach(function(ds) {
+        ganttData.squads.forEach(function(ds) {
             if (ds.tasks) {
                 ds.tasks.forEach(function(task) {
                     if (taskId && task.id === parseInt(taskId)) return;
@@ -4572,7 +4757,7 @@ async function loadTaskModalProjectData(projectId, taskId, currentDependencies) 
 async function saveTask() {
     var id = document.getElementById('task-id').value;
     var name = document.getElementById('task-name').value.trim();
-    var domainSystemId = document.getElementById('task-domain-system').value;
+    var squadId = document.getElementById('task-squad').value;
     var assigneeId = document.getElementById('task-assignee').value;
     var startDate = document.getElementById('task-start-date').value;
     var endDate = document.getElementById('task-end-date').value;
@@ -4628,7 +4813,7 @@ async function saveTask() {
     var body = {
         name: name,
         projectId: currentModalProjectId,
-        domainSystemId: domainSystemId ? parseInt(domainSystemId) : null,
+        squadId: squadId ? parseInt(squadId) : null,
         assigneeId: assigneeId ? parseInt(assigneeId) : null,
         manDays: manDays ? parseFloat(manDays) : null,
         status: status,
@@ -4796,7 +4981,7 @@ async function parseFreeText() {
         var res = await apiCall('/api/v1/projects/' + projectId + '/tasks/parse', 'POST', { text: text });
 
         if (res.success && res.data && res.data.parsed) {
-            parsedTaskData = { domainSystems: res.data.parsed };
+            parsedTaskData = { squads: res.data.parsed };
             showParseResult(res.data.parsed);
         } else {
             showToast(res.message || 'AI 분석에 실패했습니다.', 'error');
@@ -4819,10 +5004,10 @@ function showParseResult(parsed) {
     var html = '';
 
     parsed.forEach(function(ds) {
-        html += '<div class="ai-result-domain">';
+        html += '<div class="ai-result-squad">';
         html += '<h6>';
         html += escapeHtml(ds.name);
-        if (ds.domainSystemMatched) {
+        if (ds.squadMatched) {
             html += ' <span class="badge bg-success matched-badge">매칭됨</span>';
         } else {
             html += ' <span class="badge bg-danger matched-badge">미매칭</span>';
@@ -6237,10 +6422,12 @@ async function loadSettingsSection() {
         console.error('멤버 목록 로드 실패:', e);
     }
 
+    await loadSquads();
     await loadMembers();
 
     // Jira 설정 로드 (cachedJiraBaseUrl 초기화)
     await loadJiraConfig();
+    checkGdriveStatus();
 }
 
 // ========================================
@@ -6332,6 +6519,213 @@ async function confirmImport() {
         pendingImportFile = null;
         document.getElementById('import-file-name').textContent = '';
     }
+}
+
+// ========================================
+// Google Drive 백업/복원
+// ========================================
+
+async function checkGdriveStatus() {
+    // 리디렉션 URI 힌트 설정
+    var hintEl = document.getElementById('gdrive-redirect-uri-hint');
+    if (hintEl) hintEl.textContent = window.location.origin + '/gdrive-callback.html';
+
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/status');
+        var badge = document.getElementById('gdrive-status-badge');
+        document.getElementById('gdrive-not-configured').style.display = 'none';
+        document.getElementById('gdrive-need-auth').style.display = 'none';
+        document.getElementById('gdrive-configured').style.display = 'none';
+        document.getElementById('gdrive-config-section').style.display = 'none';
+
+        if (res.success && res.configured && res.authorized) {
+            // 인증 완료
+            badge.textContent = '연결됨';
+            badge.className = 'badge bg-success ms-2';
+            badge.style.fontSize = '0.7rem';
+            document.getElementById('gdrive-configured').style.display = '';
+            if (res.folderId) document.getElementById('gdrive-folder-id').value = res.folderId;
+            gdriveListBackups();
+        } else if (res.success && res.hasClientId && !res.authorized) {
+            // Client 설정됨, 인증 필요
+            badge.textContent = '인증 필요';
+            badge.className = 'badge bg-warning ms-2';
+            badge.style.fontSize = '0.7rem';
+            document.getElementById('gdrive-need-auth').style.display = '';
+        } else {
+            // 미설정
+            badge.textContent = '미설정';
+            badge.className = 'badge bg-secondary ms-2';
+            badge.style.fontSize = '0.7rem';
+            document.getElementById('gdrive-not-configured').style.display = '';
+        }
+    } catch (e) {
+        var badge = document.getElementById('gdrive-status-badge');
+        badge.textContent = '오류';
+        badge.className = 'badge bg-danger ms-2';
+        badge.style.fontSize = '0.7rem';
+    }
+}
+
+function onGdriveJsonFileSelected(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            var json = JSON.parse(e.target.result);
+            // Google Cloud Console에서 다운받은 JSON: { "web": { "client_id": ..., "client_secret": ... } }
+            // 또는 { "installed": { ... } }
+            var creds = json.web || json.installed || json;
+            var clientId = creds.client_id || '';
+            var clientSecret = creds.client_secret || '';
+            if (!clientId) {
+                showToast('JSON에서 client_id를 찾을 수 없습니다.', 'warning');
+                return;
+            }
+            document.getElementById('gdrive-client-id').value = clientId;
+            document.getElementById('gdrive-client-secret').value = clientSecret;
+            showToast('JSON에서 Client ID/Secret이 자동 입력되었습니다.', 'success');
+        } catch (err) {
+            showToast('유효하지 않은 JSON 파일입니다.', 'error');
+        }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+}
+
+function toggleGdriveConfig() {
+    var section = document.getElementById('gdrive-config-section');
+    section.style.display = section.style.display === 'none' ? '' : 'none';
+}
+
+async function saveGdriveConfig() {
+    var clientId = document.getElementById('gdrive-client-id').value.trim();
+    var clientSecret = document.getElementById('gdrive-client-secret').value.trim();
+    var folderId = document.getElementById('gdrive-folder-id').value.trim();
+
+    if (!clientId || !clientSecret) {
+        showToast('Client ID와 Client Secret을 입력해주세요.', 'warning');
+        return;
+    }
+
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/config', 'PUT', {
+            clientId: clientId, clientSecret: clientSecret, folderId: folderId || null
+        });
+        if (res.success) {
+            showToast('설정이 저장되었습니다. Google 계정 인증을 진행해주세요.', 'success');
+            document.getElementById('gdrive-config-section').style.display = 'none';
+            checkGdriveStatus();
+        } else {
+            showToast(res.message || '저장 실패', 'error');
+        }
+    } catch (e) { showToast('설정 저장 실패', 'error'); }
+}
+
+async function gdriveStartAuth() {
+    var redirectUri = window.location.origin + '/gdrive-callback.html';
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/auth-url?redirectUri=' + encodeURIComponent(redirectUri));
+        if (res.success && res.authUrl) {
+            // 팝업으로 Google 인증 페이지 열기
+            var authWindow = window.open(res.authUrl, 'gdrive-auth', 'width=500,height=700');
+            // 인증 완료 메시지 수신
+            window.addEventListener('message', function handler(e) {
+                if (e.data && e.data.type === 'gdrive-auth-success') {
+                    window.removeEventListener('message', handler);
+                    showToast('Google Drive 인증이 완료되었습니다!', 'success');
+                    checkGdriveStatus();
+                }
+            });
+        } else {
+            showToast(res.message || '인증 URL 생성 실패', 'error');
+        }
+    } catch (e) { showToast('인증 시작 실패', 'error'); }
+}
+
+async function deleteGdriveConfig() {
+    if (!confirmAction('Google Drive 연동 설정을 삭제하시겠습니까?')) return;
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/config', 'DELETE');
+        if (res.success) {
+            showToast('Google Drive 설정이 삭제되었습니다.', 'success');
+            document.getElementById('gdrive-client-id').value = '';
+            document.getElementById('gdrive-client-secret').value = '';
+            document.getElementById('gdrive-folder-id').value = '';
+            checkGdriveStatus();
+        }
+    } catch (e) { showToast('삭제 실패', 'error'); }
+}
+
+async function gdriveBackup() {
+    showToast('Google Drive에 백업 중...', 'info');
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/backup', 'POST');
+        if (res.success) {
+            showToast('Google Drive 백업이 완료되었습니다. (' + res.data.fileName + ')', 'success');
+            gdriveListBackups();
+        } else {
+            showToast('백업 실패: ' + (res.message || ''), 'error');
+        }
+    } catch (e) { showToast('Google Drive 백업 실패', 'error'); }
+}
+
+async function gdriveListBackups() {
+    var listEl = document.getElementById('gdrive-backup-list');
+    listEl.innerHTML = '<div class="text-muted small">목록을 불러오는 중...</div>';
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/list');
+        if (!res.success || !res.data || res.data.length === 0) {
+            listEl.innerHTML = '<div class="text-muted small">백업 파일이 없습니다.</div>';
+            return;
+        }
+        var html = '<table class="table table-sm table-hover mb-0"><thead><tr><th>파일명</th><th>크기</th><th>생성일시</th><th class="text-center">액션</th></tr></thead><tbody>';
+        res.data.forEach(function(f) {
+            var sizeKb = f.size ? (f.size / 1024).toFixed(1) + ' KB' : '-';
+            var created = f.createdTime ? f.createdTime.replace('T', ' ').substring(0, 19) : '-';
+            html += '<tr>';
+            html += '<td style="font-size:0.8rem;">' + escapeHtml(f.fileName) + '</td>';
+            html += '<td style="font-size:0.8rem;">' + sizeKb + '</td>';
+            html += '<td style="font-size:0.8rem;">' + created + '</td>';
+            html += '<td class="text-center">';
+            html += '<button class="btn btn-outline-success btn-sm me-1" onclick="gdriveRestore(\'' + f.fileId + '\', \'' + escapeJsString(f.fileName) + '\')" title="복원"><i class="bi bi-arrow-counterclockwise"></i></button>';
+            html += '<button class="btn btn-outline-danger btn-sm" onclick="gdriveDelete(\'' + f.fileId + '\')" title="삭제"><i class="bi bi-trash"></i></button>';
+            html += '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        listEl.innerHTML = html;
+    } catch (e) {
+        listEl.innerHTML = '<div class="text-danger small">목록 조회 실패</div>';
+    }
+}
+
+async function gdriveRestore(fileId, fileName) {
+    if (!confirmAction('백업 파일 "' + fileName + '"에서 복원하시겠습니까?\n기존 데이터가 모두 삭제됩니다.')) return;
+    showToast('Google Drive에서 복원 중...', 'info');
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/restore/' + fileId, 'POST');
+        if (res.success) {
+            showToast('복원 완료: ' + res.message, 'success');
+            setTimeout(function() { location.reload(); }, 800);
+        } else {
+            showToast('복원 실패: ' + (res.message || ''), 'error');
+        }
+    } catch (e) { showToast('복원 실패', 'error'); }
+}
+
+async function gdriveDelete(fileId) {
+    if (!confirmAction('이 백업 파일을 삭제하시겠습니까?')) return;
+    try {
+        var res = await apiCall('/api/v1/data/gdrive/' + fileId, 'DELETE');
+        if (res.success) {
+            showToast('백업 파일이 삭제되었습니다.', 'success');
+            gdriveListBackups();
+        } else {
+            showToast('삭제 실패: ' + (res.message || ''), 'error');
+        }
+    } catch (e) { showToast('삭제 실패', 'error'); }
 }
 
 // ========================================
@@ -7346,6 +7740,15 @@ document.addEventListener('DOMContentLoaded', function() {
     initColorPicker();
     initAssigneeConflictCheck();
 
+    // 스쿼드 멤버 검색 드롭다운 외부 클릭 시 닫기
+    document.addEventListener('click', function(e) {
+        var searchEl = document.getElementById('squad-member-search');
+        var resultsEl = document.getElementById('squad-member-search-results');
+        if (searchEl && resultsEl && !searchEl.contains(e.target) && !resultsEl.contains(e.target)) {
+            resultsEl.style.display = 'none';
+        }
+    });
+
     // 프로젝트 상세 탭 전환 이벤트
     var projectDetailTabs = document.getElementById('project-detail-tabs');
     if (projectDetailTabs) {
@@ -7375,8 +7778,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 case '#settings-members':
                     loadMembers();
                     break;
-                case '#settings-domains':
-                    loadDomainSystems();
+                case '#settings-squads':
+                    loadSquads();
                     break;
                 case '#settings-jira':
                     loadJiraConfig();
@@ -7401,13 +7804,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // FR-002: 간트차트 토글 필터 초기화 (localStorage에서 복원)
     var storedJiraKey = localStorage.getItem('ganttShowJiraKey');
-    var storedDomain = localStorage.getItem('ganttShowDomain');
+    var storedDomain = localStorage.getItem('ganttShowSquad');
     if (storedJiraKey !== null) ganttShowJiraKey = storedJiraKey === 'true';
-    if (storedDomain !== null) ganttShowDomain = storedDomain === 'true';
+    if (storedDomain !== null) ganttShowSquad = storedDomain === 'true';
     var jiraKeyCb = document.getElementById('gantt-show-jira-key');
-    var domainCb = document.getElementById('gantt-show-domain');
+    var squadCb = document.getElementById('gantt-show-squad');
     if (jiraKeyCb) jiraKeyCb.checked = ganttShowJiraKey;
-    if (domainCb) domainCb.checked = ganttShowDomain;
+    if (squadCb) squadCb.checked = ganttShowSquad;
     if (jiraKeyCb) {
         jiraKeyCb.addEventListener('change', function() {
             ganttShowJiraKey = this.checked;
@@ -7415,10 +7818,10 @@ document.addEventListener('DOMContentLoaded', function() {
             reRenderGanttWithToggles();
         });
     }
-    if (domainCb) {
-        domainCb.addEventListener('change', function() {
-            ganttShowDomain = this.checked;
-            localStorage.setItem('ganttShowDomain', ganttShowDomain);
+    if (squadCb) {
+        squadCb.addEventListener('change', function() {
+            ganttShowSquad = this.checked;
+            localStorage.setItem('ganttShowSquad', ganttShowSquad);
             reRenderGanttWithToggles();
         });
     }
@@ -7438,13 +7841,14 @@ async function saveProjectMdOverride(val) {
         var projRes = await apiCall('/api/v1/projects/' + projectId);
         var p = (projRes.success && projRes.data) ? projRes.data : {};
         var body = {
-            name: p.name, projectType: p.projectType, description: p.description,
+            name: p.name, description: p.description,
             startDate: p.startDate || null, endDate: p.endDate || null,
             status: p.status, jiraBoardId: p.jiraBoardId || null,
             jiraEpicKey: p.jiraEpicKey || null,
             totalManDaysOverride: overrideVal,
             pplId: p.pplId || null, eplId: p.eplId || null,
-            quarter: p.quarter || null
+            quarter: p.quarter || null,
+            ktlo: p.ktlo || false
         };
         var res = await apiCall('/api/v1/projects/' + projectId, 'PUT', body);
         if (res.success) {
@@ -7501,27 +7905,38 @@ async function executeScheduleCalc() {
 function renderScheduleCalcResult(data) {
     var html = '<table class="table table-bordered table-sm">';
     html += '<thead class="table-light"><tr>';
-    html += '<th>프로젝트</th><th>시작일</th><th>개발종료</th><th>개발소요(일)</th>';
-    html += '<th>QA 시작</th><th>QA 종료</th><th>QA(일)</th><th>론치일</th>';
-    html += '<th>총 MD</th><th>BE</th><th>QA</th>';
+    html += '<th>프로젝트</th><th>MD</th><th>개발</th><th>QA</th><th>론치일</th>';
+    html += '<th>BE</th><th>QA</th>';
     html += '</tr></thead><tbody>';
     data.forEach(function(r) {
+        if (r.skipped) {
+            html += '<tr style="background:#f0f0f0;"><td><strong>' + escapeHtml(r.projectName) + '</strong> <span class="badge bg-secondary" style="font-size:0.65rem;">KTLO</span></td>';
+            html += '<td colspan="6" class="text-muted" style="font-size:0.8rem;">' + escapeHtml(r.skipReason) + '</td></tr>';
+            return;
+        }
         var rowStyle = r.fixedSchedule ? ' style="background:#f8f9fa;"' : '';
         html += '<tr' + rowStyle + '>';
         html += '<td><strong>' + escapeHtml(r.projectName) + '</strong>';
         if (r.fixedSchedule) html += ' <span class="badge bg-info" style="font-size:0.65rem;">고정</span>';
         html += '</td>';
-        html += '<td>' + formatDateShort(r.startDate) + '</td>';
-        html += '<td>' + formatDateShort(r.devEndDate) + '</td>';
-        html += '<td class="text-center">' + (r.devDays || 0) + '</td>';
-        html += '<td>' + (r.qaStartDate ? formatDateShort(r.qaStartDate) : '-') + '</td>';
-        html += '<td>' + (r.qaEndDate ? formatDateShort(r.qaEndDate) : '-') + '</td>';
-        html += '<td class="text-center">' + (r.qaDays || '-') + '</td>';
-        html += '<td><strong>' + formatDateShort(r.launchDate) + '</strong></td>';
         html += '<td class="text-center">' + r.totalMd + '</td>';
+        // 개발: 시작~종료 Ndays
+        var devText = formatDateShort(r.startDate) + '-' + formatDateShort(r.devEndDate) + ' ' + (r.devDays || 0) + 'd';
+        html += '<td style="white-space:nowrap;">' + devText + '</td>';
+        // QA: 시작~종료 Ndays
+        var qaText = '-';
+        if (r.qaStartDate && r.qaEndDate) {
+            qaText = formatDateShort(r.qaStartDate) + '-' + formatDateShort(r.qaEndDate) + ' ' + (r.qaDays || 0) + 'd';
+        }
+        html += '<td style="white-space:nowrap;">' + qaText + '</td>';
+        html += '<td><strong>' + formatDateShort(r.launchDate) + '</strong></td>';
         html += '<td class="text-center">' + r.beCount + '명';
         if (r.beMembers && r.beMembers.length > 0) {
-            html += '<br><small class="text-muted">' + r.beMembers.map(function(m) { return m.name + '(' + m.capacity + ')'; }).join(', ') + '</small>';
+            var beMemberLabels = r.beMembers.map(function(m) {
+                var isAuto = r.autoAssignedMembers && r.autoAssignedMembers.some(function(am) { return am.name === m.name; });
+                return m.name + '(' + m.capacity + ')' + (isAuto ? '<span class="badge bg-warning text-dark" style="font-size:0.55rem; margin-left:2px;">자동</span>' : '');
+            });
+            html += '<br><small class="text-muted">' + beMemberLabels.join(', ') + '</small>';
         }
         if (r.busyMembers && r.busyMembers.length > 0) {
             html += '<br><small class="text-danger" style="font-size:0.7rem;">투입불가: ' + r.busyMembers.map(function(m) { return m.name; }).join(', ') + '</small>';
@@ -7535,7 +7950,7 @@ function renderScheduleCalcResult(data) {
         html += '</tr>';
         if (r.warning) {
             var warningText = escapeHtml(r.warning).replace(/(\d{4}-\d{2}-\d{2})/g, function(m) { return formatDateShort(m); });
-            html += '<tr><td colspan="11" class="text-warning" style="font-size:0.8rem; background:#fff8e1;"><i class="bi bi-exclamation-triangle-fill"></i> ' + escapeHtml(r.projectName) + ': ' + warningText + '</td></tr>';
+            html += '<tr><td colspan="7" class="text-warning" style="font-size:0.8rem; background:#fff8e1;"><i class="bi bi-exclamation-triangle-fill"></i> ' + escapeHtml(r.projectName) + ': ' + warningText + '</td></tr>';
         }
     });
     html += '</tbody></table>';

@@ -29,7 +29,7 @@ public class TaskDto {
     public static class Request {
         private String name;
         private Long projectId;
-        private Long domainSystemId;
+        private Long squadId;
         private Long assigneeId;
         private LocalDate startDate;
         private LocalDate endDate;
@@ -64,7 +64,7 @@ public class TaskDto {
         private Long id;
         private String name;
         private ProjectSummary project;
-        private DomainSystemDto.Response domainSystem;
+        private SquadDto.Response squad;
         private MemberDto.Response assignee;
         private LocalDate startDate;
         private LocalDate endDate;
@@ -101,8 +101,8 @@ public class TaskDto {
                                     .id(task.getProject().getId())
                                     .name(task.getProject().getName())
                                     .build() : null)
-                    .domainSystem(task.getDomainSystem() != null
-                            ? DomainSystemDto.Response.from(task.getDomainSystem()) : null)
+                    .squad(task.getSquad() != null
+                            ? SquadDto.Response.from(task.getSquad()) : null)
                     .assignee(task.getAssignee() != null
                             ? MemberDto.Response.from(task.getAssignee()) : null)
                     .startDate(task.getStartDate())

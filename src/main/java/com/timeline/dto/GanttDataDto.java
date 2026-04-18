@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * 간트차트 데이터 응답 DTO
- * - 프로젝트 내 태스크를 도메인 시스템별로 그룹핑하여 반환
+ * - 프로젝트 내 태스크를 스쿼드별로 그룹핑하여 반환
  */
 public class GanttDataDto {
 
@@ -27,7 +27,7 @@ public class GanttDataDto {
     public static class Response {
         private ProjectSummary project;
         private List<MilestoneItem> milestones;
-        private List<DomainSystemGroup> domainSystems;
+        private List<SquadGroup> squads;
     }
 
     @Data
@@ -57,7 +57,7 @@ public class GanttDataDto {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class DomainSystemGroup {
+    public static class SquadGroup {
         private Long id;
         private String name;
         private String color;

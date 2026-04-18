@@ -42,18 +42,7 @@ public class ProjectController {
     }
 
     /**
-     * 기존 프로젝트 유형 목록 조회 (datalist 자동완성용)
-     */
-    @GetMapping("/types")
-    public ResponseEntity<?> getProjectTypes() {
-        return ResponseEntity.ok(Map.of(
-                "success", true,
-                "data", projectService.getProjectTypes()
-        ));
-    }
-
-    /**
-     * 프로젝트 상세 조회 (멤버, 도메인시스템 포함)
+     * 프로젝트 상세 조회 (멤버, 스쿼드 포함)
      */
     @GetMapping("/{id}")
     public ResponseEntity<?> getProject(@PathVariable Long id) {
@@ -136,24 +125,24 @@ public class ProjectController {
     }
 
     /**
-     * 프로젝트에 도메인 시스템 추가
+     * 프로젝트에 스쿼드 추가
      */
-    @PostMapping("/{id}/domain-systems")
-    public ResponseEntity<?> addDomainSystem(@PathVariable Long id,
-                                             @RequestBody ProjectDto.AddDomainSystemRequest request) {
-        projectService.addDomainSystem(id, request.getDomainSystemId());
+    @PostMapping("/{id}/squads")
+    public ResponseEntity<?> addSquad(@PathVariable Long id,
+                                             @RequestBody ProjectDto.AddSquadRequest request) {
+        projectService.addSquad(id, request.getSquadId());
         return ResponseEntity.ok(Map.of(
                 "success", true
         ));
     }
 
     /**
-     * 프로젝트에서 도메인 시스템 제거
+     * 프로젝트에서 스쿼드 제거
      */
-    @DeleteMapping("/{id}/domain-systems/{domainSystemId}")
-    public ResponseEntity<?> removeDomainSystem(@PathVariable Long id,
-                                                @PathVariable Long domainSystemId) {
-        projectService.removeDomainSystem(id, domainSystemId);
+    @DeleteMapping("/{id}/squads/{squadId}")
+    public ResponseEntity<?> removeSquad(@PathVariable Long id,
+                                                @PathVariable Long squadId) {
+        projectService.removeSquad(id, squadId);
         return ResponseEntity.ok(Map.of(
                 "success", true
         ));

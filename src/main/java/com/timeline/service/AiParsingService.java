@@ -35,8 +35,8 @@ public class AiParsingService {
     private final ClaudeCliProperties claudeCliProperties;
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
-    private final ProjectDomainSystemRepository projectDomainSystemRepository;
-    private final DomainSystemRepository domainSystemRepository;
+    private final ProjectSquadRepository projectSquadRepository;
+    private final SquadRepository squadRepository;
     private final MemberRepository memberRepository;
     private final TaskRepository taskRepository;
     private final TaskDependencyRepository taskDependencyRepository;
@@ -51,7 +51,7 @@ public class AiParsingService {
      * @return 파싱된 태스크 DTO
      */
     public ParsedTaskDto parseTasksFromText(String freeText, Long projectId) {
-        // 1. 프로젝트 정보, 멤버 목록, 도메인 시스템 목록 조회
+        // 1. 프로젝트 정보, 멤버 목록, 스쿼드 목록 조회
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다. id=" + projectId));
 
@@ -59,12 +59,12 @@ public class AiParsingService {
                 .map(ProjectMember::getMember)
                 .collect(Collectors.toList());
 
-        List<DomainSystem> domainSystems = projectDomainSystemRepository.findByProjectIdWithDomainSystem(projectId).stream()
-                .map(ProjectDomainSystem::getDomainSystem)
+        List<Squad> squads = projectSquadRepository.findByProjectIdWithSquad(projectId).stream()
+                .map(ProjectSquad::getSquad)
                 .collect(Collectors.toList());
 
         // 2. 시스템 프롬프트 구성
-        String systemPrompt = buildSystemPrompt(project, members, domainSystems);
+        String systemPrompt = buildSystemPrompt(project, members, squads);
 
         // 3. Claude CLI 호출
         String aiResponse = callClaudeCli(systemPrompt, freeText);
@@ -73,8 +73,8 @@ public class AiParsingService {
         // 4. JSON 응답 파싱
         ParsedTaskDto parsedResult = parseAiResponse(aiResponse);
 
-        // 5. domainSystemMatched, assigneeMatched 검증
-        validateMatching(parsedResult, members, domainSystems);
+        // 5. squadMatched, assigneeMatched 검증
+        validateMatching(parsedResult, members, squads);
 
         return parsedResult;
     }
@@ -96,10 +96,10 @@ public class AiParsingService {
                 .map(ProjectMember::getMember)
                 .collect(Collectors.toList());
 
-        // 프로젝트 도메인 시스템 목록 조회
-        List<DomainSystem> projectDomainSystems = projectDomainSystemRepository
-                .findByProjectIdWithDomainSystem(projectId).stream()
-                .map(ProjectDomainSystem::getDomainSystem)
+        // 프로젝트 스쿼드 목록 조회
+        List<Squad> projectSquads = projectSquadRepository
+                .findByProjectIdWithSquad(projectId).stream()
+                .map(ProjectSquad::getSquad)
                 .collect(Collectors.toList());
 
         // 기준 시작일 결정
@@ -125,11 +125,11 @@ public class AiParsingService {
         List<Long> savedTaskIds = new ArrayList<>();
         int sortOrderCounter = existingTasks.size() + 1;
 
-        for (ParsedTaskDto.DomainSystemParsed dsParsed : parsedData.getDomainSystems()) {
-            // 도메인 시스템 매칭
-            DomainSystem domainSystem = matchDomainSystem(dsParsed.getName(), projectDomainSystems);
-            if (domainSystem == null) {
-                log.warn("도메인 시스템을 찾을 수 없습니다: {}", dsParsed.getName());
+        for (ParsedTaskDto.SquadParsed dsParsed : parsedData.getSquads()) {
+            // 스쿼드 매칭
+            Squad squad = matchSquad(dsParsed.getName(), projectSquads);
+            if (squad == null) {
+                log.warn("스쿼드를 찾을 수 없습니다: {}", dsParsed.getName());
                 continue;
             }
 
@@ -158,7 +158,7 @@ public class AiParsingService {
                 // Task 엔티티 생성 및 저장
                 Task task = Task.builder()
                         .project(project)
-                        .domainSystem(domainSystem)
+                        .squad(squad)
                         .assignee(assignee)
                         .name(taskParsed.getName())
                         .startDate(taskStartDate)
@@ -180,14 +180,14 @@ public class AiParsingService {
                 }
 
                 log.info("태스크 저장: name={}, domain={}, assignee={}, start={}, end={}, manDays={}",
-                        task.getName(), domainSystem.getName(),
+                        task.getName(), squad.getName(),
                         assignee != null ? assignee.getName() : "미지정",
                         taskStartDate, taskEndDate, manDays);
             }
         }
 
         // 의존관계 설정
-        for (ParsedTaskDto.DomainSystemParsed dsParsed : parsedData.getDomainSystems()) {
+        for (ParsedTaskDto.SquadParsed dsParsed : parsedData.getSquads()) {
             if (dsParsed.getTasks() == null) continue;
             for (ParsedTaskDto.TaskParsed taskParsed : dsParsed.getTasks()) {
                 if (taskParsed.getDependsOn() != null && !taskParsed.getDependsOn().isEmpty()) {
@@ -221,7 +221,7 @@ public class AiParsingService {
     /**
      * 시스템 프롬프트 구성
      */
-    private String buildSystemPrompt(Project project, List<Member> members, List<DomainSystem> domainSystems) {
+    private String buildSystemPrompt(Project project, List<Member> members, List<Squad> squads) {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 프로젝트 관리 태스크 파서입니다.\n");
         sb.append("사용자가 자유 형식으로 입력한 텍스트에서 태스크 정보를 추출하세요.\n\n");
@@ -240,19 +240,19 @@ public class AiParsingService {
         }
         sb.append("\n");
 
-        // 도메인 시스템 목록
-        sb.append("- 도메인 시스템: ");
-        if (domainSystems.isEmpty()) {
+        // 스쿼드 목록
+        sb.append("- 스쿼드:");
+        if (squads.isEmpty()) {
             sb.append("없음");
         } else {
-            sb.append(domainSystems.stream()
-                    .map(DomainSystem::getName)
+            sb.append(squads.stream()
+                    .map(Squad::getName)
                     .collect(Collectors.joining(", ")));
         }
         sb.append("\n\n");
 
         sb.append("## 추출 규칙\n");
-        sb.append("1. 도메인 시스템: 텍스트에서 도메인 시스템명을 식별합니다\n");
+        sb.append("1. 스쿼드: 텍스트에서 스쿼드명을 식별합니다\n");
         sb.append("2. 태스크명: 작업 내용을 식별합니다\n");
         sb.append("3. 담당자: 멤버 이름을 매칭합니다 (부분 일치 허용)\n");
         sb.append("4. 공수(MD): 숫자 + \"md\" 또는 \"일\" 패턴을 식별합니다\n");
@@ -260,7 +260,7 @@ public class AiParsingService {
 
         sb.append("## 출력 형식 (반드시 JSON만 출력, 다른 텍스트 없이)\n");
         sb.append("{\n");
-        sb.append("  \"domainSystems\": [\n");
+        sb.append("  \"squads\": [\n");
         sb.append("    {\n");
         sb.append("      \"name\": \"시스템명\",\n");
         sb.append("      \"tasks\": [\n");
@@ -368,15 +368,15 @@ public class AiParsingService {
             String jsonStr = extractJson(aiResponse);
 
             JsonNode root = objectMapper.readTree(jsonStr);
-            JsonNode domainSystemsNode = root.get("domainSystems");
+            JsonNode squadsNode = root.get("squads");
 
-            if (domainSystemsNode == null || !domainSystemsNode.isArray()) {
-                throw new IllegalStateException("AI 응답에서 domainSystems 배열을 찾을 수 없습니다.");
+            if (squadsNode == null || !squadsNode.isArray()) {
+                throw new IllegalStateException("AI 응답에서 squads 배열을 찾을 수 없습니다.");
             }
 
-            List<ParsedTaskDto.DomainSystemParsed> domainSystems = new ArrayList<>();
+            List<ParsedTaskDto.SquadParsed> squads = new ArrayList<>();
 
-            for (JsonNode dsNode : domainSystemsNode) {
+            for (JsonNode dsNode : squadsNode) {
                 JsonNode dsNameNode = dsNode.get("name");
                 String dsName = (dsNameNode != null && !dsNameNode.isNull()) ? dsNameNode.asText() : "Unknown";
                 JsonNode tasksNode = dsNode.get("tasks");
@@ -418,15 +418,15 @@ public class AiParsingService {
                     }
                 }
 
-                domainSystems.add(ParsedTaskDto.DomainSystemParsed.builder()
+                squads.add(ParsedTaskDto.SquadParsed.builder()
                         .name(dsName)
-                        .domainSystemMatched(null) // 서버에서 검증
+                        .squadMatched(null) // 서버에서 검증
                         .tasks(tasks)
                         .build());
             }
 
             return ParsedTaskDto.builder()
-                    .domainSystems(domainSystems)
+                    .squads(squads)
                     .build();
 
         } catch (JsonProcessingException e) {
@@ -457,22 +457,22 @@ public class AiParsingService {
     }
 
     /**
-     * 매칭 검증: domainSystemMatched, assigneeMatched를 서버에서 다시 검증
+     * 매칭 검증: squadMatched, assigneeMatched를 서버에서 다시 검증
      */
     private void validateMatching(ParsedTaskDto parsedResult,
                                    List<Member> members,
-                                   List<DomainSystem> domainSystems) {
+                                   List<Squad> squads) {
         Set<String> memberNames = members.stream()
                 .map(Member::getName)
                 .collect(Collectors.toSet());
 
-        Set<String> dsNames = domainSystems.stream()
-                .map(DomainSystem::getName)
+        Set<String> dsNames = squads.stream()
+                .map(Squad::getName)
                 .collect(Collectors.toSet());
 
-        for (ParsedTaskDto.DomainSystemParsed ds : parsedResult.getDomainSystems()) {
-            // 도메인 시스템 매칭 검증
-            ds.setDomainSystemMatched(dsNames.contains(ds.getName()));
+        for (ParsedTaskDto.SquadParsed ds : parsedResult.getSquads()) {
+            // 스쿼드 매칭 검증
+            ds.setSquadMatched(dsNames.contains(ds.getName()));
 
             for (ParsedTaskDto.TaskParsed task : ds.getTasks()) {
                 // 담당자 매칭 검증 (이름 포함 여부로 확인)
@@ -490,34 +490,34 @@ public class AiParsingService {
     }
 
     /**
-     * 도메인 시스템 이름으로 매칭
+     * 스쿼드 이름으로 매칭
      */
-    private DomainSystem matchDomainSystem(String name, List<DomainSystem> domainSystems) {
+    private Squad matchSquad(String name, List<Squad> squads) {
         if (name == null) return null;
 
         // exact match 먼저
-        for (DomainSystem ds : domainSystems) {
-            if (ds.getName().equals(name)) {
-                return ds;
+        for (Squad s : squads) {
+            if (s.getName().equals(name)) {
+                return s;
             }
         }
 
         // case-insensitive match
-        for (DomainSystem ds : domainSystems) {
-            if (ds.getName().equalsIgnoreCase(name)) {
-                return ds;
+        for (Squad s : squads) {
+            if (s.getName().equalsIgnoreCase(name)) {
+                return s;
             }
         }
 
         // 부분 일치
-        for (DomainSystem ds : domainSystems) {
-            if (ds.getName().contains(name) || name.contains(ds.getName())) {
-                return ds;
+        for (Squad s : squads) {
+            if (s.getName().contains(name) || name.contains(s.getName())) {
+                return s;
             }
         }
 
         // DB에서 직접 조회
-        return domainSystemRepository.findByName(name).orElse(null);
+        return squadRepository.findByName(name).orElse(null);
     }
 
     /**

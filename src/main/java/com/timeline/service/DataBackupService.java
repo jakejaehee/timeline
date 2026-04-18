@@ -25,15 +25,16 @@ import java.util.stream.Collectors;
 public class DataBackupService {
 
     private final MemberRepository memberRepository;
-    private final DomainSystemRepository domainSystemRepository;
+    private final SquadRepository squadRepository;
     private final ProjectRepository projectRepository;
     private final HolidayRepository holidayRepository;
     private final ProjectMemberRepository projectMemberRepository;
-    private final ProjectDomainSystemRepository projectDomainSystemRepository;
+    private final ProjectSquadRepository projectSquadRepository;
     private final TaskRepository taskRepository;
     private final MemberLeaveRepository memberLeaveRepository;
     private final TaskLinkRepository taskLinkRepository;
     private final TaskDependencyRepository taskDependencyRepository;
+    private final SquadMemberRepository squadMemberRepository;
 
     @PersistenceContext
     private EntityManager em;
@@ -48,11 +49,12 @@ public class DataBackupService {
                 .schemaVersion("1.0")
                 .exportedAt(LocalDateTime.now())
                 .members(memberRepository.findAll().stream().map(this::toMemberRow).collect(Collectors.toList()))
-                .domainSystems(domainSystemRepository.findAll().stream().map(this::toDomainSystemRow).collect(Collectors.toList()))
+                .squads(squadRepository.findAll().stream().map(this::toSquadRow).collect(Collectors.toList()))
+                .squadMembers(squadMemberRepository.findAll().stream().map(this::toSquadMemberRow).collect(Collectors.toList()))
                 .projects(projectRepository.findAll().stream().map(this::toProjectRow).collect(Collectors.toList()))
                 .holidays(holidayRepository.findAll().stream().map(this::toHolidayRow).collect(Collectors.toList()))
                 .projectMembers(projectMemberRepository.findAll().stream().map(this::toProjectMemberRow).collect(Collectors.toList()))
-                .projectDomainSystems(projectDomainSystemRepository.findAll().stream().map(this::toProjectDomainSystemRow).collect(Collectors.toList()))
+                .projectSquads(projectSquadRepository.findAll().stream().map(this::toProjectSquadRow).collect(Collectors.toList()))
                 .tasks(taskRepository.findAll().stream().map(this::toTaskRow).collect(Collectors.toList()))
                 .memberLeaves(memberLeaveRepository.findAll().stream().map(this::toMemberLeaveRow).collect(Collectors.toList()))
                 .taskLinks(taskLinkRepository.findAll().stream().map(this::toTaskLinkRow).collect(Collectors.toList()))
@@ -80,11 +82,12 @@ public class DataBackupService {
 
         // 삽입 순서대로 Native INSERT 실행
         int memberCount = insertMembers(safe(snapshot.getMembers()));
-        int domainSystemCount = insertDomainSystems(safe(snapshot.getDomainSystems()));
+        int squadCount = insertSquads(safe(snapshot.getSquads()));
+        int squadMemberCount = insertSquadMembers(safe(snapshot.getSquadMembers()));
         int projectCount = insertProjects(safe(snapshot.getProjects()));
         int holidayCount = insertHolidays(safe(snapshot.getHolidays()));
         int projectMemberCount = insertProjectMembers(safe(snapshot.getProjectMembers()));
-        int projectDomainSystemCount = insertProjectDomainSystems(safe(snapshot.getProjectDomainSystems()));
+        int projectSquadCount = insertProjectSquads(safe(snapshot.getProjectSquads()));
         int taskCount = insertTasks(safe(snapshot.getTasks()));
         int memberLeaveCount = insertMemberLeaves(safe(snapshot.getMemberLeaves()));
         int taskLinkCount = insertTaskLinks(safe(snapshot.getTaskLinks()));
@@ -99,11 +102,12 @@ public class DataBackupService {
 
         BackupDto.ImportResult result = BackupDto.ImportResult.builder()
                 .members(memberCount)
-                .domainSystems(domainSystemCount)
+                .squads(squadCount)
+                .squadMembers(squadMemberCount)
                 .projects(projectCount)
                 .holidays(holidayCount)
                 .projectMembers(projectMemberCount)
-                .projectDomainSystems(projectDomainSystemCount)
+                .projectSquads(projectSquadCount)
                 .tasks(taskCount)
                 .memberLeaves(memberLeaveCount)
                 .taskLinks(taskLinkCount)
@@ -140,10 +144,11 @@ public class DataBackupService {
         taskLinkRepository.deleteAllInBatch();
         taskRepository.deleteAllInBatch();
         projectMemberRepository.deleteAllInBatch();
-        projectDomainSystemRepository.deleteAllInBatch();
+        projectSquadRepository.deleteAllInBatch();
         memberLeaveRepository.deleteAllInBatch();
         projectRepository.deleteAllInBatch();
-        domainSystemRepository.deleteAllInBatch();
+        squadMemberRepository.deleteAllInBatch();
+        squadRepository.deleteAllInBatch();
         holidayRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();
         em.flush();
@@ -173,10 +178,10 @@ public class DataBackupService {
         return rows.size();
     }
 
-    private int insertDomainSystems(List<BackupDto.DomainSystemRow> rows) {
-        for (BackupDto.DomainSystemRow r : rows) {
+    private int insertSquads(List<BackupDto.SquadRow> rows) {
+        for (BackupDto.SquadRow r : rows) {
             em.createNativeQuery(
-                    "INSERT INTO domain_system (id, name, description, color, created_at, updated_at) " +
+                    "INSERT INTO squad (id, name, description, color, created_at, updated_at) " +
                     "VALUES (:id, :name, :description, :color, :createdAt, :updatedAt)")
                     .setParameter("id", r.getId())
                     .setParameter("name", r.getName())
@@ -189,14 +194,27 @@ public class DataBackupService {
         return rows.size();
     }
 
+    private int insertSquadMembers(List<BackupDto.SquadMemberRow> rows) {
+        for (BackupDto.SquadMemberRow r : rows) {
+            em.createNativeQuery(
+                    "INSERT INTO squad_member (id, squad_id, member_id, created_at) " +
+                    "VALUES (:id, :squadId, :memberId, :createdAt)")
+                    .setParameter("id", r.getId())
+                    .setParameter("squadId", r.getSquadId())
+                    .setParameter("memberId", r.getMemberId())
+                    .setParameter("createdAt", r.getCreatedAt())
+                    .executeUpdate();
+        }
+        return rows.size();
+    }
+
     private int insertProjects(List<BackupDto.ProjectRow> rows) {
         for (BackupDto.ProjectRow r : rows) {
             em.createNativeQuery(
-                    "INSERT INTO project (id, name, project_type, description, start_date, end_date, status, jira_board_id, created_at, updated_at) " +
-                    "VALUES (:id, :name, :projectType, :description, :startDate, :endDate, :status, :jiraBoardId, :createdAt, :updatedAt)")
+                    "INSERT INTO project (id, name, description, start_date, end_date, status, jira_board_id, created_at, updated_at) " +
+                    "VALUES (:id, :name, :description, :startDate, :endDate, :status, :jiraBoardId, :createdAt, :updatedAt)")
                     .setParameter("id", r.getId())
                     .setParameter("name", r.getName())
-                    .setParameter("projectType", r.getProjectType())
                     .setParameter("description", r.getDescription())
                     .setParameter("startDate", r.getStartDate())
                     .setParameter("endDate", r.getEndDate())
@@ -239,14 +257,14 @@ public class DataBackupService {
         return rows.size();
     }
 
-    private int insertProjectDomainSystems(List<BackupDto.ProjectDomainSystemRow> rows) {
-        for (BackupDto.ProjectDomainSystemRow r : rows) {
+    private int insertProjectSquads(List<BackupDto.ProjectSquadRow> rows) {
+        for (BackupDto.ProjectSquadRow r : rows) {
             em.createNativeQuery(
-                    "INSERT INTO project_domain_system (id, project_id, domain_system_id, created_at) " +
-                    "VALUES (:id, :projectId, :domainSystemId, :createdAt)")
+                    "INSERT INTO project_squad (id, project_id, squad_id, created_at) " +
+                    "VALUES (:id, :projectId, :squadId, :createdAt)")
                     .setParameter("id", r.getId())
                     .setParameter("projectId", r.getProjectId())
-                    .setParameter("domainSystemId", r.getDomainSystemId())
+                    .setParameter("squadId", r.getSquadId())
                     .setParameter("createdAt", r.getCreatedAt())
                     .executeUpdate();
         }
@@ -256,15 +274,15 @@ public class DataBackupService {
     private int insertTasks(List<BackupDto.TaskRow> rows) {
         for (BackupDto.TaskRow r : rows) {
             em.createNativeQuery(
-                    "INSERT INTO task (id, project_id, domain_system_id, assignee_id, name, description, " +
+                    "INSERT INTO task (id, project_id, squad_id, assignee_id, name, description, " +
                     "start_date, end_date, man_days, status, execution_mode, priority, type, " +
                     "actual_end_date, assignee_order, sort_order, jira_key, created_at, updated_at) " +
-                    "VALUES (:id, :projectId, :domainSystemId, :assigneeId, :name, :description, " +
+                    "VALUES (:id, :projectId, :squadId, :assigneeId, :name, :description, " +
                     ":startDate, :endDate, :manDays, :status, :executionMode, :priority, :type, " +
                     ":actualEndDate, :assigneeOrder, :sortOrder, :jiraKey, :createdAt, :updatedAt)")
                     .setParameter("id", r.getId())
                     .setParameter("projectId", r.getProjectId())
-                    .setParameter("domainSystemId", r.getDomainSystemId())
+                    .setParameter("squadId", r.getSquadId())
                     .setParameter("assigneeId", r.getAssigneeId())
                     .setParameter("name", r.getName())
                     .setParameter("description", r.getDescription())
@@ -338,8 +356,8 @@ public class DataBackupService {
     private void resetSequences() {
         log.debug("PostgreSQL sequence 리셋 시작");
         String[] tables = {
-                "member", "domain_system", "project", "holiday",
-                "project_member", "project_domain_system", "task",
+                "member", "squad", "squad_member", "project", "holiday",
+                "project_member", "project_squad", "task",
                 "member_leave", "task_link", "task_dependency"
         };
         for (String table : tables) {
@@ -369,14 +387,23 @@ public class DataBackupService {
                 .build();
     }
 
-    private BackupDto.DomainSystemRow toDomainSystemRow(DomainSystem ds) {
-        return BackupDto.DomainSystemRow.builder()
-                .id(ds.getId())
-                .name(ds.getName())
-                .description(ds.getDescription())
-                .color(ds.getColor())
-                .createdAt(ds.getCreatedAt())
-                .updatedAt(ds.getUpdatedAt())
+    private BackupDto.SquadRow toSquadRow(Squad s) {
+        return BackupDto.SquadRow.builder()
+                .id(s.getId())
+                .name(s.getName())
+                .description(s.getDescription())
+                .color(s.getColor())
+                .createdAt(s.getCreatedAt())
+                .updatedAt(s.getUpdatedAt())
+                .build();
+    }
+
+    private BackupDto.SquadMemberRow toSquadMemberRow(SquadMember sm) {
+        return BackupDto.SquadMemberRow.builder()
+                .id(sm.getId())
+                .squadId(sm.getSquad().getId())
+                .memberId(sm.getMember().getId())
+                .createdAt(sm.getCreatedAt())
                 .build();
     }
 
@@ -384,7 +411,6 @@ public class DataBackupService {
         return BackupDto.ProjectRow.builder()
                 .id(p.getId())
                 .name(p.getName())
-                .projectType(p.getProjectType())
                 .description(p.getDescription())
                 .startDate(p.getStartDate())
                 .endDate(p.getEndDate())
@@ -415,12 +441,12 @@ public class DataBackupService {
                 .build();
     }
 
-    private BackupDto.ProjectDomainSystemRow toProjectDomainSystemRow(ProjectDomainSystem pds) {
-        return BackupDto.ProjectDomainSystemRow.builder()
-                .id(pds.getId())
-                .projectId(pds.getProject().getId())
-                .domainSystemId(pds.getDomainSystem().getId())
-                .createdAt(pds.getCreatedAt())
+    private BackupDto.ProjectSquadRow toProjectSquadRow(ProjectSquad ps) {
+        return BackupDto.ProjectSquadRow.builder()
+                .id(ps.getId())
+                .projectId(ps.getProject().getId())
+                .squadId(ps.getSquad().getId())
+                .createdAt(ps.getCreatedAt())
                 .build();
     }
 
@@ -428,7 +454,7 @@ public class DataBackupService {
         return BackupDto.TaskRow.builder()
                 .id(t.getId())
                 .projectId(t.getProject().getId())
-                .domainSystemId(t.getDomainSystem().getId())
+                .squadId(t.getSquad() != null ? t.getSquad().getId() : null)
                 .assigneeId(t.getAssignee() != null ? t.getAssignee().getId() : null)
                 .name(t.getName())
                 .description(t.getDescription())

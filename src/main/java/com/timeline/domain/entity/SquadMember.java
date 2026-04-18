@@ -3,41 +3,36 @@ package com.timeline.domain.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
 
 /**
- * 도메인 시스템 엔티티
+ * 스쿼드-멤버 조인 엔티티 (N:M)
  */
 @Entity
-@Table(name = "domain_system")
+@Table(name = "squad_member",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"squad_id", "member_id"}))
 @EntityListeners(AuditingEntityListener.class)
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class DomainSystem {
+public class SquadMember {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 100)
-    private String name;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "squad_id", nullable = false)
+    private Squad squad;
 
-    @Column(length = 500)
-    private String description;
-
-    @Column(length = 7)
-    private String color;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "member_id", nullable = false)
+    private Member member;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
-
-    @LastModifiedDate
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
 }

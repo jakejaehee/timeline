@@ -40,6 +40,11 @@ dependencies {
 	// Database Migration
 	implementation 'org.flywaydb:flyway-core'
 
+	// Google Drive API
+	implementation 'com.google.api-client:google-api-client:2.7.2'
+	implementation 'com.google.apis:google-api-services-drive:v3-rev20250511-2.0.0'
+	implementation 'com.google.auth:google-auth-library-oauth2-http:1.36.0'
+
 	// Utilities
 	implementation 'com.google.guava:guava:33.0.0-jre'
 

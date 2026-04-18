@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Google Drive 인증</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f8f9fa; }
+        .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
+        .spinner { border: 3px solid #e9ecef; border-top: 3px solid #0d6efd; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 1rem auto; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .success { color: #198754; }
+        .error { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Google Drive 인증 처리 중...</p>
+        </div>
+        <div id="result" style="display:none;"></div>
+    </div>
+    <script>
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var code = params.get('code');
+            var error = params.get('error');
+
+            if (error) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('result').style.display = '';
+                document.getElementById('result').innerHTML = '<p class="error">인증이 취소되었습니다.</p><p><a href="/">돌아가기</a></p>';
+                return;
+            }
+
+            if (!code) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('result').style.display = '';
+                document.getElementById('result').innerHTML = '<p class="error">인증 코드를 받지 못했습니다.</p><p><a href="/">돌아가기</a></p>';
+                return;
+            }
+
+            var redirectUri = window.location.origin + '/gdrive-callback.html';
+
+            fetch('/api/v1/data/gdrive/auth-callback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: code, redirectUri: redirectUri })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(res) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('result').style.display = '';
+                if (res.success) {
+                    document.getElementById('result').innerHTML = '<p class="success"><strong>Google Drive 연동이 완료되었습니다!</strong></p><p>이 창은 자동으로 닫힙니다.</p>';
+                    if (window.opener) {
+                        window.opener.postMessage({ type: 'gdrive-auth-success' }, '*');
+                        setTimeout(function() { window.close(); }, 1500);
+                    } else {
+                        setTimeout(function() { window.location.href = '/'; }, 1500);
+                    }
+                } else {
+                    document.getElementById('result').innerHTML = '<p class="error">인증 실패: ' + (res.message || '') + '</p><p><a href="/">돌아가기</a></p>';
+                }
+            })
+            .catch(function(e) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('result').style.display = '';
+                document.getElementById('result').innerHTML = '<p class="error">오류가 발생했습니다.</p><p><a href="/">돌아가기</a></p>';
+            });
+        })();
+    </script>
+</body>
+</html>

@@ -4,7 +4,7 @@ import com.timeline.domain.entity.*;
 import com.timeline.domain.enums.MemberRole;
 import com.timeline.domain.enums.TaskStatus;
 import com.timeline.domain.repository.*;
-import com.timeline.dto.DomainSystemDto;
+import com.timeline.dto.SquadDto;
 import com.timeline.dto.MemberDto;
 import com.timeline.dto.ProjectDto;
 import jakarta.persistence.EntityNotFoundException;
@@ -20,7 +20,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 프로젝트 CRUD + 멤버/도메인시스템 관리 서비스
+ * 프로젝트 CRUD + 멤버/스쿼드 관리 서비스
  */
 @Slf4j
 @Service
@@ -30,9 +30,9 @@ public class ProjectService {
 
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
-    private final ProjectDomainSystemRepository projectDomainSystemRepository;
+    private final ProjectSquadRepository projectSquadRepository;
     private final MemberRepository memberRepository;
-    private final DomainSystemRepository domainSystemRepository;
+    private final SquadRepository squadRepository;
     private final TaskRepository taskRepository;
     private final TaskDependencyRepository taskDependencyRepository;
     private final TaskLinkRepository taskLinkRepository;
@@ -75,12 +75,28 @@ public class ProjectService {
                         row -> (row[1] instanceof BigDecimal) ? (BigDecimal) row[1] : new BigDecimal(row[1].toString())
                 ));
 
-        // 프로젝트별 BE 멤버 목록 일괄 조회
+        // 프로젝트별 전체 멤버 목록 일괄 조회 (툴팁용)
+        Map<Long, List<java.util.Map<String, Object>>> allMembersMap = new java.util.HashMap<>();
         Map<Long, List<java.util.Map<String, Object>>> beMembersMap = new java.util.HashMap<>();
         projectMemberRepository.findAll().stream()
-                .filter(pm -> pm.getMember().getRole() == MemberRole.BE && Boolean.TRUE.equals(pm.getMember().getActive()))
-                .forEach(pm -> beMembersMap.computeIfAbsent(pm.getProject().getId(), k -> new java.util.ArrayList<>())
-                        .add(java.util.Map.of("name", pm.getMember().getName(), "capacity", pm.getMember().getCapacity())));
+                .filter(pm -> Boolean.TRUE.equals(pm.getMember().getActive()))
+                .forEach(pm -> {
+                    var memberInfo = java.util.Map.<String, Object>of(
+                            "name", pm.getMember().getName(),
+                            "role", pm.getMember().getRole().name(),
+                            "capacity", pm.getMember().getCapacity());
+                    allMembersMap.computeIfAbsent(pm.getProject().getId(), k -> new java.util.ArrayList<>()).add(memberInfo);
+                    if (pm.getMember().getRole() == MemberRole.BE) {
+                        beMembersMap.computeIfAbsent(pm.getProject().getId(), k -> new java.util.ArrayList<>())
+                                .add(java.util.Map.of("name", pm.getMember().getName(), "capacity", pm.getMember().getCapacity()));
+                    }
+                });
+
+        // 프로젝트별 스쿼드 목록 일괄 조회
+        Map<Long, List<SquadDto.Response>> squadsMap = new java.util.HashMap<>();
+        projectSquadRepository.findAll().stream()
+                .forEach(ps -> squadsMap.computeIfAbsent(ps.getProject().getId(), k -> new java.util.ArrayList<>())
+                        .add(SquadDto.Response.from(ps.getSquad())));
 
         return projectRepository.findAllByOrderBySortOrderAscCreatedAtDesc().stream()
                 .map(project -> {
@@ -92,13 +108,15 @@ public class ProjectService {
                     BigDecimal beCapacity = beCapacityMap.getOrDefault(project.getId(), BigDecimal.ZERO);
                     BigDecimal estimatedDays = calculateEstimatedDays(totalManDays, beCapacity);
                     List<java.util.Map<String, Object>> beMembers = beMembersMap.getOrDefault(project.getId(), java.util.List.of());
-                    return ProjectDto.Response.from(project, memberCount, expectedEndDate, totalManDays, beCount, estimatedDays, beMembers);
+                    List<SquadDto.Response> squads = squadsMap.getOrDefault(project.getId(), java.util.List.of());
+                    List<java.util.Map<String, Object>> allMembersList = allMembersMap.getOrDefault(project.getId(), java.util.List.of());
+                    return ProjectDto.Response.from(project, memberCount, expectedEndDate, totalManDays, beCount, estimatedDays, beMembers, squads, allMembersList);
                 })
                 .collect(Collectors.toList());
     }
 
     /**
-     * 프로젝트 상세 조회 (멤버, 도메인시스템, expectedEndDate, isDelayed 포함)
+     * 프로젝트 상세 조회 (멤버, 스쿼드, expectedEndDate, isDelayed 포함)
      */
     public ProjectDto.Response getProject(Long id) {
         Project project = findProjectById(id);
@@ -108,14 +126,14 @@ public class ProjectService {
                 .map(pm -> MemberDto.Response.from(pm.getMember()))
                 .collect(Collectors.toList());
 
-        List<DomainSystemDto.Response> domainSystems = projectDomainSystemRepository
-                .findByProjectIdWithDomainSystem(id).stream()
-                .map(pds -> DomainSystemDto.Response.from(pds.getDomainSystem()))
+        List<SquadDto.Response> squads = projectSquadRepository
+                .findByProjectIdWithSquad(id).stream()
+                .map(ps -> SquadDto.Response.from(ps.getSquad()))
                 .collect(Collectors.toList());
 
         LocalDate expectedEndDate = calculateExpectedEndDate(id);
 
-        return ProjectDto.Response.from(project, members, domainSystems, expectedEndDate);
+        return ProjectDto.Response.from(project, members, squads, expectedEndDate);
     }
 
     /**
@@ -129,7 +147,6 @@ public class ProjectService {
 
         Project.ProjectBuilder builder = Project.builder()
                 .name(request.getName())
-                .projectType(normalizeProjectType(request.getProjectType()))
                 .description(request.getDescription())
                 .startDate(request.getStartDate())
                 .endDate(request.getEndDate())
@@ -138,7 +155,8 @@ public class ProjectService {
                 .totalManDaysOverride(request.getTotalManDaysOverride())
                 .ppl(request.getPplId() != null ? memberRepository.findById(request.getPplId()).orElse(null) : null)
                 .epl(request.getEplId() != null ? memberRepository.findById(request.getEplId()).orElse(null) : null)
-                .quarter(request.getQuarter());
+                .quarter(request.getQuarter())
+                .ktlo(Boolean.TRUE.equals(request.getKtlo()));
 
         // status가 null이면 @Builder.Default(PLANNING)가 적용됨
         if (request.getStatus() != null) {
@@ -162,7 +180,6 @@ public class ProjectService {
         Project project = findProjectById(id);
 
         project.setName(request.getName());
-        project.setProjectType(normalizeProjectType(request.getProjectType()));
         project.setDescription(request.getDescription());
         project.setStartDate(request.getStartDate());
         project.setEndDate(request.getEndDate());
@@ -172,6 +189,7 @@ public class ProjectService {
         project.setPpl(request.getPplId() != null ? memberRepository.findById(request.getPplId()).orElse(null) : null);
         project.setEpl(request.getEplId() != null ? memberRepository.findById(request.getEplId()).orElse(null) : null);
         project.setQuarter(request.getQuarter());
+        project.setKtlo(Boolean.TRUE.equals(request.getKtlo()));
         if (request.getStatus() != null) {
             project.setStatus(request.getStatus());
         }
@@ -200,7 +218,7 @@ public class ProjectService {
         taskRepository.deleteByProjectId(id);
         // 연결 테이블 및 마일스톤 삭제
         projectMemberRepository.deleteByProjectId(id);
-        projectDomainSystemRepository.deleteByProjectId(id);
+        projectSquadRepository.deleteByProjectId(id);
         projectMilestoneRepository.deleteByProjectId(id);
         projectRepository.delete(project);
         log.info("프로젝트 삭제 완료: id={}, name={}", id, project.getName());
@@ -254,60 +272,39 @@ public class ProjectService {
     }
 
     /**
-     * 프로젝트에 도메인 시스템 추가
+     * 프로젝트에 스쿼드 추가
      */
     @Transactional
-    public void addDomainSystem(Long projectId, Long domainSystemId) {
+    public void addSquad(Long projectId, Long squadId) {
         Project project = findProjectById(projectId);
-        DomainSystem domainSystem = domainSystemRepository.findById(domainSystemId)
-                .orElseThrow(() -> new EntityNotFoundException("도메인 시스템을 찾을 수 없습니다. id=" + domainSystemId));
+        Squad squad = squadRepository.findById(squadId)
+                .orElseThrow(() -> new EntityNotFoundException("스쿼드를 찾을 수 없습니다. id=" + squadId));
 
-        if (projectDomainSystemRepository.existsByProjectIdAndDomainSystemId(projectId, domainSystemId)) {
-            throw new IllegalStateException("이미 프로젝트에 등록된 도메인 시스템입니다. domainSystemId=" + domainSystemId);
+        if (projectSquadRepository.existsByProjectIdAndSquadId(projectId, squadId)) {
+            throw new IllegalStateException("이미 프로젝트에 등록된 스쿼드입니다. squadId=" + squadId);
         }
 
-        ProjectDomainSystem pds = ProjectDomainSystem.builder()
+        ProjectSquad ps = ProjectSquad.builder()
                 .project(project)
-                .domainSystem(domainSystem)
+                .squad(squad)
                 .build();
 
-        projectDomainSystemRepository.save(pds);
-        log.info("프로젝트 도메인 시스템 추가: projectId={}, domainSystemId={}", projectId, domainSystemId);
+        projectSquadRepository.save(ps);
+        log.info("프로젝트 스쿼드 추가: projectId={}, squadId={}", projectId, squadId);
     }
 
     /**
-     * 프로젝트에서 도메인 시스템 제거
+     * 프로젝트에서 스쿼드 제거
      */
     @Transactional
-    public void removeDomainSystem(Long projectId, Long domainSystemId) {
+    public void removeSquad(Long projectId, Long squadId) {
         findProjectById(projectId);
-        ProjectDomainSystem pds = projectDomainSystemRepository
-                .findByProjectIdAndDomainSystemId(projectId, domainSystemId)
+        ProjectSquad ps = projectSquadRepository
+                .findByProjectIdAndSquadId(projectId, squadId)
                 .orElseThrow(() -> new EntityNotFoundException(
-                        "프로젝트에 등록되지 않은 도메인 시스템입니다. projectId=" + projectId + ", domainSystemId=" + domainSystemId));
-        projectDomainSystemRepository.delete(pds);
-        log.info("프로젝트 도메인 시스템 제거: projectId={}, domainSystemId={}", projectId, domainSystemId);
-    }
-
-    /**
-     * 기존 프로젝트 유형 목록 조회 (중복 제거, null 제외, 정렬)
-     */
-    public List<String> getProjectTypes() {
-        return projectRepository.findDistinctProjectTypes();
-    }
-
-    /**
-     * projectType null 정규화: null/빈 문자열이면 null, 아니면 trim 처리 + 길이 검증 (DB column 100)
-     */
-    private String normalizeProjectType(String rawType) {
-        if (rawType == null || rawType.isBlank()) {
-            return null;
-        }
-        String trimmed = rawType.trim();
-        if (trimmed.length() > 100) {
-            throw new IllegalArgumentException("프로젝트 유형은 100자를 초과할 수 없습니다.");
-        }
-        return trimmed;
+                        "프로젝트에 등록되지 않은 스쿼드입니다. projectId=" + projectId + ", squadId=" + squadId));
+        projectSquadRepository.delete(ps);
+        log.info("프로젝트 스쿼드 제거: projectId={}, squadId={}", projectId, squadId);
     }
 
     /**
@@ -381,6 +378,9 @@ public class ProjectService {
         if (body.get("endDate") != null && !((String) body.get("endDate")).isBlank()) {
             builder.endDate(LocalDate.parse((String) body.get("endDate")));
         }
+        if (body.containsKey("qaAssignees")) {
+            builder.qaAssignees(body.get("qaAssignees") != null ? ((String) body.get("qaAssignees")).trim() : null);
+        }
         ProjectMilestone saved = projectMilestoneRepository.save(builder.build());
         log.info("마일스톤 생성: projectId={}, name={}", projectId, saved.getName());
         return milestoneToMap(saved);
@@ -407,6 +407,9 @@ public class ProjectService {
             milestone.setEndDate(ed != null && !ed.isBlank() ? LocalDate.parse(ed) : null);
         }
         if (body.containsKey("sortOrder")) milestone.setSortOrder(body.get("sortOrder") != null ? ((Number) body.get("sortOrder")).intValue() : null);
+        if (body.containsKey("qaAssignees")) {
+            milestone.setQaAssignees(body.get("qaAssignees") != null ? ((String) body.get("qaAssignees")).trim() : null);
+        }
         ProjectMilestone saved = projectMilestoneRepository.save(milestone);
         log.info("마일스톤 수정: id={}, name={}", milestoneId, saved.getName());
         return milestoneToMap(saved);
@@ -426,6 +429,7 @@ public class ProjectService {
         map.put("startDate", m.getStartDate() != null ? m.getStartDate().toString() : null);
         map.put("endDate", m.getEndDate() != null ? m.getEndDate().toString() : null);
         map.put("days", m.getDays());
+        map.put("qaAssignees", m.getQaAssignees());
         map.put("sortOrder", m.getSortOrder() != null ? m.getSortOrder() : 0);
         return map;
     }

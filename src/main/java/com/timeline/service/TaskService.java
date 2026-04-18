@@ -32,7 +32,7 @@ public class TaskService {
     private final TaskDependencyRepository taskDependencyRepository;
     private final TaskLinkRepository taskLinkRepository;
     private final ProjectRepository projectRepository;
-    private final DomainSystemRepository domainSystemRepository;
+    private final SquadRepository squadRepository;
     private final MemberRepository memberRepository;
     private final ProjectMilestoneRepository projectMilestoneRepository;
     private final BusinessDayCalculator businessDayCalculator;
@@ -51,7 +51,7 @@ public class TaskService {
     private static final int DELETE_CHUNK_SIZE = 100;
 
     /**
-     * 간트차트용 프로젝트 태스크 조회 (도메인 시스템별 그룹핑)
+     * 간트차트용 프로젝트 태스크 조회 (스쿼드별 그룹핑)
      */
     public GanttDataDto.Response getGanttData(Long projectId) {
         Project project = projectRepository.findById(projectId)
@@ -70,20 +70,20 @@ public class TaskService {
                         Collectors.mapping(td -> td.getDependsOnTask().getId(), Collectors.toList())
                 ));
 
-        // 도메인 시스템별 그룹핑 (LinkedHashMap으로 순서 유지, null은 0L 키)
-        Map<Long, List<Task>> groupedByDomainSystem = new LinkedHashMap<>();
+        // 스쿼드별 그룹핑 (LinkedHashMap으로 순서 유지, null은 0L 키)
+        Map<Long, List<Task>> groupedBySquad = new LinkedHashMap<>();
         for (Task task : tasks) {
-            Long dsId = (task.getDomainSystem() != null) ? task.getDomainSystem().getId() : 0L;
-            groupedByDomainSystem
+            Long dsId = (task.getSquad() != null) ? task.getSquad().getId() : 0L;
+            groupedBySquad
                     .computeIfAbsent(dsId, k -> new ArrayList<>())
                     .add(task);
         }
 
         // GanttDataDto 변환
-        List<GanttDataDto.DomainSystemGroup> domainSystemGroups = groupedByDomainSystem.entrySet().stream()
+        List<GanttDataDto.SquadGroup> squadGroups = groupedBySquad.entrySet().stream()
                 .map(entry -> {
                     Task firstTask = entry.getValue().get(0);
-                    DomainSystem ds = firstTask.getDomainSystem();
+                    Squad ds = firstTask.getSquad();
 
                     List<GanttDataDto.TaskItem> taskItems = entry.getValue().stream()
                             .map(task -> GanttDataDto.TaskItem.builder()
@@ -112,7 +112,7 @@ public class TaskService {
                                     .build())
                             .collect(Collectors.toList());
 
-                    return GanttDataDto.DomainSystemGroup.builder()
+                    return GanttDataDto.SquadGroup.builder()
                             .id(ds != null ? ds.getId() : 0L)
                             .name(ds != null ? ds.getName() : "미지정")
                             .color(ds != null ? ds.getColor() : "#9E9E9E")
@@ -141,7 +141,7 @@ public class TaskService {
                         .endDate(project.getEndDate())
                         .build())
                 .milestones(milestoneItems)
-                .domainSystems(domainSystemGroups)
+                .squads(squadGroups)
                 .build();
     }
 
@@ -240,11 +240,11 @@ public class TaskService {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다. id=" + projectId));
 
-        DomainSystem domainSystem = null;
-        if (request.getDomainSystemId() != null) {
-            domainSystem = domainSystemRepository.findById(request.getDomainSystemId())
+        Squad squad = null;
+        if (request.getSquadId() != null) {
+            squad = squadRepository.findById(request.getSquadId())
                     .orElseThrow(() -> new EntityNotFoundException(
-                            "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
+                            "스쿼드를 찾을 수 없습니다. id=" + request.getSquadId()));
         }
 
         // PARALLEL 모드인 경우 프로젝트 기간 내 검증 (다른 태스크와 충돌 검증 안 함)
@@ -254,7 +254,7 @@ public class TaskService {
 
         Task.TaskBuilder taskBuilder = Task.builder()
                 .project(project)
-                .domainSystem(domainSystem)
+                .squad(squad)
                 .assignee(assignee)
                 .name(request.getName())
                 .description(request.getDescription())
@@ -361,9 +361,9 @@ public class TaskService {
             }
         }
 
-        DomainSystem domainSystem = domainSystemRepository.findById(request.getDomainSystemId())
+        Squad squad = squadRepository.findById(request.getSquadId())
                 .orElseThrow(() -> new EntityNotFoundException(
-                        "도메인 시스템을 찾을 수 없습니다. id=" + request.getDomainSystemId()));
+                        "스쿼드를 찾을 수 없습니다. id=" + request.getSquadId()));
 
         // 프로젝트 변경 처리
         Project project = task.getProject();
@@ -378,7 +378,7 @@ public class TaskService {
         }
 
         task.setProject(project);
-        task.setDomainSystem(domainSystem);
+        task.setSquad(squad);
         task.setAssignee(assignee);
         task.setName(request.getName());
         task.setDescription(request.getDescription());

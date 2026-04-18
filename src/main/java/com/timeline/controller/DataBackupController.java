@@ -3,6 +3,7 @@ package com.timeline.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.timeline.dto.BackupDto;
 import com.timeline.service.DataBackupService;
+import com.timeline.service.GoogleDriveService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -24,6 +25,7 @@ import java.util.Map;
 public class DataBackupController {
 
     private final DataBackupService dataBackupService;
+    private final GoogleDriveService googleDriveService;
     private final ObjectMapper objectMapper;
 
     /**
@@ -74,5 +76,126 @@ public class DataBackupController {
                 "success", true,
                 "message", "Import 완료. " + result.toSummaryMessage()
         ));
+    }
+
+    // ---- Google Drive 백업 ----
+
+    /**
+     * Google Drive 연동 상태/설정 조회
+     */
+    @GetMapping("/gdrive/status")
+    public ResponseEntity<?> gdriveStatus() {
+        var config = googleDriveService.getConfig();
+        config.put("success", true);
+        return ResponseEntity.ok(config);
+    }
+
+    /**
+     * Google Drive OAuth2 클라이언트 설정 저장
+     */
+    @PutMapping("/gdrive/config")
+    public ResponseEntity<?> gdriveConfigSave(@RequestBody Map<String, String> body) {
+        try {
+            googleDriveService.saveClientConfig(body.get("clientId"), body.get("clientSecret"), body.get("folderId"));
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
+     * Google OAuth2 인증 URL 생성
+     */
+    @GetMapping("/gdrive/auth-url")
+    public ResponseEntity<?> gdriveAuthUrl(@RequestParam String redirectUri) {
+        try {
+            String url = googleDriveService.getAuthUrl(redirectUri);
+            return ResponseEntity.ok(Map.of("success", true, "authUrl", url));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
+     * Google OAuth2 콜백 — 인증 코드로 토큰 교환
+     */
+    @PostMapping("/gdrive/auth-callback")
+    public ResponseEntity<?> gdriveAuthCallback(@RequestBody Map<String, String> body) {
+        try {
+            googleDriveService.exchangeCodeForToken(body.get("code"), body.get("redirectUri"));
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            log.error("Google Drive OAuth 콜백 실패", e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
+     * Google Drive 설정 삭제
+     */
+    @DeleteMapping("/gdrive/config")
+    public ResponseEntity<?> gdriveConfigDelete() {
+        googleDriveService.deleteConfig();
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    /**
+     * Google Drive로 백업
+     */
+    @PostMapping("/gdrive/backup")
+    public ResponseEntity<?> gdriveBackup() {
+        try {
+            BackupDto.Snapshot snapshot = dataBackupService.exportAll();
+            byte[] jsonBytes = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(snapshot);
+            var result = googleDriveService.upload(jsonBytes);
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
+        } catch (Exception e) {
+            log.error("Google Drive 백업 실패", e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
+     * Google Drive 백업 파일 목록 조회
+     */
+    @GetMapping("/gdrive/list")
+    public ResponseEntity<?> gdriveList() {
+        try {
+            var files = googleDriveService.listBackups();
+            return ResponseEntity.ok(Map.of("success", true, "data", files));
+        } catch (Exception e) {
+            log.error("Google Drive 목록 조회 실패", e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
+     * Google Drive에서 복원
+     */
+    @PostMapping("/gdrive/restore/{fileId}")
+    public ResponseEntity<?> gdriveRestore(@PathVariable String fileId) {
+        try {
+            byte[] jsonBytes = googleDriveService.download(fileId);
+            BackupDto.Snapshot snapshot = objectMapper.readValue(jsonBytes, BackupDto.Snapshot.class);
+            BackupDto.ImportResult result = dataBackupService.importAll(snapshot);
+            return ResponseEntity.ok(Map.of("success", true, "message", "복원 완료. " + result.toSummaryMessage()));
+        } catch (Exception e) {
+            log.error("Google Drive 복원 실패", e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    /**
+     * Google Drive 백업 파일 삭제
+     */
+    @DeleteMapping("/gdrive/{fileId}")
+    public ResponseEntity<?> gdriveDelete(@PathVariable String fileId) {
+        try {
+            googleDriveService.delete(fileId);
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (Exception e) {
+            log.error("Google Drive 삭제 실패", e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
     }
 }

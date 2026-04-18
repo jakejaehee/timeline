@@ -8,18 +8,18 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDateTime;
 
 /**
- * 프로젝트-도메인시스템 연결 엔티티
+ * 프로젝트-스쿼드 연결 엔티티
  */
 @Entity
-@Table(name = "project_domain_system", uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"project_id", "domain_system_id"})
+@Table(name = "project_squad", uniqueConstraints = {
+        @UniqueConstraint(columnNames = {"project_id", "squad_id"})
 })
 @EntityListeners(AuditingEntityListener.class)
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ProjectDomainSystem {
+public class ProjectSquad {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -30,8 +30,8 @@ public class ProjectDomainSystem {
     private Project project;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "domain_system_id", nullable = false)
-    private DomainSystem domainSystem;
+    @JoinColumn(name = "squad_id", nullable = false)
+    private Squad squad;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)

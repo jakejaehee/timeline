@@ -76,10 +76,6 @@
                         <select class="form-select form-select-sm" id="proj-filter-epl" style="max-width:130px; font-size:0.8rem;" onchange="applyProjectListFilters()">
                             <option value="">EPL 전체</option>
                         </select>
-                        <div class="dropdown" id="proj-filter-type-dropdown">
-                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.8rem;" id="proj-filter-type-btn">유형</button>
-                            <div class="dropdown-menu p-2" style="min-width:160px; max-height:250px; overflow-y:auto; font-size:0.82rem;" id="proj-filter-type-menu"></div>
-                        </div>
                         <div class="dropdown" id="proj-filter-quarter-dropdown">
                             <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.8rem;" id="proj-filter-quarter-btn">분기</button>
                             <div class="dropdown-menu p-2" style="min-width:140px; max-height:250px; overflow-y:auto; font-size:0.82rem;" id="proj-filter-quarter-menu"></div>
@@ -107,22 +103,21 @@
                                         <th style="width:30px;"></th>
                                         <th style="width:30px;"></th>
                                         <th class="sortable-header" onclick="sortProjectList('name')">프로젝트명 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-name"></i></th>
+                                        <th>스쿼드</th>
                                         <th>멤버</th>
-                                        <th>BE</th>
                                         <th class="sortable-header" onclick="sortProjectList('totalManDays')">MD <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-totalManDays"></i></th>
                                         <th class="sortable-header" onclick="sortProjectList('estimatedDays')">소요일 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-estimatedDays"></i></th>
                                         <th class="sortable-header" onclick="sortProjectList('startDate')">시작일 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-startDate"></i></th>
                                         <th class="sortable-header" onclick="sortProjectList('endDate')">론치일 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-endDate"></i></th>
                                         <th>PPL</th>
                                         <th>분기</th>
-                                        <th class="sortable-header" onclick="sortProjectList('projectType')">유형 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-projectType"></i></th>
                                         <th class="sortable-header" onclick="sortProjectList('status')">상태 <i class="bi bi-arrow-down-up text-muted" id="proj-sort-icon-status"></i></th>
                                         <th>지연</th>
                                         <th class="text-center">액션</th>
                                     </tr>
                                 </thead>
                                 <tbody id="projects-table">
-                                    <tr><td colspan="15" class="text-center text-muted">로딩 중...</td></tr>
+                                    <tr><td colspan="14" class="text-center text-muted">로딩 중...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -180,8 +175,8 @@
                                 <label class="form-check-label" for="proj-gantt-show-jira-key" style="font-size:0.85rem;">티켓번호</label>
                             </div>
                             <div class="form-check form-check-inline mb-0">
-                                <input class="form-check-input" type="checkbox" id="proj-gantt-show-domain" onchange="reloadProjectGantt()">
-                                <label class="form-check-label" for="proj-gantt-show-domain" style="font-size:0.85rem;">도메인명</label>
+                                <input class="form-check-input" type="checkbox" id="proj-gantt-show-squad" onchange="reloadProjectGantt()">
+                                <label class="form-check-label" for="proj-gantt-show-squad" style="font-size:0.85rem;">스쿼드명</label>
                             </div>
                             <div class="btn-group btn-group-sm" role="group" id="proj-gantt-view-mode">
                                 <button class="btn btn-outline-secondary btn-sm active" onclick="changeProjectGanttViewMode('Day')">Day</button>
@@ -212,6 +207,7 @@
                                             <th>일수</th>
                                             <th>시작일</th>
                                             <th>종료일</th>
+                                            <th>QA 담당자</th>
                                             <th class="text-center" style="width:60px;">액션</th>
                                         </tr>
                                     </thead>
@@ -364,8 +360,8 @@
                         <label class="form-check-label" for="gantt-show-jira-key" style="font-size:0.85rem;">티켓번호</label>
                     </div>
                     <div class="form-check form-check-inline mb-0">
-                        <input class="form-check-input" type="checkbox" id="gantt-show-domain">
-                        <label class="form-check-label" for="gantt-show-domain" style="font-size:0.85rem;">도메인명</label>
+                        <input class="form-check-input" type="checkbox" id="gantt-show-squad">
+                        <label class="form-check-label" for="gantt-show-squad" style="font-size:0.85rem;">스쿼드명</label>
                     </div>
                     <button id="gantt-milestones-btn" class="btn btn-outline-secondary btn-sm" onclick="showMilestonesModal()" style="display:none;">
                         <i class="bi bi-flag"></i> 마일스톤
@@ -453,16 +449,16 @@
             </div>
             <ul class="nav nav-tabs mb-3" id="settings-tabs">
                 <li class="nav-item">
-                    <a class="nav-link active" data-bs-toggle="tab" href="#settings-members">멤버</a>
+                    <a class="nav-link active" data-bs-toggle="tab" href="#settings-squads">스쿼드</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-bs-toggle="tab" href="#settings-members">멤버</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#settings-leaves">멤버 비가용일</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#settings-holidays">공휴일</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" data-bs-toggle="tab" href="#settings-domains">도메인 시스템</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" data-bs-toggle="tab" href="#settings-data">데이터 관리</a>
@@ -473,7 +469,7 @@
             </ul>
             <div class="tab-content">
                 <!-- 멤버 탭 -->
-                <div id="settings-members" class="tab-pane fade show active">
+                <div id="settings-members" class="tab-pane fade">
                     <div class="d-flex justify-content-end mb-3">
                         <button class="btn btn-primary btn-sm" onclick="showMemberModal()">
                             <i class="bi bi-plus-lg"></i> 멤버 추가
@@ -567,11 +563,11 @@
                         </div>
                     </div>
                 </div>
-                <!-- 도메인 시스템 탭 -->
-                <div id="settings-domains" class="tab-pane fade">
+                <!-- 스쿼드 탭 -->
+                <div id="settings-squads" class="tab-pane fade show active">
                     <div class="d-flex justify-content-end mb-3">
-                        <button class="btn btn-primary btn-sm" onclick="showDomainSystemModal()">
-                            <i class="bi bi-plus-lg"></i> 도메인 시스템 추가
+                        <button class="btn btn-primary btn-sm" onclick="showSquadModal()">
+                            <i class="bi bi-plus-lg"></i> 스쿼드 추가
                         </button>
                     </div>
                     <div class="card">
@@ -583,11 +579,12 @@
                                             <th>이름</th>
                                             <th>설명</th>
                                             <th>색상</th>
+                                            <th>멤버</th>
                                             <th class="text-center">액션</th>
                                         </tr>
                                     </thead>
-                                    <tbody id="domain-systems-table">
-                                        <tr><td colspan="4" class="text-center text-muted">로딩 중...</td></tr>
+                                    <tbody id="squads-table">
+                                        <tr><td colspan="5" class="text-center text-muted">로딩 중...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -637,6 +634,87 @@
                                 </div>
                             </div>
                         </div>
+                    <!-- Google Drive 백업 -->
+                    <div class="row g-4 mt-2">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header fw-bold">
+                                    <i class="bi bi-google"></i> Google Drive 백업/복원
+                                    <span id="gdrive-status-badge" class="badge bg-secondary ms-2" style="font-size:0.7rem;">확인 중...</span>
+                                </div>
+                                <div class="card-body">
+                                    <!-- OAuth2 설정 폼 (토글) -->
+                                    <div id="gdrive-config-section" class="mb-3" style="display:none;">
+                                        <div class="alert alert-info small py-2">
+                                            <strong>설정 방법:</strong>
+                                            <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>에서
+                                            OAuth 2.0 클라이언트 ID를 생성하세요.<br>
+                                            유형: <strong>웹 애플리케이션</strong>,
+                                            승인된 리디렉션 URI: <code id="gdrive-redirect-uri-hint"></code>
+                                        </div>
+                                        <!-- JSON 파일 업로드 -->
+                                        <div class="mb-2">
+                                            <label class="form-label small fw-bold">JSON 파일 업로드로 자동 입력</label>
+                                            <div class="d-flex gap-2 align-items-center">
+                                                <input type="file" id="gdrive-json-file" accept=".json" class="form-control form-control-sm" style="max-width:300px;" onchange="onGdriveJsonFileSelected(event)">
+                                                <small class="text-muted">또는 아래에 직접 입력</small>
+                                            </div>
+                                        </div>
+                                        <div class="row g-2">
+                                            <div class="col-md-6">
+                                                <label class="form-label small fw-bold">Client ID <span class="text-danger">*</span></label>
+                                                <input type="text" class="form-control form-control-sm" id="gdrive-client-id"
+                                                       placeholder="xxxx.apps.googleusercontent.com">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label small fw-bold">Client Secret <span class="text-danger">*</span></label>
+                                                <input type="password" class="form-control form-control-sm" id="gdrive-client-secret"
+                                                       placeholder="GOCSPX-xxxx">
+                                            </div>
+                                            <div class="col-md-8">
+                                                <label class="form-label small fw-bold">Drive 폴더 ID <span class="text-muted">(선택)</span></label>
+                                                <input type="text" class="form-control form-control-sm" id="gdrive-folder-id"
+                                                       placeholder="폴더 URL의 마지막 부분">
+                                            </div>
+                                            <div class="col-md-4 d-flex align-items-end gap-1">
+                                                <button class="btn btn-primary btn-sm" onclick="saveGdriveConfig()">저장</button>
+                                                <button class="btn btn-outline-secondary btn-sm" onclick="toggleGdriveConfig()">취소</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="gdrive-not-configured" style="display:none;">
+                                        <p class="text-muted small">Google Drive 연동이 설정되지 않았습니다.</p>
+                                        <button class="btn btn-outline-primary btn-sm" onclick="toggleGdriveConfig()">
+                                            <i class="bi bi-gear"></i> 연동 설정
+                                        </button>
+                                    </div>
+                                    <div id="gdrive-need-auth" style="display:none;">
+                                        <p class="text-muted small">OAuth2 클라이언트가 설정되었습니다. Google 계정 인증을 진행해주세요.</p>
+                                        <button class="btn btn-primary btn-sm" onclick="gdriveStartAuth()">
+                                            <i class="bi bi-google"></i> Google 계정으로 인증
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm ms-1" onclick="deleteGdriveConfig()">설정 삭제</button>
+                                    </div>
+                                    <div id="gdrive-configured" style="display:none;">
+                                        <div class="d-flex gap-2 mb-3">
+                                            <button class="btn btn-outline-primary btn-sm" onclick="gdriveBackup()">
+                                                <i class="bi bi-cloud-upload"></i> Google Drive에 백업
+                                            </button>
+                                            <button class="btn btn-outline-secondary btn-sm" onclick="gdriveListBackups()">
+                                                <i class="bi bi-arrow-clockwise"></i> 목록 새로고침
+                                            </button>
+                                            <button class="btn btn-outline-secondary btn-sm" onclick="toggleGdriveConfig()">
+                                                <i class="bi bi-gear"></i> 설정
+                                            </button>
+                                        </div>
+                                        <div id="gdrive-backup-list">
+                                            <div class="text-muted small">목록을 불러오는 중...</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     </div>
                 </div>
                 <!-- Jira 연동 탭 -->
@@ -716,7 +794,7 @@
                         <textarea id="ai-text-input" class="form-control" rows="8"
                                   placeholder="예시:&#10;scm-hub: API 개발 김엔지 5md, DB 설계 박디비 3md&#10;scm-portal: 화면개발 최프론 8md → QA 테스트 이큐에이 3md"></textarea>
                         <div class="form-text">
-                            자유 형식으로 태스크를 입력하세요. AI가 자동으로 도메인 시스템, 태스크명, 멤버, 공수를 추출합니다.
+                            자유 형식으로 태스크를 입력하세요. AI가 자동으로 스쿼드, 태스크명, 멤버, 공수를 추출합니다.
                         </div>
                     </div>
                     <button class="btn btn-primary" onclick="parseFreeText()" id="ai-parse-btn">
@@ -914,12 +992,12 @@
         </div>
     </div>
 
-    <!-- ==================== 도메인 시스템 모달 ==================== -->
-    <div class="modal fade" id="domainSystemModal" tabindex="-1">
+    <!-- ==================== 스쿼드 모달 ==================== -->
+    <div class="modal fade" id="squadModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="domainSystemModalTitle">도메인 시스템 추가</h5>
+                    <h5 class="modal-title" id="squadModalTitle">스쿼드 추가</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -942,7 +1020,37 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
-                    <button type="button" class="btn btn-primary" onclick="saveDomainSystem()">저장</button>
+                    <button type="button" class="btn btn-primary" onclick="saveSquad()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 스쿼드 멤버 관리 모달 ==================== -->
+    <div class="modal fade" id="squadMemberModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="squadMemberModalTitle">스쿼드 멤버 관리</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="squad-member-squad-id">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">멤버 추가</label>
+                        <div class="position-relative">
+                            <input type="text" class="form-control form-control-sm" id="squad-member-search"
+                                   placeholder="이름 또는 역할로 검색..." autocomplete="off">
+                            <input type="hidden" id="squad-member-add-select">
+                            <div id="squad-member-search-results" class="list-group position-absolute w-100" style="z-index:1050; max-height:200px; overflow-y:auto; display:none;"></div>
+                        </div>
+                    </div>
+                    <hr>
+                    <label class="form-label fw-bold">현재 멤버</label>
+                    <div id="squad-member-list"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
                 </div>
             </div>
         </div>
@@ -958,20 +1066,9 @@
                 </div>
                 <div class="modal-body">
                     <input type="hidden" id="project-id">
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="project-name" class="form-label">프로젝트명 <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="project-name" required>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="project-type" class="form-label">유형</label>
-                            <input type="text" class="form-control" id="project-type"
-                                   list="project-type-list" maxlength="100"
-                                   placeholder="예: SKU_SYSTEM, BUSINESS (자유 입력 가능)">
-                            <datalist id="project-type-list">
-                                <!-- JS에서 동적으로 채움 -->
-                            </datalist>
-                        </div>
+                    <div class="mb-3">
+                        <label for="project-name" class="form-label">프로젝트명 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="project-name" required>
                     </div>
                     <div class="mb-3">
                         <label for="project-description" class="form-label">설명</label>
@@ -1016,6 +1113,12 @@
                             <label for="project-quarter" class="form-label">분기</label>
                             <input type="text" class="form-control" id="project-quarter" placeholder="예: 26Q1,26Q2" maxlength="200">
                         </div>
+                        <div class="col-md-1 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="project-ktlo">
+                                <label class="form-check-label" for="project-ktlo">KTLO</label>
+                            </div>
+                        </div>
                         <div class="col-md-4 mb-3">
                             <label for="project-ppl" class="form-label">PPL (Product Project Leader)</label>
                             <select class="form-select" id="project-ppl">
@@ -1032,9 +1135,9 @@
                     <!-- 지연 경고 -->
                     <div id="project-delay-warning" class="mb-3" style="display:none;">
                     </div>
-                    <!-- 도메인 시스템 선택 -->
+                    <!-- 스쿼드 선택 -->
                     <div class="mb-3">
-                        <label class="form-label fw-bold">도메인 시스템 선택</label>
+                        <label class="form-label fw-bold">스쿼드 선택 <span class="text-danger">*</span></label>
                         <div id="project-ds-checklist" class="checklist-container"></div>
                     </div>
                 </div>
@@ -1073,7 +1176,7 @@
                             </select>
                         </div>
                     </div>
-                    <!-- 2행: 담당자, 프로젝트, 도메인 시스템 -->
+                    <!-- 2행: 담당자, 프로젝트, 스쿼드 -->
                     <div class="row">
                         <div class="col-md-4 mb-3">
                             <label for="task-assignee" class="form-label">담당자</label>
@@ -1088,8 +1191,8 @@
                             </select>
                         </div>
                         <div class="col-md-4 mb-3">
-                            <label for="task-domain-system" class="form-label">도메인 시스템</label>
-                            <select class="form-select" id="task-domain-system">
+                            <label for="task-squad" class="form-label">스쿼드</label>
+                            <select class="form-select" id="task-squad">
                                 <option value="">선택하세요</option>
                             </select>
                         </div>
@@ -1525,6 +1628,6 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
-    <script src="/js/app.js?v=20260417b"></script>
+    <script src="/js/app.js?v=20260418j"></script>
 </body>
 </html>

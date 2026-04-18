@@ -6,6 +6,7 @@ import com.timeline.domain.enums.TaskPriority;
 import com.timeline.domain.enums.TaskStatus;
 import com.timeline.domain.enums.TaskType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -19,15 +20,15 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
 
     /**
      * 프로젝트별 태스크 조회 (간트차트용)
-     * - assignee, domainSystem을 JOIN FETCH하여 N+1 방지
+     * - assignee, squad을 JOIN FETCH하여 N+1 방지
      * - sortOrder 기준 정렬
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "LEFT JOIN FETCH t.assignee " +
             "WHERE t.project.id = :projectId " +
-            "ORDER BY t.domainSystem.name ASC NULLS LAST, t.sortOrder ASC, t.startDate ASC")
+            "ORDER BY t.squad.name ASC NULLS LAST, t.sortOrder ASC, t.startDate ASC")
     List<Task> findByProjectIdWithDetails(@Param("projectId") Long projectId);
 
     /**
@@ -35,7 +36,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "LEFT JOIN FETCH t.assignee " +
             "WHERE t.id = :taskId")
     Optional<Task> findByIdWithDetails(@Param("taskId") Long taskId);
@@ -50,7 +51,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.startDate <= :endDate " +
             "AND t.endDate >= :startDate " +
@@ -70,19 +71,19 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "WHERE t.assignee.id = :assigneeId " +
             "ORDER BY t.startDate ASC")
     List<Task> findByAssigneeIdWithDetails(@Param("assigneeId") Long assigneeId);
 
     /**
      * 전체 태스크 조회 (팀 보드용) - 필터 조건 적용
-     * - project, domainSystem, assignee JOIN FETCH
+     * - project, squad, assignee JOIN FETCH
      * - 동적 필터: status, projectId, startDate/endDate 범위, assigneeId, priority, type, unordered, isDelayed
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "LEFT JOIN FETCH t.assignee " +
             "WHERE (:status IS NULL OR t.status = :status) " +
             "AND (:projectId IS NULL OR t.project.id = :projectId) " +
@@ -185,7 +186,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.executionMode = :sequentialMode " +
             "AND t.status NOT IN :excludeStatuses " +
@@ -200,7 +201,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.executionMode = :parallelMode " +
             "AND t.status NOT IN :excludeStatuses " +
@@ -215,7 +216,7 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      */
     @Query("SELECT t FROM Task t " +
             "JOIN FETCH t.project " +
-            "LEFT JOIN FETCH t.domainSystem " +
+            "LEFT JOIN FETCH t.squad " +
             "WHERE t.assignee.id = :assigneeId " +
             "AND t.status IN :statuses " +
             "ORDER BY t.startDate ASC")
@@ -244,4 +245,8 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     List<Task> findByProjectIdAndStatus(Long projectId, TaskStatus status);
 
     void deleteByProjectId(Long projectId);
+
+    @Modifying
+    @Query("UPDATE Task t SET t.squad = null WHERE t.squad.id = :squadId")
+    void nullifySquadId(@Param("squadId") Long squadId);
 }

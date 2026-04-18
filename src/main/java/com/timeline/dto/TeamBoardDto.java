@@ -58,8 +58,8 @@ public class TeamBoardDto {
         private String name;
         private Long projectId;
         private String projectName;
-        private String domainSystemName;
-        private String domainSystemColor;
+        private String squadName;
+        private String squadColor;
         private LocalDate startDate;
         private LocalDate endDate;
         private TaskStatus status;
@@ -75,8 +75,8 @@ public class TeamBoardDto {
                     .name(task.getName())
                     .projectId(task.getProject().getId())
                     .projectName(task.getProject().getName())
-                    .domainSystemName(task.getDomainSystem().getName())
-                    .domainSystemColor(task.getDomainSystem().getColor())
+                    .squadName(task.getSquad().getName())
+                    .squadColor(task.getSquad().getColor())
                     .startDate(task.getStartDate())
                     .endDate(task.getEndDate())
                     .status(task.getStatus())

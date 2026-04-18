@@ -319,7 +319,7 @@ public class JiraImportService {
 
                     Task newTask = Task.builder()
                             .project(issueProject)
-                            .domainSystem(null)
+                            .squad(null)
                             .assignee(mappedMember)
                             .name(taskName)
                             .description(issue.getDescription())
@@ -503,7 +503,7 @@ public class JiraImportService {
 
                     Task newTask = Task.builder()
                             .project(issueProject)
-                            .domainSystem(null)
+                            .squad(null)
                             .assignee(mappedMember)
                             .name(taskName)
                             .description(issue.getDescription())

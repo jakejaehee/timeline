@@ -43,7 +43,7 @@ public class AiParsingController {
 
         return ResponseEntity.ok(Map.of(
                 "success", true,
-                "data", Map.of("parsed", parsed.getDomainSystems())
+                "data", Map.of("parsed", parsed.getSquads())
         ));
     }
 
@@ -55,7 +55,7 @@ public class AiParsingController {
                                               @RequestBody ParsedTaskDto parsedData) {
         log.info("파싱 결과 저장 요청: projectId={}", projectId);
 
-        if (parsedData.getDomainSystems() == null || parsedData.getDomainSystems().isEmpty()) {
+        if (parsedData.getSquads() == null || parsedData.getSquads().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "error", "INVALID_INPUT",

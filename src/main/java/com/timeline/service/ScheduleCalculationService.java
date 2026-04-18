@@ -23,6 +23,8 @@ public class ScheduleCalculationService {
 
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSquadRepository projectSquadRepository;
+    private final SquadMemberRepository squadMemberRepository;
     private final ProjectMilestoneRepository projectMilestoneRepository;
     private final TaskRepository taskRepository;
     private final HolidayService holidayService;
@@ -43,45 +45,39 @@ public class ScheduleCalculationService {
         Set<LocalDate> holidays = holidayService.getHolidayDatesBetween(rangeStart, rangeEnd);
 
         List<Map<String, Object>> results = new ArrayList<>();
-        // 멤버별 가용 시점 추적: memberId -> 해당 멤버가 참여 중인 프로젝트의 론치일
-        Map<Long, LocalDate> memberBusyUntil = new HashMap<>();
+        // 멤버별 바쁜 기간 추적: memberId -> (startDate, endDate) 리스트
+        Map<Long, List<LocalDate[]>> memberBusyPeriods = new HashMap<>();
 
         for (Long projectId : projectIds) {
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalArgumentException("프로젝트를 찾을 수 없습니다. id=" + projectId));
 
-            // 이 프로젝트의 BE 멤버 조회 → 겹치는 멤버가 있으면 해당 멤버의 가용 시점 이후로 시작
-            List<ProjectMember> pms = projectMemberRepository.findByProjectIdWithMember(projectId);
-            List<Long> thisBeMemberIds = pms.stream()
-                    .map(ProjectMember::getMember)
-                    .filter(m -> m.getRole() == MemberRole.BE && Boolean.TRUE.equals(m.getActive()))
-                    .map(Member::getId)
-                    .collect(Collectors.toList());
-
-            // 겹치는 멤버 중 가장 늦은 론치일 + 1 영업일 = 이 프로젝트의 최소 시작일
-            LocalDate forcedStartDate = null;
-            for (Long mid : thisBeMemberIds) {
-                LocalDate busyUntil = memberBusyUntil.get(mid);
-                if (busyUntil != null) {
-                    LocalDate nextAvail = bizDayCalc.getNextBusinessDay(busyUntil, holidays);
-                    if (forcedStartDate == null || nextAvail.isAfter(forcedStartDate)) {
-                        forcedStartDate = nextAvail;
-                    }
-                }
+            // KTLO 프로젝트는 일정 계산에서 제외
+            if (Boolean.TRUE.equals(project.getKtlo())) {
+                Map<String, Object> skipped = new LinkedHashMap<>();
+                skipped.put("projectId", projectId);
+                skipped.put("projectName", project.getName());
+                skipped.put("skipped", true);
+                skipped.put("skipReason", "KTLO 프로젝트는 일정 계산에서 제외됩니다.");
+                results.add(skipped);
+                continue;
             }
 
-            Map<String, Object> result = calculateSingleProject(project, forcedStartDate, holidays, rangeStart, rangeEnd, memberBusyUntil);
+            Map<String, Object> result = calculateSingleProject(project, holidays, rangeStart, rangeEnd, memberBusyPeriods);
             results.add(result);
 
-            // 이 프로젝트의 론치일로 참여 멤버 가용 시점 갱신
-            String launchDateStr = (String) result.get("launchDate");
-            if (launchDateStr != null) {
-                LocalDate launchDate = LocalDate.parse(launchDateStr);
+            // 이 프로젝트의 기간을 참여 멤버의 바쁜 기간에 추가
+            String startStr = (String) result.get("startDate");
+            String launchStr = (String) result.get("launchDate");
+            if (startStr != null && launchStr != null) {
+                LocalDate projStart = LocalDate.parse(startStr);
+                LocalDate projLaunchNextDay = bizDayCalc.getNextBusinessDay(LocalDate.parse(launchStr), holidays);
                 @SuppressWarnings("unchecked")
                 List<Long> allBeMemberIds = (List<Long>) result.get("_beMemberIds");
                 if (allBeMemberIds != null) {
                     for (Long mid : allBeMemberIds) {
-                        memberBusyUntil.put(mid, launchDate);
+                        memberBusyPeriods.computeIfAbsent(mid, k -> new ArrayList<>())
+                                .add(new LocalDate[]{projStart, projLaunchNextDay});
                     }
                 }
             }
@@ -90,15 +86,15 @@ public class ScheduleCalculationService {
         return results;
     }
 
-    private Map<String, Object> calculateSingleProject(Project project, LocalDate forcedStartDate,
+    private Map<String, Object> calculateSingleProject(Project project,
                                                          Set<LocalDate> holidays,
                                                          LocalDate rangeStart, LocalDate rangeEnd,
-                                                         Map<Long, LocalDate> memberBusyUntil) {
+                                                         Map<Long, List<LocalDate[]>> memberBusyPeriods) {
         Long projectId = project.getId();
 
-        // BE/QA 멤버 조회 (프로젝트에 배정된 전체)
+        // ===== Step 1: BE 멤버 결정 =====
         List<ProjectMember> projectMembers = projectMemberRepository.findByProjectIdWithMember(projectId);
-        List<Member> allBeMembers = projectMembers.stream()
+        List<Member> explicitBeMembers = projectMembers.stream()
                 .map(ProjectMember::getMember)
                 .filter(m -> m.getRole() == MemberRole.BE && Boolean.TRUE.equals(m.getActive()))
                 .collect(Collectors.toList());
@@ -107,44 +103,124 @@ public class ScheduleCalculationService {
                 .filter(m -> m.getRole() == MemberRole.QA && Boolean.TRUE.equals(m.getActive()))
                 .collect(Collectors.toList());
 
-        // 이 프로젝트 시작일 결정 (가용 멤버 필터링에 필요) — 명시적 시작일 우선
-        LocalDate projStartForFilter;
-        if (project.getStartDate() != null) {
-            projStartForFilter = project.getStartDate();
-        } else if (forcedStartDate != null) {
-            projStartForFilter = forcedStartDate;
-        } else {
-            projStartForFilter = LocalDate.now();
-        }
+        boolean autoAssigned = false;
+        List<Member> beMembers;
+        List<Member> autoAssignedMembers = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
 
-        // BE 멤버 중 가용 멤버만 필터링: 이전 프로젝트가 론치하지 않으면 캐파에 포함 안 됨
-        List<Member> beMembers = new ArrayList<>();
-        List<Member> busyMembers = new ArrayList<>();
-        for (Member m : allBeMembers) {
-            LocalDate busyUntil = memberBusyUntil.get(m.getId());
-            if (busyUntil != null && !busyUntil.isBefore(projStartForFilter)) {
-                // 이전 프로젝트 론치일이 이 프로젝트 시작일 이후 → 아직 busy
-                busyMembers.add(m);
-            } else {
-                beMembers.add(m);
+        if (!explicitBeMembers.isEmpty()) {
+            // 명시적 할당 멤버 사용
+            beMembers = new ArrayList<>(explicitBeMembers);
+        } else {
+            // Step 1-1: 스쿼드 멤버 풀 구성
+            autoAssigned = true;
+            beMembers = new ArrayList<>();
+            List<Member> squadMemberPool = getSquadMemberPool(projectId);
+
+            if (!squadMemberPool.isEmpty()) {
+                // Step 1-2: 가용 멤버 필터링
+                LocalDate projStartEstimate = estimateProjectStart(project);
+                // totalMd 미리 계산 (인원 결정에 필요)
+                BigDecimal totalMd = calculateTotalMd(project, projectId);
+
+                // QA 일수 조회
+                Integer qaDays = getQaDays(projectId);
+
+                // Step 1-3 & 1-4: 필요 인원 결정 및 선택
+                List<Member> availableMembers = filterAvailableMembers(squadMemberPool, projStartEstimate, project, memberBusyPeriods, holidays);
+
+                // capacity 높은 순 정렬
+                availableMembers.sort((a, b) -> {
+                    BigDecimal ca = a.getCapacity() != null ? a.getCapacity() : BigDecimal.ONE;
+                    BigDecimal cb = b.getCapacity() != null ? b.getCapacity() : BigDecimal.ONE;
+                    return cb.compareTo(ca);
+                });
+
+                boolean hasDates = project.getStartDate() != null && project.getEndDate() != null;
+
+                if (hasDates) {
+                    // 기간 지정: 개발완료일 기준 필요 capacity 산출
+                    LocalDate devEndTarget = calculateDevEndTarget(project, qaDays, holidays);
+                    if (devEndTarget != null && project.getStartDate() != null) {
+                        int devBizDays = countBusinessDays(project.getStartDate(), devEndTarget, holidays);
+                        if (devBizDays > 0 && totalMd.compareTo(BigDecimal.ZERO) > 0) {
+                            BigDecimal neededCapacity = totalMd.divide(new BigDecimal(devBizDays), 2, RoundingMode.CEILING);
+                            beMembers = selectByCapacity(availableMembers, neededCapacity);
+                        } else {
+                            beMembers = new ArrayList<>(availableMembers);
+                        }
+                    } else {
+                        beMembers = new ArrayList<>(availableMembers);
+                    }
+
+                    // 부족 시 경고
+                    BigDecimal selectedCapacity = beMembers.stream()
+                            .map(m -> m.getCapacity() != null ? m.getCapacity() : BigDecimal.ONE)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+                    if (totalMd.compareTo(BigDecimal.ZERO) > 0 && selectedCapacity.compareTo(BigDecimal.ZERO) > 0) {
+                        LocalDate devEndTarget2 = calculateDevEndTarget(project, qaDays, holidays);
+                        if (devEndTarget2 != null && project.getStartDate() != null) {
+                            int devBizDays = countBusinessDays(project.getStartDate(), devEndTarget2, holidays);
+                            BigDecimal neededCapacity = devBizDays > 0 ? totalMd.divide(new BigDecimal(devBizDays), 2, RoundingMode.CEILING) : totalMd;
+                            if (selectedCapacity.compareTo(neededCapacity) < 0) {
+                                // 부족 인원 계산
+                                BigDecimal deficit = neededCapacity.subtract(selectedCapacity);
+                                int additionalNeeded = deficit.divide(BigDecimal.ONE, 0, RoundingMode.CEILING).intValue();
+                                // 현재 인원 기준 예상 론치일 계산
+                                int actualDevDays = totalMd.divide(selectedCapacity, 0, RoundingMode.CEILING).intValue();
+                                LocalDate estDevStart = bizDayCalc.ensureBusinessDay(
+                                        project.getStartDate().isBefore(LocalDate.now()) ? LocalDate.now() : project.getStartDate(), holidays);
+                                LocalDate estDevEnd = bizDayCalc.calculateEndDate(estDevStart, new BigDecimal(actualDevDays), BigDecimal.ONE, holidays);
+                                LocalDate estLaunch;
+                                if (qaDays != null && qaDays > 0) {
+                                    LocalDate estQaStart = bizDayCalc.getNextBusinessDay(estDevEnd, holidays);
+                                    LocalDate estQaEnd = bizDayCalc.calculateEndDate(estQaStart, new BigDecimal(qaDays), BigDecimal.ONE, holidays);
+                                    estLaunch = bizDayCalc.getNextBusinessDay(estQaEnd, holidays);
+                                } else {
+                                    estLaunch = bizDayCalc.getNextBusinessDay(estDevEnd, holidays);
+                                }
+                                warnings.add("BE " + additionalNeeded + "명 추가 투입 필요. 현재 인원(" + beMembers.size() + "명) 기준 예상 론치일: " + estLaunch);
+                            }
+                        }
+                    }
+                } else {
+                    // 기간 미지정: totalMd 구간별 인원 테이블
+                    int targetCount = getTargetMemberCount(totalMd);
+                    int selectCount = Math.min(targetCount, availableMembers.size());
+                    beMembers = new ArrayList<>(availableMembers.subList(0, selectCount));
+                }
+
+                autoAssignedMembers = new ArrayList<>(beMembers);
             }
         }
 
-        // BE 캐파 합계 (가용 멤버만)
+        // 가용/바쁜 멤버 분리 (명시적 할당인 경우)
+        List<Member> busyMembers = new ArrayList<>();
+        if (!autoAssigned) {
+            LocalDate projStartForFilter = project.getStartDate() != null ? project.getStartDate() : LocalDate.now();
+            List<Member> filteredBe = new ArrayList<>();
+            for (Member m : beMembers) {
+                if (isMemberBusy(m.getId(), projStartForFilter, project, memberBusyPeriods)) {
+                    busyMembers.add(m);
+                } else {
+                    filteredBe.add(m);
+                }
+            }
+            beMembers = filteredBe;
+        }
+
+        // ===== Step 2: 일정 계산 실행 =====
         BigDecimal beCapacity = beMembers.stream()
                 .map(m -> m.getCapacity() != null ? m.getCapacity() : BigDecimal.ONE)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // TODO/IN_PROGRESS 태스크 총 공수 (override 우선)
+        // totalMd
+        BigDecimal totalMd = calculateTotalMd(project, projectId);
         List<Task> activeTasks = taskRepository.findByProjectId(projectId).stream()
                 .filter(t -> ACTIVE_STATUSES.contains(t.getStatus()))
                 .collect(Collectors.toList());
-        BigDecimal taskMdSum = activeTasks.stream()
-                .map(t -> t.getManDays() != null ? t.getManDays() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalMd = (project.getTotalManDaysOverride() != null) ? project.getTotalManDaysOverride() : taskMdSum;
 
-        // QA 마일스톤 정보 (일수 + 시작일)
+        // QA 마일스톤
         List<ProjectMilestone> milestones = projectMilestoneRepository.findByProjectIdOrderBySortOrderAscStartDateAsc(projectId);
         ProjectMilestone qaMilestone = milestones.stream()
                 .filter(m -> m.getType() == MilestoneType.QA && m.getDays() != null)
@@ -152,45 +228,36 @@ public class ScheduleCalculationService {
         Integer qaDays = qaMilestone != null ? qaMilestone.getDays() : null;
         LocalDate qaFixedStartDate = qaMilestone != null ? qaMilestone.getStartDate() : null;
 
-        // 시작일/론치일이 모두 설정된 경우 → 계산 없이 그대로 사용 (경고만 체크)
         boolean fixedSchedule = (project.getStartDate() != null && project.getEndDate() != null);
 
-        LocalDate startDate;
-        LocalDate launchDate;
-        LocalDate devEndDate;
-        LocalDate qaStartDate = null;
-        LocalDate qaEndDate = null;
-        int devDays = 0;
-        String warning = null;
-
-        // BE 비가용일: 공휴일 (종료일 계산 시 주말+공휴일 스킵용)
         Set<LocalDate> beUnavailable = new HashSet<>(holidays);
-
-        // BE 멤버별 개인 휴가 조회
         Map<Member, Set<LocalDate>> beMemberLeaves = new HashMap<>();
         for (Member m : beMembers) {
             beMemberLeaves.put(m, memberLeaveService.getMemberLeaveDatesBetween(m.getId(), rangeStart, rangeEnd));
         }
 
-        // 개발 소요일 계산: 개인 휴가로 인한 캐파 손실 반영 (반복 수렴)
+        int devDays = 0;
         if (totalMd.compareTo(BigDecimal.ZERO) > 0 && beCapacity.compareTo(BigDecimal.ZERO) > 0) {
-            devDays = calculateDevDaysWithLeaves(totalMd, beCapacity, beMembers, beMemberLeaves, beUnavailable, project, forcedStartDate);
+            devDays = calculateDevDaysWithLeaves(totalMd, beCapacity, beMembers, beMemberLeaves, beUnavailable, project, null);
         }
 
-        // QA 비가용일 (fixedSchedule/계산모드 공통)
         Set<LocalDate> qaUnavailable = new HashSet<>(holidays);
         for (Member m : qaMembers) {
             qaUnavailable.addAll(memberLeaveService.getMemberLeaveDatesBetween(m.getId(), rangeStart, rangeEnd));
         }
 
         LocalDate today = LocalDate.now();
+        LocalDate startDate;
+        LocalDate launchDate;
+        LocalDate devEndDate;
+        LocalDate qaStartDate = null;
+        LocalDate qaEndDate = null;
+        String warning = null;
 
         if (fixedSchedule) {
-            // 시작일/론치일 고정 모드
             startDate = project.getStartDate();
             launchDate = project.getEndDate();
 
-            // 개발종료 = 시작일(과거이면 오늘) + 개발소요일
             LocalDate devCalcBase = startDate.isBefore(today) ? today : startDate;
             LocalDate devCalcStart = bizDayCalc.ensureBusinessDay(devCalcBase, beUnavailable);
             if (devDays > 0) {
@@ -199,9 +266,7 @@ public class ScheduleCalculationService {
                 devEndDate = devCalcStart;
             }
 
-            // QA가 있으면 론치일 전날이 QA 종료일, 거기서 역산
             if (qaDays != null && qaDays > 0) {
-                // QA 종료일 = 론치일 - 1 영업일
                 qaEndDate = subtractBusinessDays(launchDate, 1, qaUnavailable);
                 if (qaFixedStartDate != null) {
                     qaStartDate = qaFixedStartDate;
@@ -210,13 +275,11 @@ public class ScheduleCalculationService {
                 }
             }
 
-            // 경고 체크: 시작일이 과거이면 오늘 기준으로 남은 기간 계산
             LocalDate effectiveStart = startDate.isBefore(today) ? today : startDate;
             int totalNeededDays = devDays + (qaDays != null ? qaDays : 0);
             if (totalNeededDays > 0) {
                 int remainingBizDays = countBusinessDays(effectiveStart, launchDate, beUnavailable);
                 double ratio = (double) remainingBizDays / totalNeededDays;
-                // 권장 론치일: 오늘(또는 시작일) + 예상 소요일 + 1영업일(론치는 QA 다음날)
                 LocalDate recommendedQaEnd = bizDayCalc.calculateEndDate(
                         bizDayCalc.ensureBusinessDay(effectiveStart, beUnavailable),
                         new BigDecimal(totalNeededDays), BigDecimal.ONE, beUnavailable);
@@ -231,24 +294,15 @@ public class ScheduleCalculationService {
                 }
             }
         } else {
-            // 계산 모드
-            // 시작일: 프로젝트에 명시적 시작일이 있으면 무조건 사용 (busy 멤버는 캐파 제외로 처리)
             if (project.getStartDate() != null) {
                 startDate = project.getStartDate();
-            } else if (forcedStartDate != null) {
-                startDate = forcedStartDate;
             } else {
                 LocalDate earliestMemberStart = beMembers.stream()
                         .map(Member::getQueueStartDate)
                         .filter(Objects::nonNull)
                         .min(LocalDate::compareTo)
                         .orElse(null);
-
-                if (earliestMemberStart != null) {
-                    startDate = earliestMemberStart;
-                } else {
-                    startDate = LocalDate.now();
-                }
+                startDate = earliestMemberStart != null ? earliestMemberStart : LocalDate.now();
             }
 
             LocalDate calcBaseDate = startDate.isBefore(today) ? today : startDate;
@@ -268,7 +322,6 @@ public class ScheduleCalculationService {
                 qaEndDate = bizDayCalc.calculateEndDate(qaStartDate, new BigDecimal(qaDays), BigDecimal.ONE, qaUnavailable);
             }
 
-            // 론치일: 프로젝트에 종료일이 명시적으로 설정되어 있으면 그것을 사용
             if (project.getEndDate() != null) {
                 launchDate = project.getEndDate();
             } else if (qaEndDate != null) {
@@ -278,7 +331,12 @@ public class ScheduleCalculationService {
             }
         }
 
-        // 결과 조립
+        // 기존 warning 과 자동 할당 warnings 병합
+        if (warning != null) {
+            warnings.add(0, warning);
+        }
+
+        // ===== 결과 조립 =====
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("projectId", projectId);
         result.put("projectName", project.getName());
@@ -295,22 +353,146 @@ public class ScheduleCalculationService {
         result.put("qaCount", qaMembers.size());
         result.put("qaDays", qaDays);
         result.put("taskCount", activeTasks.size());
-        result.put("warning", warning);
+        result.put("warning", warnings.isEmpty() ? null : String.join("\n", warnings));
         result.put("beMembers", beMembers.stream().map(m -> Map.of("name", m.getName(), "capacity", m.getCapacity())).collect(Collectors.toList()));
         if (!busyMembers.isEmpty()) {
             result.put("busyMembers", busyMembers.stream().map(m -> Map.of("name", m.getName(), "capacity", m.getCapacity())).collect(Collectors.toList()));
         }
+        if (!autoAssignedMembers.isEmpty()) {
+            result.put("autoAssignedMembers", autoAssignedMembers.stream()
+                    .map(m -> Map.of("id", m.getId(), "name", m.getName(), "capacity", m.getCapacity()))
+                    .collect(Collectors.toList()));
+        }
         result.put("qaMembers", qaMembers.stream().map(m -> Map.of("name", m.getName())).collect(Collectors.toList()));
-        // 내부용: 멤버 가용 추적에 사용 (allBeMembers — busy 포함 전체)
-        result.put("_beMemberIds", allBeMembers.stream().map(Member::getId).collect(Collectors.toList()));
+
+        // 내부용: 멤버 가용 추적
+        List<Long> allIds = new ArrayList<>();
+        beMembers.forEach(m -> allIds.add(m.getId()));
+        busyMembers.forEach(m -> allIds.add(m.getId()));
+        result.put("_beMemberIds", allIds);
 
         return result;
     }
 
+    // ===== 자동 할당 헬퍼 메서드 =====
+
     /**
-     * 개인 휴가로 인한 캐파 손실을 반영한 개발 소요일 계산
-     * 반복 수렴: 초기 추정 → 해당 기간 내 휴가 손실 MD 계산 → 조정된 소요일 재계산
+     * 프로젝트에 연결된 모든 스쿼드의 BE 멤버 풀 구성 (중복 제거)
      */
+    private List<Member> getSquadMemberPool(Long projectId) {
+        List<ProjectSquad> projectSquads = projectSquadRepository.findByProjectIdWithSquad(projectId);
+        Set<Long> seenIds = new HashSet<>();
+        List<Member> pool = new ArrayList<>();
+        for (ProjectSquad ps : projectSquads) {
+            List<SquadMember> sms = squadMemberRepository.findBySquadIdWithMember(ps.getSquad().getId());
+            for (SquadMember sm : sms) {
+                Member m = sm.getMember();
+                if (m.getRole() == MemberRole.BE && Boolean.TRUE.equals(m.getActive()) && seenIds.add(m.getId())) {
+                    pool.add(m);
+                }
+            }
+        }
+        return pool;
+    }
+
+    /**
+     * 프로젝트 시작일 추정 (자동 할당 가용 판단용)
+     */
+    private LocalDate estimateProjectStart(Project project) {
+        if (project.getStartDate() != null) return project.getStartDate();
+        return LocalDate.now();
+    }
+
+    /**
+     * 멤버가 특정 프로젝트 기간에 바쁜지 판단
+     */
+    private boolean isMemberBusy(Long memberId, LocalDate projStart, Project project,
+                                   Map<Long, List<LocalDate[]>> memberBusyPeriods) {
+        List<LocalDate[]> periods = memberBusyPeriods.get(memberId);
+        if (periods == null || periods.isEmpty()) return false;
+        for (LocalDate[] period : periods) {
+            // 기간 중첩 판단: period[0]~period[1] 과 projStart~(추정 종료) 가 겹치는지
+            if (projStart.isBefore(period[1]) && (project.getEndDate() == null || !project.getEndDate().isBefore(period[0]))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 가용 멤버 필터링: 바쁜 기간과 현재 프로젝트 기간이 중첩되지 않는 멤버
+     */
+    private List<Member> filterAvailableMembers(List<Member> pool, LocalDate projStart, Project project,
+                                                  Map<Long, List<LocalDate[]>> memberBusyPeriods,
+                                                  Set<LocalDate> holidays) {
+        List<Member> available = new ArrayList<>();
+        for (Member m : pool) {
+            if (!isMemberBusy(m.getId(), projStart, project, memberBusyPeriods)) {
+                available.add(m);
+            }
+        }
+        return available;
+    }
+
+    /**
+     * capacity 누적이 필요 capacity에 도달할 때까지 멤버 선택
+     */
+    private List<Member> selectByCapacity(List<Member> sortedMembers, BigDecimal neededCapacity) {
+        List<Member> selected = new ArrayList<>();
+        BigDecimal accumulated = BigDecimal.ZERO;
+        for (Member m : sortedMembers) {
+            selected.add(m);
+            accumulated = accumulated.add(m.getCapacity() != null ? m.getCapacity() : BigDecimal.ONE);
+            if (accumulated.compareTo(neededCapacity) >= 0) break;
+        }
+        return selected;
+    }
+
+    /**
+     * totalMd 구간별 목표 인원 수
+     */
+    private int getTargetMemberCount(BigDecimal totalMd) {
+        int md = totalMd.intValue();
+        if (md <= 5) return 1;
+        if (md <= 15) return 2;
+        if (md <= 30) return 3;
+        return 4;
+    }
+
+    /**
+     * 프로젝트의 개발완료 목표일 (endDate - QA일수)
+     */
+    private LocalDate calculateDevEndTarget(Project project, Integer qaDays, Set<LocalDate> holidays) {
+        if (project.getEndDate() == null) return null;
+        if (qaDays == null || qaDays <= 0) return project.getEndDate();
+        // endDate(론치일) 전날부터 QA일수 + 론치일 1일 역산
+        return subtractBusinessDays(project.getEndDate(), qaDays + 1, holidays);
+    }
+
+    /**
+     * 프로젝트의 totalMd 계산
+     */
+    private BigDecimal calculateTotalMd(Project project, Long projectId) {
+        if (project.getTotalManDaysOverride() != null) return project.getTotalManDaysOverride();
+        return taskRepository.findByProjectId(projectId).stream()
+                .filter(t -> ACTIVE_STATUSES.contains(t.getStatus()))
+                .map(t -> t.getManDays() != null ? t.getManDays() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /**
+     * QA 일수 조회
+     */
+    private Integer getQaDays(Long projectId) {
+        return projectMilestoneRepository.findByProjectIdOrderBySortOrderAscStartDateAsc(projectId).stream()
+                .filter(m -> m.getType() == MilestoneType.QA && m.getDays() != null)
+                .findFirst()
+                .map(ProjectMilestone::getDays)
+                .orElse(null);
+    }
+
+    // ===== 기존 계산 헬퍼 =====
+
     private int calculateDevDaysWithLeaves(BigDecimal totalMd, BigDecimal beCapacity,
                                             List<Member> beMembers, Map<Member, Set<LocalDate>> beMemberLeaves,
                                             Set<LocalDate> beUnavailable, Project project, LocalDate forcedStartDate) {
@@ -326,16 +508,11 @@ public class ScheduleCalculationService {
         if (calcStart.isBefore(today)) calcStart = today;
         calcStart = bizDayCalc.ensureBusinessDay(calcStart, beUnavailable);
 
-        // 초기 추정
         int devDays = totalMd.divide(beCapacity, 0, RoundingMode.CEILING).intValue();
-
         final LocalDate devStart = calcStart;
 
-        // 반복 수렴 (최대 5회)
         for (int iter = 0; iter < 5; iter++) {
             LocalDate estEnd = bizDayCalc.calculateEndDate(devStart, new BigDecimal(devDays), BigDecimal.ONE, beUnavailable);
-
-            // 해당 기간 내 멤버별 휴가로 손실되는 MD 계산
             BigDecimal lostMd = BigDecimal.ZERO;
             for (Member m : beMembers) {
                 Set<LocalDate> leaves = beMemberLeaves.get(m);
@@ -347,7 +524,6 @@ public class ScheduleCalculationService {
                         .count();
                 lostMd = lostMd.add(cap.multiply(new BigDecimal(leaveCount)));
             }
-
             BigDecimal adjustedMd = totalMd.add(lostMd);
             int newDevDays = adjustedMd.divide(beCapacity, 0, RoundingMode.CEILING).intValue();
             if (newDevDays == devDays) break;
@@ -356,9 +532,6 @@ public class ScheduleCalculationService {
         return devDays;
     }
 
-    /**
-     * 시작일~종료일 사이 영업일 수 (비가용일 제외, 양쪽 포함)
-     */
     private int countBusinessDays(LocalDate from, LocalDate to, Set<LocalDate> unavailable) {
         int count = 0;
         LocalDate d = from;
@@ -369,11 +542,6 @@ public class ScheduleCalculationService {
         return count;
     }
 
-    /**
-     * 기준일에서 N 영업일 전 날짜를 역산 (비가용일 제외)
-     * 기준일을 포함하지 않고, 기준일 이전으로 N 영업일째 날짜 반환
-     * 예: subtractBusinessDays(수요일, 1) → 화요일
-     */
     private LocalDate subtractBusinessDays(LocalDate from, int days, Set<LocalDate> unavailable) {
         LocalDate d = from;
         while (days > 0) {

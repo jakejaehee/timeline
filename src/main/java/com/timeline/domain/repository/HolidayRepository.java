@@ -41,4 +41,10 @@ public interface HolidayRepository extends JpaRepository<Holiday, Long> {
      * 유형별 조회
      */
     List<Holiday> findByTypeOrderByDateAsc(HolidayType type);
+
+    /**
+     * 특정 연도에 등록된 공휴일 날짜 Set 조회 (일괄 등록 중복 체크용)
+     */
+    @Query("SELECT h.date FROM Holiday h WHERE YEAR(h.date) = :year")
+    Set<LocalDate> findDatesByYear(@Param("year") int year);
 }

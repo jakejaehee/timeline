@@ -9,7 +9,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.timeline.domain.enums.HolidayType;
+
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -103,5 +106,41 @@ public class HolidayService {
             return new HashSet<>();
         }
         return holidayRepository.findDatesBetween(startDate, endDate);
+    }
+
+    /**
+     * 한국 공휴일 일괄 등록
+     * - 해당 연도의 고정 양력 + 음력 공휴일을 일괄 등록
+     * - 이미 동일 날짜가 등록되어 있으면 건너뜀
+     */
+    @Transactional
+    public HolidayDto.BulkResult bulkAddKoreanHolidays(int year) {
+        List<KoreanHolidayData.HolidayEntry> candidates = KoreanHolidayData.getHolidays(year);
+        Set<LocalDate> existingDates = holidayRepository.findDatesByYear(year);
+
+        // 기존 DB 날짜 + 이번 배치 내 중복을 모두 추적
+        Set<LocalDate> seenDates = new java.util.LinkedHashSet<>(existingDates);
+        List<Holiday> toSave = new ArrayList<>();
+        int skipped = 0;
+
+        for (KoreanHolidayData.HolidayEntry entry : candidates) {
+            if (!seenDates.add(entry.date())) {
+                skipped++;
+            } else {
+                Holiday holiday = Holiday.builder()
+                        .date(entry.date())
+                        .name(entry.name())
+                        .type(HolidayType.NATIONAL)
+                        .build();
+                toSave.add(holiday);
+            }
+        }
+
+        if (!toSave.isEmpty()) {
+            holidayRepository.saveAll(toSave);
+        }
+
+        log.info("한국 공휴일 일괄 등록: year={}, added={}, skipped={}", year, toSave.size(), skipped);
+        return new HolidayDto.BulkResult(toSave.size(), skipped);
     }
 }

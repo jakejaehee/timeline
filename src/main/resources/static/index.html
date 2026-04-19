@@ -564,9 +564,14 @@
                             <select id="holiday-filter-year" class="form-select form-select-sm" style="width:120px" onchange="loadHolidays()">
                             </select>
                         </div>
-                        <button class="btn btn-primary btn-sm" onclick="showHolidayModal()">
-                            <i class="bi bi-plus-lg"></i> 공휴일/회사휴무 추가
-                        </button>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-success btn-sm" onclick="showKoreanHolidayModal()">
+                                <i class="bi bi-calendar2-check"></i> 한국 공휴일 추가
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="showHolidayModal()">
+                                <i class="bi bi-plus-lg"></i> 공휴일/회사휴무 추가
+                            </button>
+                        </div>
                     </div>
                     <div class="card">
                         <div class="card-body">
@@ -872,6 +877,33 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
                     <button type="button" class="btn btn-primary" onclick="saveHoliday()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 한국 공휴일 일괄 추가 모달 ==================== -->
+    <div class="modal fade" id="koreanHolidayModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">한국 공휴일 추가</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="korean-holiday-year" class="form-label">연도</label>
+                        <select class="form-select" id="korean-holiday-year">
+                            <!-- JS에서 2025~2030 옵션 생성 -->
+                        </select>
+                    </div>
+                    <div class="text-muted small">
+                        선택한 연도의 한국 법정 공휴일을 일괄 등록합니다. 이미 등록된 날짜는 건너뜁니다.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="button" class="btn btn-success" onclick="bulkAddKoreanHolidays()">추가</button>
                 </div>
             </div>
         </div>
@@ -1677,6 +1709,6 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
-    <script src="/js/app.js?v=20260419k"></script>
+    <script src="/js/app.js?v=20260420a"></script>
 </body>
 </html>

@@ -45,4 +45,14 @@ public class HolidayDto {
                     .build();
         }
     }
+
+    /**
+     * 일괄 등록 결과
+     */
+    @Data
+    @AllArgsConstructor
+    public static class BulkResult {
+        private int added;
+        private int skipped;
+    }
 }

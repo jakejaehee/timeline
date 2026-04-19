@@ -66,4 +66,27 @@ public class HolidayController {
                 "success", true
         ));
     }
+
+    /**
+     * 한국 공휴일 일괄 등록
+     */
+    @PostMapping("/bulk-korean")
+    public ResponseEntity<?> bulkAddKoreanHolidays(@RequestBody Map<String, Object> body) {
+        Object yearObj = body.get("year");
+        if (!(yearObj instanceof Number)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "연도를 입력해주세요."
+            ));
+        }
+        int year = ((Number) yearObj).intValue();
+        if (year < 2000 || year > 2099) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "연도는 2000~2099 범위만 지원합니다."
+            ));
+        }
+        HolidayDto.BulkResult result = holidayService.bulkAddKoreanHolidays(year);
+        return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
 }

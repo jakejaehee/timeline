@@ -6739,7 +6739,8 @@ async function loadSettingsSection() {
     var yearSelect = document.getElementById('holiday-filter-year');
     var currentYear = new Date().getFullYear();
     yearSelect.innerHTML = '';
-    for (var y = currentYear - 1; y <= currentYear + 2; y++) {
+    var maxYear = Math.max(currentYear + 2, 2030);
+    for (var y = currentYear - 1; y <= maxYear; y++) {
         var selected = (y === currentYear) ? 'selected' : '';
         yearSelect.innerHTML += '<option value="' + y + '" ' + selected + '>' + y + '년</option>';
     }
@@ -7869,6 +7870,53 @@ async function deleteHoliday(id) {
     } catch (e) {
         console.error('공휴일 삭제 실패:', e);
         showToast('삭제에 실패했습니다.', 'error');
+    }
+}
+
+/**
+ * 한국 공휴일 일괄 추가 모달 표시
+ */
+function showKoreanHolidayModal() {
+    var sel = document.getElementById('korean-holiday-year');
+    sel.innerHTML = '';
+    var currentYear = new Date().getFullYear();
+    for (var y = 2025; y <= 2030; y++) {
+        var opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y + '년';
+        if (y === currentYear) opt.selected = true;
+        sel.appendChild(opt);
+    }
+    new bootstrap.Modal(document.getElementById('koreanHolidayModal')).show();
+}
+
+/**
+ * 한국 공휴일 일괄 추가 실행
+ */
+var _bulkAddingKoreanHolidays = false;
+async function bulkAddKoreanHolidays() {
+    if (_bulkAddingKoreanHolidays) return;
+    _bulkAddingKoreanHolidays = true;
+    var year = parseInt(document.getElementById('korean-holiday-year').value);
+    try {
+        var res = await apiCall('/api/v1/holidays/bulk-korean', 'POST', { year: year });
+        if (res.success) {
+            var added = res.data.added;
+            var skipped = res.data.skipped;
+            showToast(year + '년 공휴일: ' + added + '건 추가, ' + skipped + '건 건너뜀', 'success');
+            cachedHolidayDates = null;
+            bootstrap.Modal.getInstance(document.getElementById('koreanHolidayModal')).hide();
+            // 현재 필터 연도를 추가한 연도로 맞춘다
+            document.getElementById('holiday-filter-year').value = year;
+            loadHolidays();
+        } else {
+            showToast(res.message || '공휴일 추가에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        console.error('한국 공휴일 일괄 추가 실패:', e);
+        showToast('공휴일 추가에 실패했습니다.', 'error');
+    } finally {
+        _bulkAddingKoreanHolidays = false;
     }
 }
 

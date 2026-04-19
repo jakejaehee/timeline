@@ -166,8 +166,12 @@ public class DataBackupService {
 
     private int insertMembers(List<BackupDto.MemberRow> rows) {
         for (var r : rows) {
+            // 레거시 role 변환: PLACEHOLDER → PD, ENGINEER → EM
+            String role = r.getRole();
+            if ("PLACEHOLDER".equals(role)) role = "PD";
+            if ("ENGINEER".equals(role)) role = "EM";
             em.createNativeQuery("INSERT INTO member (id, name, role, team, email, capacity, active, queue_start_date, created_at, updated_at) VALUES (:id, :name, :role, :team, :email, :capacity, :active, :queueStartDate, :createdAt, :updatedAt)")
-                    .setParameter("id", r.getId()).setParameter("name", r.getName()).setParameter("role", r.getRole())
+                    .setParameter("id", r.getId()).setParameter("name", r.getName()).setParameter("role", role)
                     .setParameter("team", r.getTeam()).setParameter("email", r.getEmail()).setParameter("capacity", r.getCapacity())
                     .setParameter("active", r.getActive()).setParameter("queueStartDate", r.getQueueStartDate())
                     .setParameter("createdAt", r.getCreatedAt()).setParameter("updatedAt", r.getUpdatedAt())

@@ -4023,15 +4023,18 @@ async function loadProjectMilestones() {
             html += '<td><input type="text" class="form-control form-control-sm" value="' + escapeHtml(ms.name) + '" onchange="updateProjectMilestone(' + ms.id + ', \'name\', this.value)" style="width:200px;"></td>';
             // 일수: DB에 days가 있으면 그 값(편집 가능), 없으면 시작~종료 working days 자동 계산 표시
             var msCalcDays = (ms.startDate && ms.endDate) ? calcWorkingDays(ms.startDate, ms.endDate) : null;
-            var msDisplayDays = ms.days != null ? ms.days : (msCalcDays != null ? msCalcDays : '');
             html += '<td><div class="d-flex align-items-center gap-1">'
                 + '<input type="number" class="form-control form-control-sm" value="' + (ms.days != null ? ms.days : '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'days\', this.value ? parseInt(this.value) : null)" style="width:60px;" min="1" placeholder="' + (msCalcDays != null ? msCalcDays : '') + '">'
                 + (ms.days == null && msCalcDays != null ? '<small class="text-muted text-nowrap">' + msCalcDays + 'd</small>' : '')
                 + '</div></td>';
-            // 시작일
-            html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.startDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'startDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.startDate) + '</small></div></td>';
-            // 종료일
-            html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.endDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'endDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.endDate) + '</small></div></td>';
+            // 시작일 / 종료일: QA 유형이면 날짜 입력 대신 "-" 표시
+            if (ms.type === 'QA') {
+                html += '<td class="text-muted" style="font-size:0.8rem;">-</td>';
+                html += '<td class="text-muted" style="font-size:0.8rem;">-</td>';
+            } else {
+                html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.startDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'startDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.startDate) + '</small></div></td>';
+                html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.endDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'endDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.endDate) + '</small></div></td>';
+            }
             // QA 담당자 (QA 유형일 때만 편집 가능)
             if (ms.type === 'QA') {
                 var qaIds = ms.qaAssignees ? ms.qaAssignees.split(',').filter(function(s) { return s.trim(); }) : [];
@@ -4228,11 +4231,23 @@ async function removeQaAssignee(msId, memberId) {
 
 function onMsTypeChange(typeValue) {
     var wrap = document.getElementById('proj-ms-qa-wrap');
+    var startWrap = document.getElementById('proj-ms-start-wrap');
+    var endWrap = document.getElementById('proj-ms-end-wrap');
     if (!wrap) return;
     if (typeValue === 'QA') {
         wrap.style.display = '';
+        // QA 유형은 시작일/종료일 숨김 (일정 계산 엔진이 자동 산출)
+        if (startWrap) startWrap.style.display = 'none';
+        if (endWrap) endWrap.style.display = 'none';
+        // 날짜 값 초기화
+        var s = document.getElementById('proj-ms-start');
+        var e = document.getElementById('proj-ms-end');
+        if (s) s.value = '';
+        if (e) e.value = '';
     } else {
         wrap.style.display = 'none';
+        if (startWrap) startWrap.style.display = '';
+        if (endWrap) endWrap.style.display = '';
         // 뱃지 및 검색란 초기화
         var badges = document.getElementById('proj-ms-qa-badges');
         if (badges) badges.innerHTML = '';
@@ -4255,8 +4270,11 @@ async function addProjectMilestone() {
     var body = { name: name, sortOrder: null };
     if (type) body.type = type;
     if (days) body.days = parseInt(days);
-    if (startDate) body.startDate = startDate;
-    if (endDate) body.endDate = endDate;
+    // QA 유형이면 날짜를 body에 포함하지 않음 (일정 계산 엔진이 자동 산출)
+    if (type !== 'QA') {
+        if (startDate) body.startDate = startDate;
+        if (endDate) body.endDate = endDate;
+    }
     // QA 유형이면 qaAssignees 포함
     if (type === 'QA') {
         var qaIds = getMsFormQaIds();

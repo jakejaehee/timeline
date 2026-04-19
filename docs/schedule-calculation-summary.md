@@ -205,14 +205,16 @@ ELSE
 - QA 담당자(`qaAssignees`)는 멤버 ID → 이름으로 변환하여 표시
 - QA 충돌 감지: 동일 QA 담당자가 다른 프로젝트의 QA 기간과 겹치면 경고
 
-#### fixedSchedule (역산 방식)
+#### endDate 지정 시 (역산 방식: fixedSchedule 또는 endDate만 지정)
+조건: `project.endDate != null` (fixedSchedule 여부 무관)
 ```
 qaEndDate = launchDate - 1영업일
 qaStartDate = qaFixedStartDate ?? (qaEndDate - (qaDays-1)영업일)
 ```
 - `qaDays <= 0` 또는 `qaDays == null`이면 QA 기간 계산 자체를 스킵 (`qaStartDate`, `qaEndDate` 모두 null)
 
-#### non-fixedSchedule (순산 방식)
+#### endDate 미지정 시 (순방향 방식)
+조건: `project.endDate == null`
 ```
 qaStartDate = ensureBusinessDay(qaFixedStartDate) ?? getNextBusinessDay(devEndDate)
 qaEndDate = calculateEndDate(qaStartDate, qaDays)

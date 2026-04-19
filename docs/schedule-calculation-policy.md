@@ -209,13 +209,17 @@ ELSE → getNextBusinessDay(devEndDate)
 ```
 qaDays = QA 마일스톤의 days 값
 
-IF fixedSchedule:
+IF project.endDate != null (fixedSchedule 또는 endDate만 지정):
     qaEndDate = launchDate - 1영업일
     qaStartDate = qaFixedStartDate ?? (qaEndDate - (qaDays-1)영업일)
-ELSE:
+ELSE (endDate 미지정):
     qaStartDate = qaFixedStartDate ?? getNextBusinessDay(devEndDate)
     qaEndDate = calculateEndDate(qaStartDate, qaDays)
 ```
+
+- endDate가 지정된 모든 경우(fixedSchedule 포함, endDate만 지정된 반고정 일정 포함), QA를 수행할 때
+  개발완료 후 QA를 시작해 종료한 뒤 론치일까지 여유일(`N days`)이 남더라도
+  **QA 종료일은 항상 `launchDate - 1영업일`**이 되도록 QA 시작일을 역산해 정한다.
 
 ### 3.7 기간 부족/여유 경고 (fixedSchedule 전용)
 

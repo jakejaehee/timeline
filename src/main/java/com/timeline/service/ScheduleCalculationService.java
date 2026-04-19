@@ -699,12 +699,9 @@ public class ScheduleCalculationService {
             }
 
             if (qaDays != null && qaDays > 0) {
-                qaEndDate = subtractBusinessDays(launchDate, 1, qaUnavailable);
-                if (qaFixedStartDate != null) {
-                    qaStartDate = qaFixedStartDate;
-                } else {
-                    qaStartDate = subtractBusinessDays(qaEndDate, qaDays - 1, qaUnavailable);
-                }
+                LocalDate[] qaRange = calculateQaRangeFromLaunchDate(launchDate, qaDays, qaFixedStartDate, qaUnavailable);
+                qaStartDate = qaRange[0];
+                qaEndDate = qaRange[1];
             }
 
             LocalDate effectiveStart = startDate.isBefore(today) ? today : startDate;
@@ -786,12 +783,20 @@ public class ScheduleCalculationService {
             }
 
             if (qaDays != null && qaDays > 0) {
-                if (qaFixedStartDate != null) {
-                    qaStartDate = bizDayCalc.ensureBusinessDay(qaFixedStartDate, qaUnavailable);
+                if (project.getEndDate() != null) {
+                    // endDate 지정: 론치일에서 역산 (fixedSchedule과 동일한 방식)
+                    LocalDate[] qaRange = calculateQaRangeFromLaunchDate(project.getEndDate(), qaDays, qaFixedStartDate, qaUnavailable);
+                    qaStartDate = qaRange[0];
+                    qaEndDate = qaRange[1];
                 } else {
-                    qaStartDate = bizDayCalc.getNextBusinessDay(devEndDate, qaUnavailable);
+                    // endDate 미지정: 기존 순방향 계산
+                    if (qaFixedStartDate != null) {
+                        qaStartDate = bizDayCalc.ensureBusinessDay(qaFixedStartDate, qaUnavailable);
+                    } else {
+                        qaStartDate = bizDayCalc.getNextBusinessDay(devEndDate, qaUnavailable);
+                    }
+                    qaEndDate = bizDayCalc.calculateEndDate(qaStartDate, new BigDecimal(qaDays), BigDecimal.ONE, qaUnavailable);
                 }
-                qaEndDate = bizDayCalc.calculateEndDate(qaStartDate, new BigDecimal(qaDays), BigDecimal.ONE, qaUnavailable);
             }
 
             if (totalMd.compareTo(BigDecimal.ZERO) == 0 && project.getEndDate() == null) {
@@ -866,6 +871,30 @@ public class ScheduleCalculationService {
             }
         }
         return d;
+    }
+
+    /**
+     * 론치일 기준으로 QA 시작일·종료일을 역산한다.
+     * - qaEndDate: 론치일에서 영업일 1일 전
+     * - qaStartDate: qaFixedStartDate가 있으면 그대로 사용, 없으면 qaEndDate에서 (qaDays-1) 영업일 역산
+     * - qaFixedStartDate > qaEndDate 엣지 케이스: qaStartDate를 qaEndDate와 동일하게 보정 (역전 방지)
+     *
+     * @return [qaStartDate, qaEndDate]
+     */
+    private LocalDate[] calculateQaRangeFromLaunchDate(LocalDate launchDate, int qaDays,
+                                                        LocalDate qaFixedStartDate, Set<LocalDate> qaUnavailable) {
+        LocalDate qaEndDate = subtractBusinessDays(launchDate, 1, qaUnavailable);
+        LocalDate qaStartDate;
+        if (qaFixedStartDate != null) {
+            qaStartDate = qaFixedStartDate;
+            // qaFixedStartDate가 qaEndDate 이후이면 역전 방지
+            if (qaStartDate.isAfter(qaEndDate)) {
+                qaStartDate = qaEndDate;
+            }
+        } else {
+            qaStartDate = subtractBusinessDays(qaEndDate, qaDays - 1, qaUnavailable);
+        }
+        return new LocalDate[]{qaStartDate, qaEndDate};
     }
 
     /**

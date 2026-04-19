@@ -372,11 +372,23 @@ public class ProjectService {
         if (body.get("days") != null) {
             builder.days(((Number) body.get("days")).intValue());
         }
-        if (body.get("startDate") != null && !((String) body.get("startDate")).isBlank()) {
-            builder.startDate(LocalDate.parse((String) body.get("startDate")));
-        }
-        if (body.get("endDate") != null && !((String) body.get("endDate")).isBlank()) {
-            builder.endDate(LocalDate.parse((String) body.get("endDate")));
+        // QA 유형이면 시작일/종료일을 null로 강제 (일정 계산 엔진이 자동 산출)
+        boolean isQa = "QA".equals(body.get("type"));
+        if (!isQa) {
+            if (body.get("startDate") != null && !((String) body.get("startDate")).isBlank()) {
+                try {
+                    builder.startDate(LocalDate.parse((String) body.get("startDate")));
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw new IllegalArgumentException("올바른 시작일 형식이 아닙니다: " + body.get("startDate"));
+                }
+            }
+            if (body.get("endDate") != null && !((String) body.get("endDate")).isBlank()) {
+                try {
+                    builder.endDate(LocalDate.parse((String) body.get("endDate")));
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw new IllegalArgumentException("올바른 종료일 형식이 아닙니다: " + body.get("endDate"));
+                }
+            }
         }
         if (body.containsKey("qaAssignees")) {
             builder.qaAssignees(body.get("qaAssignees") != null ? ((String) body.get("qaAssignees")).trim() : null);
@@ -398,13 +410,28 @@ public class ProjectService {
         if (body.containsKey("days")) {
             milestone.setDays(body.get("days") != null ? ((Number) body.get("days")).intValue() : null);
         }
-        if (body.containsKey("startDate")) {
-            String sd = (String) body.get("startDate");
-            milestone.setStartDate(sd != null && !sd.isBlank() ? LocalDate.parse(sd) : null);
-        }
-        if (body.containsKey("endDate")) {
-            String ed = (String) body.get("endDate");
-            milestone.setEndDate(ed != null && !ed.isBlank() ? LocalDate.parse(ed) : null);
+        // QA 유형이면 시작일/종료일을 항상 null로 강제 (일정 계산 엔진이 자동 산출)
+        boolean isQa = milestone.getType() == com.timeline.domain.enums.MilestoneType.QA;
+        if (isQa) {
+            milestone.setStartDate(null);
+            milestone.setEndDate(null);
+        } else {
+            if (body.containsKey("startDate")) {
+                String sd = (String) body.get("startDate");
+                try {
+                    milestone.setStartDate(sd != null && !sd.isBlank() ? LocalDate.parse(sd) : null);
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw new IllegalArgumentException("올바른 시작일 형식이 아닙니다: " + sd);
+                }
+            }
+            if (body.containsKey("endDate")) {
+                String ed = (String) body.get("endDate");
+                try {
+                    milestone.setEndDate(ed != null && !ed.isBlank() ? LocalDate.parse(ed) : null);
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw new IllegalArgumentException("올바른 종료일 형식이 아닙니다: " + ed);
+                }
+            }
         }
         if (body.containsKey("sortOrder")) milestone.setSortOrder(body.get("sortOrder") != null ? ((Number) body.get("sortOrder")).intValue() : null);
         if (body.containsKey("qaAssignees")) {

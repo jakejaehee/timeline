@@ -1,6 +1,6 @@
 // ========================================
 // Timeline Application JavaScript
-// Version: 20260413d
+// Version: 20260419k
 // ========================================
 
 // ---- 전역 상태 ----
@@ -45,6 +45,224 @@ var projectListStatusFilter = (function() {
 var ganttShowJiraKey = false;  // 간트차트 티켓번호 표시 여부
 var ganttShowSquad = false;   // 간트차트 스쿼드명 표시 여부
 var taskDepSearchBound = false; // 선행 태스크 검색 이벤트 바인딩 여부
+
+// ========================================
+// 멤버 검색 드롭다운 공통 헬퍼
+// ========================================
+
+/**
+ * 멤버 표시 이름 포맷 (내부 헬퍼)
+ * @param {Object} m  멤버 객체 {name, role}
+ * @returns {string}  "이름 (역할)" 형태의 plain text
+ */
+function _formatMemberDisplay(m) {
+    return m.name + ' (' + m.role + ')';
+}
+
+/**
+ * 키워드로 멤버 목록 필터링 (내부 헬퍼)
+ * @param {Array}  members  멤버 배열
+ * @param {string} keyword  소문자 키워드
+ * @returns {Array} 필터링된 멤버 배열
+ */
+function _filterMembers(members, keyword) {
+    if (!keyword) return members;
+    return members.filter(function(m) {
+        var text = (m.name || '') + ' ' + (m.role || '') + ' ' + (m.team || '');
+        return text.toLowerCase().indexOf(keyword) !== -1;
+    });
+}
+
+/**
+ * 단일 선택 멤버 검색 드롭다운 초기화
+ * @param {string}    baseId       숨겨진 input id (기존 select id와 동일)
+ * @param {Array}     members      [{id, name, role, team?}]
+ * @param {string}    [placeholder='이름으로 검색...']
+ * @param {Function}  [onSelect]   선택 완료 콜백 (memberId, memberObj) => void
+ */
+function initMemberSearchDropdown(baseId, members, placeholder, onSelect) {
+    var searchInput = document.getElementById(baseId + '-search');
+    var resultsDiv = document.getElementById(baseId + '-results');
+    var hiddenInput = document.getElementById(baseId);
+    var clearBtn = document.getElementById(baseId + '-clear');
+    if (!searchInput || !resultsDiv || !hiddenInput) return;
+
+    if (placeholder) searchInput.placeholder = placeholder;
+
+    // 멤버 목록을 클로저에 저장
+    searchInput._memberSearchMembers = members;
+    searchInput._memberSearchOnSelect = onSelect || null;
+
+    // 키워드로 결과 표시하는 공통 로직
+    function showFilteredResults() {
+        var keyword = searchInput.value.trim().toLowerCase();
+        var filtered = _filterMembers(searchInput._memberSearchMembers, keyword);
+        _renderMemberSearchResults(baseId, filtered, searchInput._memberSearchOnSelect);
+    }
+
+    // oninput 이벤트 (재할당 방식으로 중복 등록 방지)
+    searchInput.oninput = showFilteredResults;
+
+    // onfocus 이벤트: 전체 목록 또는 검색 결과 표시
+    searchInput.onfocus = function() {
+        // 이미 선택된 상태면 검색어를 지우고 전체 목록 표시
+        if (hiddenInput.value) {
+            searchInput.value = '';
+        }
+        showFilteredResults();
+    };
+
+    // onblur 이벤트: 드롭다운 닫기 + 선택된 값 복원 (setTimeout으로 클릭과 race condition 방지)
+    searchInput.onblur = function() {
+        setTimeout(function() {
+            resultsDiv.style.display = 'none';
+            _restoreMemberSearchDisplay(searchInput, hiddenInput);
+        }, 200);
+    };
+
+    // 초기 상태: clear 버튼 숨기기
+    if (clearBtn) clearBtn.style.display = 'none';
+    hiddenInput.value = '';
+    searchInput.value = '';
+}
+
+/**
+ * blur/외부클릭 시 search input 표시값 복원 (내부 헬퍼)
+ */
+function _restoreMemberSearchDisplay(searchInput, hiddenInput) {
+    if (hiddenInput.value) {
+        var m = _findMemberById(searchInput._memberSearchMembers, hiddenInput.value);
+        if (m) {
+            searchInput.value = _formatMemberDisplay(m);
+        }
+    } else {
+        searchInput.value = '';
+    }
+}
+
+/**
+ * 멤버 검색 결과 렌더링 (내부 헬퍼)
+ */
+function _renderMemberSearchResults(baseId, members, onSelect) {
+    var resultsDiv = document.getElementById(baseId + '-results');
+    if (!resultsDiv) return;
+
+    if (!members || members.length === 0) {
+        resultsDiv.innerHTML = '<div class="member-search-no-result">결과 없음</div>';
+        resultsDiv.style.display = 'block';
+        return;
+    }
+
+    var html = '';
+    members.forEach(function(m) {
+        html += '<div class="member-search-item" data-member-id="' + m.id + '">'
+            + escapeHtml(m.name) + ' <span class="text-muted">(' + escapeHtml(m.role)
+            + (m.team ? ', ' + escapeHtml(m.team) : '') + ')</span></div>';
+    });
+    resultsDiv.innerHTML = html;
+
+    // 항목 클릭 이벤트 바인딩
+    resultsDiv.querySelectorAll('.member-search-item').forEach(function(item) {
+        item.onmousedown = function(e) {
+            e.preventDefault(); // blur 보다 먼저 실행되도록
+        };
+        item.onclick = function() {
+            var memberId = item.getAttribute('data-member-id');
+            var memberObj = _findMemberById(members, memberId);
+            if (!memberObj) return;
+
+            var hiddenInput = document.getElementById(baseId);
+            var searchInput = document.getElementById(baseId + '-search');
+            var clearBtn = document.getElementById(baseId + '-clear');
+
+            hiddenInput.value = memberObj.id;
+            searchInput.value = _formatMemberDisplay(memberObj);
+            resultsDiv.style.display = 'none';
+            if (clearBtn) clearBtn.style.display = '';
+
+            // change 이벤트 dispatch (initAssigneeConflictCheck 등 기존 핸들러 재활용)
+            hiddenInput.dispatchEvent(new Event('change'));
+
+            if (onSelect) {
+                onSelect(memberObj.id, memberObj);
+            }
+        };
+    });
+
+    resultsDiv.style.display = 'block';
+}
+
+/**
+ * 멤버 ID로 멤버 객체 찾기 (내부 헬퍼)
+ */
+function _findMemberById(members, memberId) {
+    if (!members || !memberId) return null;
+    var id = parseInt(memberId);
+    for (var i = 0; i < members.length; i++) {
+        if (members[i].id === id) return members[i];
+    }
+    return null;
+}
+
+/**
+ * 단일 선택 멤버 검색 드롭다운 값 설정 (수정 모드에서 기존 값 복원)
+ * @param {string} baseId
+ * @param {number|string|null} memberId  - 선택할 멤버 ID (null이면 초기화)
+ * @param {Array}  members
+ */
+function setMemberDropdownValue(baseId, memberId, members) {
+    var hiddenInput = document.getElementById(baseId);
+    var searchInput = document.getElementById(baseId + '-search');
+    var clearBtn = document.getElementById(baseId + '-clear');
+    if (!hiddenInput || !searchInput) return;
+
+    if (!memberId) {
+        clearMemberDropdown(baseId);
+        return;
+    }
+
+    var m = _findMemberById(members, memberId);
+    if (m) {
+        hiddenInput.value = m.id;
+        searchInput.value = _formatMemberDisplay(m);
+        if (clearBtn) clearBtn.style.display = '';
+    } else {
+        clearMemberDropdown(baseId);
+    }
+}
+
+/**
+ * 단일 선택 멤버 검색 드롭다운 초기화 (X 버튼 클릭)
+ * @param {string} baseId
+ */
+function clearMemberDropdown(baseId) {
+    var hiddenInput = document.getElementById(baseId);
+    var searchInput = document.getElementById(baseId + '-search');
+    var resultsDiv = document.getElementById(baseId + '-results');
+    var clearBtn = document.getElementById(baseId + '-clear');
+
+    if (hiddenInput) hiddenInput.value = '';
+    if (searchInput) searchInput.value = '';
+    if (resultsDiv) resultsDiv.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'none';
+
+    // change 이벤트 dispatch
+    if (hiddenInput) hiddenInput.dispatchEvent(new Event('change'));
+}
+
+/**
+ * 프로젝트 멤버 대량 추가 모달 -- 체크박스 필터링
+ */
+function filterAddProjectMemberList() {
+    var keyword = (document.getElementById('add-project-member-search').value || '').trim().toLowerCase();
+    var items = document.querySelectorAll('#add-project-member-list .form-check');
+    items.forEach(function(item) {
+        var label = item.querySelector('.form-check-label');
+        if (!label) return;
+        var text = label.textContent.toLowerCase();
+        item.style.display = (!keyword || text.indexOf(keyword) !== -1) ? '' : 'none';
+    });
+}
 
 // ========================================
 // 사이드바 토글
@@ -569,7 +787,7 @@ async function renderProjectMembersModalList() {
             listEl.innerHTML = '<div class="text-center text-muted py-3">배정된 멤버가 없습니다.</div>';
             return;
         }
-        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
+        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PD: 5 };
         members.sort(function(a, b) {
             var ra = roleOrder[a.role] != null ? roleOrder[a.role] : 99;
             var rb = roleOrder[b.role] != null ? roleOrder[b.role] : 99;
@@ -1538,6 +1756,7 @@ function renderProjectDetailHeader(p) {
     metaHtml += '</span>';
     if (p.pplName) metaHtml += ' <span class="badge bg-info" style="font-size:0.72rem;">PPL: ' + escapeHtml(p.pplName) + '</span>';
     if (p.eplName) metaHtml += ' <span class="badge bg-primary" style="font-size:0.72rem;">EPL: ' + escapeHtml(p.eplName) + '</span>';
+    if (p.quarter) metaHtml += ' <span class="badge bg-secondary" style="font-size:0.72rem;">' + escapeHtml(p.quarter) + '</span>';
 
     // 지연/정상 인라인 뱃지 (isDelayed가 null/undefined면 미표시)
     if (p.isDelayed === true) {
@@ -2469,7 +2688,7 @@ async function loadProjectMembers(projectId) {
         // 정렬
         var sf = _projectMemberSort.field;
         var sa = _projectMemberSort.asc;
-        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
+        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PD: 5 };
         members.sort(function(a, b) {
             var va, vb;
             if (sf === 'role') {
@@ -2559,7 +2778,7 @@ async function showAddProjectMemberModal(projectId) {
     if (available.length === 0) {
         listEl.innerHTML = '<div class="text-center text-muted py-3">추가 가능한 멤버가 없습니다.</div>';
     } else {
-        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
+        var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PD: 5 };
         available.sort(function(a, b) {
             var ra = roleOrder[a.role] != null ? roleOrder[a.role] : 99;
             var rb = roleOrder[b.role] != null ? roleOrder[b.role] : 99;
@@ -2576,6 +2795,10 @@ async function showAddProjectMemberModal(projectId) {
         listEl.innerHTML = html;
     }
     document.getElementById('add-project-member-project-id').value = projectId;
+    // 검색 input 초기화
+    var searchInput = document.getElementById('add-project-member-search');
+    if (searchInput) { searchInput.value = ''; }
+    filterAddProjectMemberList();
     var modal = new bootstrap.Modal(document.getElementById('addProjectMemberModal'));
     modal.show();
 }
@@ -2610,8 +2833,8 @@ async function showProjectModal(projectId) {
     document.getElementById('project-jira-board-id').value = '';
     document.getElementById('project-jira-epic-key').value = '';
     document.getElementById('project-total-md-override').value = '';
-    document.getElementById('project-ppl').value = '';
-    document.getElementById('project-epl').value = '';
+    clearMemberDropdown('project-ppl');
+    clearMemberDropdown('project-epl');
     document.getElementById('project-quarter').value = '';
     document.getElementById('project-delay-warning').style.display = 'none';
     document.getElementById('project-delay-warning').innerHTML = '';
@@ -2624,14 +2847,10 @@ async function showProjectModal(projectId) {
     var dsRes = checklistResults[0];
     var membersRes = checklistResults[1];
 
-    // PPL/EPL 멤버 드롭다운 채우기
+    // PPL/EPL 멤버 검색 드롭다운 초기화
     var allMembers = (membersRes.success && membersRes.data) ? membersRes.data : [];
-    var memberOptHtml = '<option value="">선택 안함</option>';
-    allMembers.forEach(function(m) {
-        memberOptHtml += '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.role + ')</option>';
-    });
-    document.getElementById('project-ppl').innerHTML = memberOptHtml;
-    document.getElementById('project-epl').innerHTML = memberOptHtml;
+    initMemberSearchDropdown('project-ppl', allMembers, '이름으로 검색...');
+    initMemberSearchDropdown('project-epl', allMembers, '이름으로 검색...');
 
     var allDs = (dsRes.success && dsRes.data) ? dsRes.data : [];
 
@@ -2653,8 +2872,8 @@ async function showProjectModal(projectId) {
                 document.getElementById('project-jira-board-id').value = p.jiraBoardId || '';
                 document.getElementById('project-jira-epic-key').value = p.jiraEpicKey || '';
                 document.getElementById('project-total-md-override').value = p.totalManDaysOverride != null ? p.totalManDaysOverride : '';
-                document.getElementById('project-ppl').value = p.pplId || '';
-                document.getElementById('project-epl').value = p.eplId || '';
+                setMemberDropdownValue('project-ppl', p.pplId, allMembers);
+                setMemberDropdownValue('project-epl', p.eplId, allMembers);
                 document.getElementById('project-quarter').value = p.quarter || '';
                 currentDs = p.squads ? p.squads.map(function(d) { return d.id; }) : [];
 
@@ -4612,7 +4831,7 @@ async function showTaskModal(taskId, projectId) {
     document.getElementById('task-id').value = '';
     document.getElementById('task-name').value = '';
     document.getElementById('task-squad').value = '';
-    document.getElementById('task-assignee').value = '';
+    clearMemberDropdown('task-assignee');
     if (taskStartDatePicker) taskStartDatePicker.clear();
     document.getElementById('task-end-date').value = '';
     document.getElementById('task-man-days').value = '';
@@ -4653,9 +4872,7 @@ async function showTaskModal(taskId, projectId) {
     projectSelect.innerHTML = projOptHtml;
     projectSelect.value = resolvedProjectId || '';
 
-    // 담당자 드롭다운 — loadTaskModalProjectData에서 프로젝트 멤버 기반으로 갱신
-    var assigneeSelect = document.getElementById('task-assignee');
-    assigneeSelect.innerHTML = '<option value="">선택하세요</option>';
+    // 담당자 드롭다운 — loadTaskModalProjectData에서 프로젝트 멤버 기반으로 갱신 (clearMemberDropdown 완료)
 
     // 프로젝트 선택 시 스쿼드 & 담당자 & 의존관계 갱신
     projectSelect.onchange = function() {
@@ -4782,8 +4999,9 @@ async function showTaskModal(taskId, projectId) {
 async function showTaskModalForScheduleMember() {
     await showTaskModal(null, null);
     if (currentScheduleMemberId) {
-        var assigneeSelect = document.getElementById('task-assignee');
-        if (assigneeSelect) assigneeSelect.value = currentScheduleMemberId;
+        var searchEl = document.getElementById('task-assignee-search');
+        var members = searchEl ? searchEl._memberSearchMembers : currentProjectMembers;
+        setMemberDropdownValue('task-assignee', currentScheduleMemberId, members);
     }
 }
 
@@ -4802,40 +5020,42 @@ async function loadTaskModalProjectData(projectId, taskId, currentDependencies) 
     depsSection.style.display = '';
 
     // 담당자 드롭다운
-    var assigneeSelect = document.getElementById('task-assignee');
-    var prevAssignee = assigneeSelect.value;
-    var assigneeOptHtml = '<option value="">선택하세요</option>';
+    var prevAssignee = document.getElementById('task-assignee').value;
 
     if (!projectId) {
         dsSelect.innerHTML = dsOptHtml;
-        assigneeSelect.innerHTML = assigneeOptHtml;
+        clearMemberDropdown('task-assignee');
         currentProjectMembers = [];
         depsContainer.innerHTML = '<span class="text-muted">프로젝트를 선택하세요.</span>';
         return;
     }
 
-    // 프로젝트 상세에서 스쿼드 + 멤버 로드
+    // 프로젝트 상세 + 전체 멤버 병렬 로드
+    var allMembersForTask = [];
     try {
-        var projectRes = await apiCall('/api/v1/projects/' + projectId);
+        var taskModalResults = await Promise.all([
+            apiCall('/api/v1/projects/' + projectId),
+            apiCall('/api/v1/members')
+        ]);
+        var projectRes = taskModalResults[0];
+        var allMembersRes = taskModalResults[1];
         if (projectRes.success && projectRes.data) {
             if (projectRes.data.squads) {
                 projectRes.data.squads.forEach(function(ds) {
                     dsOptHtml += '<option value="' + ds.id + '">' + escapeHtml(ds.name) + '</option>';
                 });
             }
-            // 담당자: 프로젝트 참여 멤버만 표시
             if (projectRes.data.members) {
                 currentProjectMembers = projectRes.data.members;
-                projectRes.data.members.forEach(function(m) {
-                    assigneeOptHtml += '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.role + ')</option>';
-                });
             }
         }
+        allMembersForTask = (allMembersRes.success && allMembersRes.data) ? allMembersRes.data : [];
     } catch (e) { /* ignore */ }
     dsSelect.innerHTML = dsOptHtml;
-    assigneeSelect.innerHTML = assigneeOptHtml;
-    // 이전 선택값 복원 (프로젝트 멤버에 포함된 경우)
-    if (prevAssignee) assigneeSelect.value = prevAssignee;
+    // 담당자 검색 드롭다운 초기화 (전체 멤버 대상)
+    initMemberSearchDropdown('task-assignee', allMembersForTask, '이름으로 검색...');
+    // 이전 선택값 복원
+    if (prevAssignee) setMemberDropdownValue('task-assignee', prevAssignee, allMembersForTask);
 
     // 의존관계 체크리스트 렌더링
     var ganttData = (currentGanttData && currentGanttData.project && currentGanttData.project.id === parseInt(projectId))
@@ -5265,7 +5485,7 @@ function renderScheduleMemberList() {
         return;
     }
 
-    var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PLACEHOLDER: 5 };
+    var roleOrder = { PM: 0, EM: 1, BE: 2, FE: 3, QA: 4, PD: 5 };
     members.sort(function(a, b) {
         if (_scheduleMemberSortField === 'role') {
             var ra = roleOrder[a.role] != null ? roleOrder[a.role] : 99;
@@ -5869,9 +6089,11 @@ async function checkAssigneeConflict() {
         });
 
         if (conflicts.length > 0) {
-            // 담당자 이름 가져오기
-            var assigneeSelect = document.getElementById('task-assignee');
-            var assigneeName = assigneeSelect.options[assigneeSelect.selectedIndex].text.split(' (')[0];
+            // 담당자 이름 가져오기 (멤버 목록에서 ID로 직접 조회 -- 이름에 특수문자 포함 시 안전)
+            var taskAssigneeSearchEl = document.getElementById('task-assignee-search');
+            var taskAssigneeMembers = taskAssigneeSearchEl ? taskAssigneeSearchEl._memberSearchMembers : currentProjectMembers;
+            var assigneeMember = _findMemberById(taskAssigneeMembers, assigneeId);
+            var assigneeName = assigneeMember ? assigneeMember.name : '';
 
             var html = '<div class="alert alert-warning mb-0 py-2 px-3" style="font-size:0.85rem;">';
             html += '<i class="bi bi-exclamation-triangle-fill"></i> <strong>배정 충돌 경고</strong><br>';
@@ -6526,12 +6748,16 @@ async function loadSettingsSection() {
     try {
         var res = await apiCall('/api/v1/members');
         var members = (res.success && res.data) ? res.data : [];
-        var select = document.getElementById('leave-member-select');
-        var leaveOptHtml = '<option value="">멤버를 선택하세요</option>';
-        members.forEach(function(m) {
-            leaveOptHtml += '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.role + ')</option>';
+        initMemberSearchDropdown('leave-member-select', members, '이름으로 검색...', function() {
+            loadMemberLeaves();
         });
-        select.innerHTML = leaveOptHtml;
+        // 클리어 시에도 loadMemberLeaves 호출 (onchange 재할당으로 중복 등록 방지)
+        var leaveHidden = document.getElementById('leave-member-select');
+        if (leaveHidden) {
+            leaveHidden.onchange = function() {
+                if (!this.value) loadMemberLeaves();
+            };
+        }
     } catch (e) {
         console.error('멤버 목록 로드 실패:', e);
     }
@@ -7861,6 +8087,17 @@ document.addEventListener('DOMContentLoaded', function() {
         if (searchEl && resultsEl && !searchEl.contains(e.target) && !resultsEl.contains(e.target)) {
             resultsEl.style.display = 'none';
         }
+        // 멤버 검색 커스텀 드롭다운 외부 클릭 시 닫기 + 표시값 복원
+        document.querySelectorAll('.member-search-dropdown').forEach(function(wrap) {
+            if (!wrap.contains(e.target)) {
+                var rd = wrap.querySelector('.member-search-results');
+                if (rd) rd.style.display = 'none';
+                // 외부 클릭 시 search input 표시값 복원 (blur와 동일 로직)
+                var si = wrap.querySelector('input[type="text"]');
+                var hi = wrap.querySelector('input[type="hidden"]');
+                if (si && hi) _restoreMemberSearchDisplay(si, hi);
+            }
+        });
     });
 
     // 프로젝트 상세 탭 전환 이벤트

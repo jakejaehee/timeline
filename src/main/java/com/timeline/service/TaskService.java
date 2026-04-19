@@ -361,9 +361,12 @@ public class TaskService {
             }
         }
 
-        Squad squad = squadRepository.findById(request.getSquadId())
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "스쿼드를 찾을 수 없습니다. id=" + request.getSquadId()));
+        Squad squad = null;
+        if (request.getSquadId() != null) {
+            squad = squadRepository.findById(request.getSquadId())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "스쿼드를 찾을 수 없습니다. id=" + request.getSquadId()));
+        }
 
         // 프로젝트 변경 처리
         Project project = task.getProject();

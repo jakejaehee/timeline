@@ -114,10 +114,12 @@ public class SchemaUpdateRunner implements ApplicationRunner {
      */
     private void updateMemberRoleCheck() {
         try {
+            // PLACEHOLDER → PD 마이그레이션
+            jdbcTemplate.execute("UPDATE member SET role = 'PD' WHERE role = 'PLACEHOLDER'");
             jdbcTemplate.execute("ALTER TABLE member DROP CONSTRAINT IF EXISTS member_role_check");
             jdbcTemplate.execute("ALTER TABLE member ADD CONSTRAINT member_role_check " +
-                    "CHECK (role IN ('BE', 'FE', 'QA', 'PM', 'EM', 'PLACEHOLDER'))");
-            log.info("스키마 보정: member_role_check 제약조건 갱신 완료 (EM 추가)");
+                    "CHECK (role IN ('BE', 'FE', 'QA', 'PM', 'EM', 'PD'))");
+            log.info("스키마 보정: member_role_check 제약조건 갱신 완료 (PLACEHOLDER→PD)");
         } catch (Exception e) {
             log.warn("member_role_check 갱신 실패: {}", e.getMessage());
         }

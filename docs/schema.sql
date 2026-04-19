@@ -43,7 +43,7 @@ CREATE TABLE member (
     created_at timestamp(6) NOT NULL,
     updated_at timestamp(6),
     CONSTRAINT member_pkey PRIMARY KEY (id),
-    CONSTRAINT member_role_check CHECK (role IN ('BE', 'FE', 'QA', 'PM', 'EM', 'PLACEHOLDER'))
+    CONSTRAINT member_role_check CHECK (role IN ('BE', 'FE', 'QA', 'PM', 'EM', 'PD'))
 );
 
 -- 멤버 휴무

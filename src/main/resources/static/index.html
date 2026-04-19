@@ -8,7 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <link rel="stylesheet" href="/css/styles.css?v=20260419h">
+    <link rel="stylesheet" href="/css/styles.css?v=20260419i">
 </head>
 <body>
     <!-- 좌측 사이드바 -->
@@ -519,10 +519,17 @@
                 <div id="settings-leaves" class="tab-pane fade">
                     <div class="row mb-3">
                         <div class="col-md-3">
-                            <label for="leave-member-select" class="form-label fw-bold">멤버 선택</label>
-                            <select id="leave-member-select" class="form-select form-select-sm" onchange="loadMemberLeaves()">
-                                <option value="">멤버를 선택하세요</option>
-                            </select>
+                            <label for="leave-member-select-search" class="form-label fw-bold">멤버 선택</label>
+                            <div class="member-search-dropdown position-relative" id="leave-member-select-wrap">
+                                <input type="hidden" id="leave-member-select" value="">
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" id="leave-member-select-search" placeholder="이름으로 검색..." autocomplete="off">
+                                    <button type="button" class="btn btn-outline-secondary" id="leave-member-select-clear" style="display:none;" onclick="clearMemberDropdown('leave-member-select')">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                </div>
+                                <div id="leave-member-select-results" class="member-search-results"></div>
+                            </div>
                         </div>
                         <div class="col-md-2 d-flex align-items-end">
                             <button class="btn btn-primary btn-sm" onclick="showMemberLeaveModal()" id="add-leave-btn" disabled>
@@ -938,7 +945,7 @@
                             <option value="QA">QA</option>
                             <option value="PM">PM</option>
                             <option value="EM">EM</option>
-                            <option value="PLACEHOLDER">PLACEHOLDER</option>
+                            <option value="PD">PD</option>
                         </select>
                     </div>
                     <div class="mb-3">
@@ -1000,6 +1007,9 @@
                 </div>
                 <div class="modal-body">
                     <input type="hidden" id="add-project-member-project-id">
+                    <div class="mb-2">
+                        <input type="text" class="form-control form-control-sm" id="add-project-member-search" placeholder="이름으로 필터링..." autocomplete="off" oninput="filterAddProjectMemberList()">
+                    </div>
                     <div id="add-project-member-list" style="max-height:400px; overflow-y:auto;"></div>
                 </div>
                 <div class="modal-footer">
@@ -1138,16 +1148,30 @@
                             </div>
                         </div>
                         <div class="col-md-4 mb-3">
-                            <label for="project-ppl" class="form-label">PPL (Product Project Leader)</label>
-                            <select class="form-select" id="project-ppl">
-                                <option value="">선택 안함</option>
-                            </select>
+                            <label for="project-ppl-search" class="form-label">PPL (Product Project Leader)</label>
+                            <div class="member-search-dropdown position-relative" id="project-ppl-wrap">
+                                <input type="hidden" id="project-ppl" value="">
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" id="project-ppl-search" placeholder="이름으로 검색..." autocomplete="off">
+                                    <button type="button" class="btn btn-outline-secondary" id="project-ppl-clear" style="display:none;" onclick="clearMemberDropdown('project-ppl')">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                </div>
+                                <div id="project-ppl-results" class="member-search-results"></div>
+                            </div>
                         </div>
                         <div class="col-md-4 mb-3">
-                            <label for="project-epl" class="form-label">EPL (Engineering Project Leader)</label>
-                            <select class="form-select" id="project-epl">
-                                <option value="">선택 안함</option>
-                            </select>
+                            <label for="project-epl-search" class="form-label">EPL (Engineering Project Leader)</label>
+                            <div class="member-search-dropdown position-relative" id="project-epl-wrap">
+                                <input type="hidden" id="project-epl" value="">
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" id="project-epl-search" placeholder="이름으로 검색..." autocomplete="off">
+                                    <button type="button" class="btn btn-outline-secondary" id="project-epl-clear" style="display:none;" onclick="clearMemberDropdown('project-epl')">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                </div>
+                                <div id="project-epl-results" class="member-search-results"></div>
+                            </div>
                         </div>
                     </div>
                     <!-- 지연 경고 -->
@@ -1197,10 +1221,17 @@
                     <!-- 2행: 담당자, 프로젝트, 스쿼드 -->
                     <div class="row">
                         <div class="col-md-4 mb-3">
-                            <label for="task-assignee" class="form-label">담당자</label>
-                            <select class="form-select" id="task-assignee">
-                                <option value="">선택하세요</option>
-                            </select>
+                            <label for="task-assignee-search" class="form-label">담당자</label>
+                            <div class="member-search-dropdown position-relative" id="task-assignee-wrap">
+                                <input type="hidden" id="task-assignee" value="">
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" id="task-assignee-search" placeholder="이름으로 검색..." autocomplete="off">
+                                    <button type="button" class="btn btn-outline-secondary" id="task-assignee-clear" style="display:none;" onclick="clearMemberDropdown('task-assignee')">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                </div>
+                                <div id="task-assignee-results" class="member-search-results"></div>
+                            </div>
                         </div>
                         <div class="col-md-4 mb-3">
                             <label for="task-modal-project-id" class="form-label">프로젝트 <span class="text-danger">*</span></label>
@@ -1646,6 +1677,6 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
-    <script src="/js/app.js?v=20260419i"></script>
+    <script src="/js/app.js?v=20260419k"></script>
 </body>
 </html>

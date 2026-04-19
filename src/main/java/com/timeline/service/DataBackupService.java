@@ -89,6 +89,9 @@ public class DataBackupService {
         // FK 역순으로 전체 데이터 삭제
         deleteAllInOrder();
 
+        // CHECK 제약조건 최신화 (백업 데이터의 enum 값이 현재 스키마와 맞도록)
+        refreshCheckConstraints();
+
         int totalRows = 0;
         int totalTables = 0;
 
@@ -158,6 +161,32 @@ public class DataBackupService {
         googleDriveConfigRepository.deleteAllInBatch();
         em.flush();
         log.debug("전체 데이터 삭제 완료");
+    }
+
+    /**
+     * CHECK 제약조건을 소스코드 기준 최신 enum 값으로 갱신
+     */
+    private void refreshCheckConstraints() {
+        try {
+            em.createNativeQuery("ALTER TABLE member DROP CONSTRAINT IF EXISTS member_role_check").executeUpdate();
+            em.createNativeQuery("ALTER TABLE member ADD CONSTRAINT member_role_check CHECK (role IN ('BE', 'FE', 'QA', 'PM', 'EM', 'PD'))").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task DROP CONSTRAINT IF EXISTS task_status_check").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task ADD CONSTRAINT task_status_check CHECK (status IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'DONE', 'HOLD', 'CANCELLED'))").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task DROP CONSTRAINT IF EXISTS task_priority_check").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task ADD CONSTRAINT task_priority_check CHECK (priority IN ('P0', 'P1', 'P2', 'P3'))").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task DROP CONSTRAINT IF EXISTS task_type_check").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task ADD CONSTRAINT task_type_check CHECK (type IN ('FEATURE', 'DESIGN', 'BACKEND', 'INFRA', 'QA', 'RELEASE', 'OPS', 'TECH_DEBT'))").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task DROP CONSTRAINT IF EXISTS task_execution_mode_check").executeUpdate();
+            em.createNativeQuery("ALTER TABLE task ADD CONSTRAINT task_execution_mode_check CHECK (execution_mode IN ('SEQUENTIAL', 'PARALLEL'))").executeUpdate();
+            em.createNativeQuery("ALTER TABLE holiday DROP CONSTRAINT IF EXISTS holiday_type_check").executeUpdate();
+            em.createNativeQuery("ALTER TABLE holiday ADD CONSTRAINT holiday_type_check CHECK (type IN ('NATIONAL', 'COMPANY'))").executeUpdate();
+            em.createNativeQuery("ALTER TABLE project DROP CONSTRAINT IF EXISTS project_status_check").executeUpdate();
+            em.createNativeQuery("ALTER TABLE project ADD CONSTRAINT project_status_check CHECK (status IN ('PLANNING', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'))").executeUpdate();
+            em.flush();
+            log.debug("CHECK 제약조건 최신화 완료");
+        } catch (Exception e) {
+            log.warn("CHECK 제약조건 최신화 실패: {}", e.getMessage());
+        }
     }
 
     // ========================================

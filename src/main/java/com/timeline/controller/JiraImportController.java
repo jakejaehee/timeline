@@ -21,7 +21,7 @@ public class JiraImportController {
 
     /**
      * Jira Board 이슈 Import 미리보기 (DB 저장 없음)
-     * POST: 필터 조건(createdAfter)이 요청 body에 포함
+     * POST: 필터 조건(updatedAfter)이 요청 body에 포함
      */
     @PostMapping("/api/v1/projects/{projectId}/jira/preview")
     public ResponseEntity<?> previewImport(@PathVariable Long projectId,

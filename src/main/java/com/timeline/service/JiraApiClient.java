@@ -170,11 +170,11 @@ public class JiraApiClient {
     /**
      * Board 이슈 전체 목록 수집 (페이지네이션)
      * API: GET {baseUrl}/rest/agile/1.0/board/{boardId}/issue
-     * createdAfter가 null이 아니면 JQL 필터 적용.
+     * updatedAfter가 null이 아니면 JQL 필터 적용.
      * Board API가 JQL을 지원하지 않으면 (400 BadRequest) Search API로 폴백.
      */
     public List<JiraDto.JiraIssue> fetchAllBoardIssues(String baseUrl, String email, String apiToken,
-                                                        String boardId, LocalDate createdAfter,
+                                                        String boardId, LocalDate updatedAfter,
                                                         List<String> statusFilter,
                                                         String storyPointsFieldId) {
         // boardId 검증: 숫자만 허용 (path injection 방지)
@@ -186,7 +186,7 @@ public class JiraApiClient {
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
         // JQL 조건 생성
-        String jql = buildJql(createdAfter, statusFilter);
+        String jql = buildJql(updatedAfter, statusFilter);
 
         // 동적 fields 구성: 탐지된 storyPointsFieldId를 BOARD_FIELDS에 추가
         String fields = BOARD_FIELDS;
@@ -231,7 +231,7 @@ public class JiraApiClient {
             } catch (HttpClientErrorException.BadRequest e) {
                 // Board API가 JQL을 지원하지 않는 경우 Search API로 폴백
                 log.warn("Board API가 JQL을 지원하지 않습니다. Search API로 폴백합니다. boardId={}", boardId);
-                return fetchIssuesByJql(baseUrl, email, apiToken, boardId, createdAfter, statusFilter, storyPointsFieldId);
+                return fetchIssuesByJql(baseUrl, email, apiToken, boardId, updatedAfter, statusFilter, storyPointsFieldId);
             } catch (HttpClientErrorException.NotFound e) {
                 throw new RuntimeException("Jira Board를 찾을 수 없습니다. Board ID: " + boardId);
             } catch (HttpClientErrorException.Unauthorized e) {
@@ -273,7 +273,7 @@ public class JiraApiClient {
      */
     @SuppressWarnings("unchecked")
     public List<JiraDto.JiraIssue> fetchIssuesByJql(String baseUrl, String email, String apiToken,
-                                                     String boardId, LocalDate createdAfter,
+                                                     String boardId, LocalDate updatedAfter,
                                                      List<String> statusFilter,
                                                      String storyPointsFieldId) {
         // boardId 검증: 숫자만 허용 (path injection 방지)
@@ -293,8 +293,8 @@ public class JiraApiClient {
         }
         StringBuilder jqlBuilder = new StringBuilder();
         jqlBuilder.append("project=\"").append(projectKey).append("\"");
-        // createdAfter + statusFilter 조건 추가
-        String additionalJql = buildJql(createdAfter, statusFilter);
+        // updatedAfter + statusFilter 조건 추가
+        String additionalJql = buildJql(updatedAfter, statusFilter);
         if (additionalJql != null) {
             jqlBuilder.append(" AND ").append(additionalJql);
         }
@@ -349,7 +349,7 @@ public class JiraApiClient {
      */
     @SuppressWarnings("unchecked")
     public List<JiraDto.JiraIssue> fetchIssuesByProjectKey(String baseUrl, String email, String apiToken,
-                                                            String projectKey, LocalDate createdAfter,
+                                                            String projectKey, LocalDate updatedAfter,
                                                             List<String> statusFilter,
                                                             String storyPointsFieldId) {
         if (projectKey == null || !projectKey.matches("^[A-Za-z0-9_\\-]+$")) {
@@ -361,7 +361,7 @@ public class JiraApiClient {
 
         StringBuilder jqlBuilder = new StringBuilder();
         jqlBuilder.append("project=\"").append(projectKey).append("\"");
-        String additionalJql = buildJql(createdAfter, statusFilter);
+        String additionalJql = buildJql(updatedAfter, statusFilter);
         if (additionalJql != null) {
             jqlBuilder.append(" AND ").append(additionalJql);
         }
@@ -398,7 +398,7 @@ public class JiraApiClient {
      */
     @SuppressWarnings("unchecked")
     public List<JiraDto.JiraIssue> fetchIssuesByEpicKey(String baseUrl, String email, String apiToken,
-                                                         String epicKey, LocalDate createdAfter,
+                                                         String epicKey, LocalDate updatedAfter,
                                                          List<String> statusFilter,
                                                          String storyPointsFieldId) {
         if (epicKey == null || !epicKey.matches("^[A-Za-z0-9_\\-]+$")) {
@@ -410,7 +410,7 @@ public class JiraApiClient {
         // parent=KEY (Next-gen) OR "Epic Link"=KEY (Classic)
         StringBuilder jqlBuilder = new StringBuilder();
         jqlBuilder.append("(parent=\"").append(epicKey).append("\" OR \"Epic Link\"=\"").append(epicKey).append("\")");
-        String additionalJql = buildJql(createdAfter, statusFilter);
+        String additionalJql = buildJql(updatedAfter, statusFilter);
         if (additionalJql != null) {
             jqlBuilder.append(" AND ").append(additionalJql);
         }
@@ -442,15 +442,15 @@ public class JiraApiClient {
     }
 
     /**
-     * JQL 조건 문자열 생성 (createdAfter + statusFilter)
+     * JQL 조건 문자열 생성 (updatedAfter + statusFilter)
      * allowlist 기반으로 statusFilter 값을 검증하여 JQL injection을 방지한다.
      *
      * @return JQL 조건 문자열, 조건이 없으면 null
      */
-    private String buildJql(LocalDate createdAfter, List<String> statusFilter) {
+    private String buildJql(LocalDate updatedAfter, List<String> statusFilter) {
         List<String> conditions = new ArrayList<>();
-        if (createdAfter != null) {
-            conditions.add("created>=\"" + createdAfter.format(DateTimeFormatter.ISO_LOCAL_DATE) + "\"");
+        if (updatedAfter != null) {
+            conditions.add("updated>=\"" + updatedAfter.format(DateTimeFormatter.ISO_LOCAL_DATE) + "\"");
         }
         if (statusFilter != null && !statusFilter.isEmpty()) {
             // allowlist 검증: 허용된 값만 사용

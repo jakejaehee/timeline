@@ -15,8 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -36,7 +38,10 @@ public class ProjectService {
     private final TaskRepository taskRepository;
     private final TaskDependencyRepository taskDependencyRepository;
     private final TaskLinkRepository taskLinkRepository;
+    private final ProjectLinkRepository projectLinkRepository;
     private final ProjectMilestoneRepository projectMilestoneRepository;
+    private final BusinessDayCalculator bizDayCalc;
+    private final HolidayService holidayService;
 
     /** CANCELLED 태스크는 expectedEndDate 계산에서 제외 */
     private static final List<TaskStatus> INACTIVE_STATUSES = List.of(TaskStatus.HOLD, TaskStatus.CANCELLED);
@@ -216,10 +221,11 @@ public class ProjectService {
         }
         // 태스크 삭제
         taskRepository.deleteByProjectId(id);
-        // 연결 테이블 및 마일스톤 삭제
+        // 연결 테이블, 마일스톤, 링크 삭제
         projectMemberRepository.deleteByProjectId(id);
         projectSquadRepository.deleteByProjectId(id);
         projectMilestoneRepository.deleteByProjectId(id);
+        projectLinkRepository.deleteByProjectId(id);
         projectRepository.delete(project);
         log.info("프로젝트 삭제 완료: id={}, name={}", id, project.getName());
     }
@@ -353,10 +359,45 @@ public class ProjectService {
     // ---- 마일스톤 관리 ----
 
     public List<Map<String, Object>> getMilestones(Long projectId) {
-        findProjectById(projectId);
-        return projectMilestoneRepository.findByProjectIdOrderBySortOrderAscStartDateAsc(projectId).stream()
-                .map(this::milestoneToMap)
-                .collect(Collectors.toList());
+        Project project = findProjectById(projectId);
+        List<ProjectMilestone> milestones = projectMilestoneRepository.findByProjectIdOrderBySortOrderAscStartDateAsc(projectId);
+
+        // 공휴일 로드 (QA 날짜 역산에 사용)
+        LocalDate rangeStart = LocalDate.now().minusMonths(1);
+        LocalDate rangeEnd = LocalDate.now().plusYears(2);
+        Set<LocalDate> holidays = holidayService.getHolidayDatesBetween(rangeStart, rangeEnd);
+
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        for (int i = 0; i < milestones.size(); i++) {
+            ProjectMilestone ms = milestones.get(i);
+            var map = milestoneToMap(ms);
+            // QA 유형: 론치일(project.endDate)과 QA 일수(days) 기준으로 역산
+            if (ms.getType() == com.timeline.domain.enums.MilestoneType.QA && ms.getDays() != null) {
+                LocalDate launchDate = project.getEndDate();
+                if (launchDate != null) {
+                    Set<LocalDate> qaUnavailable = new HashSet<>(holidays);
+                    // QA 종료일: 론치일 - 1 영업일
+                    LocalDate qaEnd = subtractBusinessDays(launchDate, 1, qaUnavailable);
+                    // QA 시작일: QA 종료일에서 (days - 1) 영업일 역산
+                    LocalDate qaStart = subtractBusinessDays(qaEnd, ms.getDays() - 1, qaUnavailable);
+                    map.put("startDate", qaStart.toString());
+                    map.put("endDate", qaEnd.toString());
+                }
+            }
+            result.add(map);
+        }
+        return result;
+    }
+
+    private LocalDate subtractBusinessDays(LocalDate from, int days, Set<LocalDate> unavailable) {
+        LocalDate d = from;
+        while (days > 0) {
+            d = d.minusDays(1);
+            if (bizDayCalc.isBusinessDay(d, unavailable)) {
+                days--;
+            }
+        }
+        return d;
     }
 
     @Transactional

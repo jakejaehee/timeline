@@ -57,33 +57,8 @@ public class ScheduleCalculationService {
                         .thenComparing(Project::getId))
                 .collect(Collectors.toList());
 
-        // 1차: sortOrder 순 계산
-        List<Map<String, Object>> firstPass = calculateSchedulePass(projects, holidays, rangeStart, rangeEnd, memberIdToName);
-
-        // 2차: 1차 결과의 launchDate 시간순 계산 (정렬순서 뒤 프로젝트라도 먼저 론치하면 선반영)
-        List<Project> temporalProjects = orderProjectsByLaunchDate(projects, firstPass);
-        List<Map<String, Object>> secondPass = temporalProjects.equals(projects)
-                ? firstPass
-                : calculateSchedulePass(temporalProjects, holidays, rangeStart, rangeEnd, memberIdToName);
-
-        // 반환 순서는 기존 UI 정렬(sortOrder) 유지
-        Map<Long, Map<String, Object>> resultByProjectId = secondPass.stream()
-                .filter(r -> r.get("projectId") != null)
-                .collect(Collectors.toMap(
-                        r -> ((Number) r.get("projectId")).longValue(),
-                        r -> r,
-                        (a, b) -> a,
-                        LinkedHashMap::new
-                ));
-
-        List<Map<String, Object>> orderedResults = new ArrayList<>();
-        for (Project project : projects) {
-            Map<String, Object> result = resultByProjectId.get(project.getId());
-            if (result != null) {
-                orderedResults.add(result);
-            }
-        }
-        return orderedResults;
+        // sortOrder 순 계산 (프로젝트 목록 순서대로 멤버가 투입됨)
+        return calculateSchedulePass(projects, holidays, rangeStart, rangeEnd, memberIdToName);
     }
 
     private List<Map<String, Object>> calculateSchedulePass(List<Project> projects,
@@ -292,6 +267,13 @@ public class ScheduleCalculationService {
                 for (Member m : beMembers) {
                     LocalDate availableFrom = getMemberAvailableFrom(
                             m.getId(), projStartEstimate, filterEndDate, memberBusyPeriods, holidays);
+                    // queueStartDate가 있으면 그보다 이전에는 투입 불가
+                    LocalDate queueStart = m.getQueueStartDate();
+                    if (queueStart != null) {
+                        if (availableFrom == null || queueStart.isAfter(availableFrom)) {
+                            availableFrom = queueStart;
+                        }
+                    }
                     if (availableFrom != null) {
                         lateJoinDates.put(m.getId(), availableFrom);
                     }
@@ -327,6 +309,13 @@ public class ScheduleCalculationService {
                     filteredBe.add(m);
                     // 지연 합류 멤버의 availableFrom 계산
                     LocalDate availableFrom = getMemberAvailableFrom(m.getId(), projStartForFilter, projEstimatedEnd, memberBusyPeriods, holidays);
+                    // queueStartDate가 있으면 그보다 이전에는 투입 불가
+                    LocalDate queueStart = m.getQueueStartDate();
+                    if (queueStart != null) {
+                        if (availableFrom == null || queueStart.isAfter(availableFrom)) {
+                            availableFrom = queueStart;
+                        }
+                    }
                     if (availableFrom != null) {
                         lateJoinDates.put(m.getId(), availableFrom);
                     }
@@ -360,7 +349,18 @@ public class ScheduleCalculationService {
                 .filter(m -> m.getType() == MilestoneType.QA && m.getDays() != null)
                 .findFirst().orElse(null);
         Integer qaDays = qaMilestone != null ? qaMilestone.getDays() : null;
-        LocalDate qaFixedStartDate = qaMilestone != null ? qaMilestone.getStartDate() : null;
+
+        // QA 시작일: 직전 마일스톤의 종료일 + 1일
+        LocalDate qaFixedStartDate = null;
+        if (qaMilestone != null) {
+            int qaIdx = milestones.indexOf(qaMilestone);
+            if (qaIdx > 0) {
+                ProjectMilestone prevMilestone = milestones.get(qaIdx - 1);
+                if (prevMilestone.getEndDate() != null) {
+                    qaFixedStartDate = prevMilestone.getEndDate().plusDays(1);
+                }
+            }
+        }
 
         // QA 담당자 이름 목록 (ProjectMilestone.qaAssignees 파싱, ID→이름 변환)
         List<String> qaAssigneeNames = parseQaAssigneeNames(
@@ -726,51 +726,52 @@ public class ScheduleCalculationService {
             if (project.getStartDate() != null) {
                 startDate = project.getStartDate();
             } else {
-                LocalDate earliestMemberStart = beMembers.stream()
-                        .map(Member::getQueueStartDate)
-                        .filter(Objects::nonNull)
-                        .min(LocalDate::compareTo)
-                        .orElse(null);
-
-                // queueStartDate가 없으면 실제 투입 대상(beMembers) 중 "가장 빨리 가용한 멤버" 기준으로 시작
-                // (인력 활용 최적화: 일부 멤버가 바쁘더라도 유휴 멤버가 있으면 즉시 시작)
-                if (earliestMemberStart == null) {
-                    LocalDate earliestAvailableFromBusy = beMembers.stream()
-                            .map(Member::getId)
-                            .map(mid -> {
-                                List<LocalDate[]> periods = memberBusyPeriods.get(mid);
-                                if (periods == null || periods.isEmpty()) return LocalDate.now();
+                // 각 멤버의 실제 가용 시작일 계산 (queueStartDate + 바쁜 기간 모두 고려)
+                // 멤버별 가용일 = max(queueStartDate, busyPeriod 종료 후 다음 영업일)
+                // 프로젝트 시작일 = 가장 빨리 가용한 멤버 기준 (min)
+                LocalDate earliestAvailable = beMembers.stream()
+                        .map(m -> {
+                            // 바쁜 기간 기반 가용일
+                            List<LocalDate[]> periods = memberBusyPeriods.get(m.getId());
+                            LocalDate busyAvailable;
+                            if (periods == null || periods.isEmpty()) {
+                                busyAvailable = LocalDate.now();
+                            } else {
                                 LocalDate latestBusyEnd = periods.stream()
                                         .map(period -> period[1])
                                         .max(LocalDate::compareTo)
                                         .orElse(null);
-                                return latestBusyEnd != null
+                                busyAvailable = latestBusyEnd != null
                                         ? bizDayCalc.getNextBusinessDay(latestBusyEnd, holidays)
                                         : LocalDate.now();
-                            })
-                            .min(LocalDate::compareTo)
-                            .orElse(null);
+                            }
+                            // queueStartDate가 있으면 그보다 이전에는 투입 불가
+                            LocalDate queueStart = m.getQueueStartDate();
+                            if (queueStart != null && queueStart.isAfter(busyAvailable)) {
+                                return queueStart;
+                            }
+                            return busyAvailable;
+                        })
+                        .min(LocalDate::compareTo)
+                        .orElse(null);
 
-                    // 0 MD 등으로 beMembers 자체가 비어 있으면 기존처럼 스쿼드 풀 기준으로 fallback
-                    if (earliestAvailableFromBusy == null && beMembers.isEmpty()) {
-                        List<Member> poolForStart = getSquadMemberPool(projectId);
-                        LocalDate latestBusyEnd = poolForStart.stream()
-                                .map(Member::getId)
-                                .filter(memberBusyPeriods::containsKey)
-                                .flatMap(mid -> memberBusyPeriods.get(mid).stream())
-                                .map(period -> period[1])
-                                .max(LocalDate::compareTo)
-                                .orElse(null);
-                        earliestAvailableFromBusy = latestBusyEnd != null
-                                ? bizDayCalc.getNextBusinessDay(latestBusyEnd, holidays)
-                                : null;
-                    }
-                    startDate = earliestAvailableFromBusy != null
-                            ? earliestAvailableFromBusy
-                            : LocalDate.now();
-                } else {
-                    startDate = earliestMemberStart;
+                // 0 MD 등으로 beMembers 자체가 비어 있으면 기존처럼 스쿼드 풀 기준으로 fallback
+                if (earliestAvailable == null && beMembers.isEmpty()) {
+                    List<Member> poolForStart = getSquadMemberPool(projectId);
+                    LocalDate latestBusyEnd = poolForStart.stream()
+                            .map(Member::getId)
+                            .filter(memberBusyPeriods::containsKey)
+                            .flatMap(mid -> memberBusyPeriods.get(mid).stream())
+                            .map(period -> period[1])
+                            .max(LocalDate::compareTo)
+                            .orElse(null);
+                    earliestAvailable = latestBusyEnd != null
+                            ? bizDayCalc.getNextBusinessDay(latestBusyEnd, holidays)
+                            : null;
                 }
+                startDate = earliestAvailable != null
+                        ? earliestAvailable
+                        : LocalDate.now();
                 startDate = bizDayCalc.ensureBusinessDay(startDate, holidays);  // 비가용일 보정
             }
 

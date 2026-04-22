@@ -130,6 +130,7 @@ public class JiraDto {
         private String jiraAssignee;
         private Long mappedAssigneeId;
         private String mappedAssigneeName;
+        private BigDecimal storyPoints;  // Jira story points (-> manDays)
         private String action; // CREATE, UPDATE, SKIP
         private Long existingProjectId; // UPDATE 시 기존 태스크의 프로젝트 ID
     }
@@ -141,7 +142,7 @@ public class JiraDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class PreviewRequest {
-        private LocalDate createdAfter;   // 생성일자 필터 (nullable)
+        private LocalDate updatedAfter;   // 수정일자 필터 (nullable)
         private List<String> statusFilter; // Jira 상태 필터 (nullable 또는 빈 리스트 = 전체)
         private String jiraBoardId;       // Jira Board ID 오버라이드 (nullable, 없으면 프로젝트 설정값 사용)
         private String jiraProjectKey;    // Jira 프로젝트 키 (space 검색용, nullable)
@@ -153,7 +154,7 @@ public class JiraDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ImportRequest {
-        private LocalDate createdAfter;                     // 생성일자 필터 (nullable)
+        private LocalDate updatedAfter;                     // 수정일자 필터 (nullable)
         private List<String> statusFilter; // Jira 상태 필터 (nullable 또는 빈 리스트 = 전체)
         private List<String> selectedKeys; // 선택된 Jira 이슈 키 목록 (null이면 전체)
         private Map<String, Long> issueProjectMap; // Jira 키 -> 프로젝트 ID 매핑 (null이면 URL의 projectId 사용)

@@ -28,7 +28,7 @@ var _ganttRenderTimerId = null;   // 간트차트 후처리 타이머 (중복 �
 var pendingImportFile = null;    // Import 대기 중인 파일
 var cachedJiraBaseUrl = null;    // Jira 베이스 URL 캐시 (태스크 링크 렌더링용)
 var jiraImportProjectId = null;  // Jira Import 모달에서 사용 중인 프로젝트 ID
-var jiraPreviewCreatedAfter = null; // Jira Import 미리보기에서 사용한 생성일자 필터
+var jiraPreviewUpdatedAfter = null; // Jira Import 미리보기에서 사용한 수정일자 필터
 var jiraPreviewStatusFilter = [];  // Jira Import 미리보기에서 사용한 상태 필터
 var jiraPreviewBoardId = null;   // Jira Import 미리보기에서 사용한 Board ID (executeJiraImport에서 재사용)
 var projectTaskStatusFilter = ['TODO', 'IN_PROGRESS'];  // 프로젝트 태스크 상태 필터 (복수 선택, 기본값: TODO + 진행중)
@@ -1613,7 +1613,7 @@ async function toggleProjectMilestones(projectId, btn) {
         }
         // 역순으로 insert (after이므로 마지막 것이 가장 위에)
         // 헤더 순서: [체크] [토글] [드래그] [링크] | 프로젝트명 | 멤버 | BE | MD | 소요일 | 시작일 | 론치일 | PPL | 분기 | 유형 | 상태 | 지연 | 액션
-        // 마일스톤:  [빈4칸]                       | 이름       | -   | -  | -  | QA일수 | 시작일 | 종료일 | [나머지 pad]
+        // 마일스톤:  [빈4칸]                       | 유형+이름  | -   | -  | -  | 일수   | 시작일 | 종료일 | [나머지 pad]
         var msPadCols = colCount - 11; // 11 = 4(빈) + 이름 + 멤버 + BE + MD + 소요일 + 시작일 + 론치일
         for (var i = milestones.length - 1; i >= 0; i--) {
             var ms = milestones[i];
@@ -1621,18 +1621,25 @@ async function toggleProjectMilestones(projectId, btn) {
             msRow.className = 'ms-row-' + projectId;
             msRow.style.fontSize = '0.82rem';
             msRow.style.background = '#fafafa';
+            var isQa = ms.type === 'QA';
             var msDays = (ms.startDate && ms.endDate) ? calcWorkingDays(ms.startDate, ms.endDate) : null;
-            var msDaysLabel = msDays != null ? ' <span class="text-muted" style="font-size:0.75rem;">(' + msDays + ' days)</span>' : '';
+            var msDaysLabel = msDays != null ? ' <span class="text-muted" style="font-size:0.75rem;">(' + msDays + 'd)</span>' : '';
             var msTypeLabel = ms.type ? (_milestoneTypeLabels[ms.type] || ms.type) : '';
-            var msNameDisplay = (msTypeLabel ? '<span class="badge bg-secondary me-1" style="font-size:0.7rem;">' + msTypeLabel + '</span>' : '') + escapeHtml(ms.name) + msDaysLabel;
-            // 소요일 컬럼: QA 마일스톤이면 일수 표시
-            var msEstDays = (ms.type === 'QA' && ms.days) ? ms.days : '';
+            var typeBadge = msTypeLabel ? '<span class="badge bg-secondary me-1" style="font-size:0.7rem;">' + msTypeLabel + '</span>' : '';
+            // 클릭 가능한 마일스톤 이름
+            var nameLink = '<a href="javascript:void(0)" onclick="openMsEditModal(' + projectId + ',' + ms.id + ')" class="text-decoration-none" style="color:' + getMilestoneColor(ms.name) + ';">'
+                + typeBadge + escapeHtml(ms.name) + msDaysLabel + '</a>';
+            // 소요일 컬럼
+            var msEstDays = (isQa && ms.days) ? ms.days : '';
+            // 시작일 / 종료일 표시
+            var startDisplay = ms.startDate ? formatDateShort(ms.startDate) + ' <small class="text-muted">' + formatDayOnly(ms.startDate) + '</small>' : '-';
+            var endDisplay = ms.endDate ? formatDateShort(ms.endDate) + ' <small class="text-muted">' + formatDayOnly(ms.endDate) + '</small>' : '-';
             msRow.innerHTML = '<td></td><td></td><td></td><td></td>'
-                + '<td style="padding-left:8px; color:' + getMilestoneColor(ms.name) + ';">' + msNameDisplay + '</td>'
+                + '<td style="padding-left:8px;">' + nameLink + '</td>'
                 + '<td></td><td></td><td></td>'
                 + '<td style="text-align:center;">' + msEstDays + '</td>'
-                + '<td>' + formatDateShort(ms.startDate) + '</td>'
-                + '<td>' + formatDateShort(ms.endDate) + '</td>'
+                + '<td>' + startDisplay + '</td>'
+                + '<td>' + endDisplay + '</td>'
                 + (msPadCols > 0 ? '<td colspan="' + msPadCols + '"></td>' : '');
             projectRow.after(msRow);
         }
@@ -1640,6 +1647,117 @@ async function toggleProjectMilestones(projectId, btn) {
         loadingRow.innerHTML = '<td colspan="' + colCount + '" class="text-center text-danger" style="font-size:0.8rem; background:#fafafa;">로드 실패</td>';
     }
 }
+
+var _msEditModal = null;
+
+async function openMsEditModal(projectId, milestoneId) {
+    try {
+        var res = await apiCall('/api/v1/projects/' + projectId + '/milestones');
+        var milestones = (res.success && res.data) ? res.data : [];
+        var ms = milestones.find(function(m) { return m.id === milestoneId; });
+        if (!ms) { showToast('마일스톤을 찾을 수 없습니다.', 'error'); return; }
+
+        document.getElementById('msEditProjectId').value = projectId;
+        document.getElementById('msEditMilestoneId').value = milestoneId;
+        document.getElementById('msEditType').value = ms.type || '';
+        document.getElementById('msEditName').value = ms.name || '';
+        document.getElementById('msEditDays').value = ms.days != null ? ms.days : '';
+        document.getElementById('msEditStartDate').value = ms.startDate || '';
+        document.getElementById('msEditEndDate').value = ms.endDate || '';
+
+        // QA 유형이면 날짜 입력 숨기고 자동 계산 안내 표시
+        var isQa = ms.type === 'QA';
+        document.getElementById('msEditDateGroup').style.display = isQa ? 'none' : '';
+        document.getElementById('msEditQaDateInfo').style.display = isQa ? '' : 'none';
+        if (isQa && ms.startDate && ms.endDate) {
+            document.getElementById('msEditQaDateDisplay').innerHTML =
+                '<span style="font-size:0.85rem;">' + formatDateShort(ms.startDate) + ' ~ ' + formatDateShort(ms.endDate) + '</span>';
+        } else {
+            document.getElementById('msEditQaDateDisplay').innerHTML = '';
+        }
+
+        // 유형 변경 시 날짜 영역 토글
+        document.getElementById('msEditType').onchange = function() {
+            var qa = this.value === 'QA';
+            document.getElementById('msEditDateGroup').style.display = qa ? 'none' : '';
+            document.getElementById('msEditQaDateInfo').style.display = qa ? '' : 'none';
+        };
+
+        if (!_msEditModal) {
+            _msEditModal = new bootstrap.Modal(document.getElementById('msEditModal'));
+        }
+        _msEditModal.show();
+    } catch (e) { showToast('마일스톤 정보를 불러올 수 없습니다.', 'error'); }
+}
+
+async function _refreshMsRows(projectId) {
+    var btn = document.querySelector('.proj-ms-toggle[data-project-id="' + projectId + '"]');
+    if (btn) {
+        document.querySelectorAll('.ms-row-' + projectId).forEach(function(r) { r.remove(); });
+        btn.querySelector('i').className = 'bi bi-chevron-right';
+        await toggleProjectMilestones(projectId, btn);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 마일스톤 편집 모달 저장
+    document.getElementById('msEditSaveBtn').addEventListener('click', async function() {
+        var projectId = parseInt(document.getElementById('msEditProjectId').value);
+        var milestoneId = parseInt(document.getElementById('msEditMilestoneId').value);
+        var body = {
+            type: document.getElementById('msEditType').value || null,
+            name: document.getElementById('msEditName').value,
+            days: document.getElementById('msEditDays').value ? parseInt(document.getElementById('msEditDays').value) : null
+        };
+        if (body.type !== 'QA') {
+            body.startDate = document.getElementById('msEditStartDate').value || null;
+            body.endDate = document.getElementById('msEditEndDate').value || null;
+        }
+        try {
+            var res = await apiCall('/api/v1/projects/' + projectId + '/milestones/' + milestoneId, 'PUT', body);
+            if (res.success) {
+                showToast('마일스톤이 수정되었습니다.', 'success');
+                if (_msEditModal) _msEditModal.hide();
+                await _refreshMsRows(projectId);
+            }
+        } catch (e) { showToast('마일스톤 수정에 실패했습니다.', 'error'); }
+    });
+
+    // 마일스톤 편집 모달 삭제
+    document.getElementById('msEditDeleteBtn').addEventListener('click', async function() {
+        if (!confirmAction('이 마일스톤을 삭제하시겠습니까?')) return;
+        var projectId = parseInt(document.getElementById('msEditProjectId').value);
+        var milestoneId = parseInt(document.getElementById('msEditMilestoneId').value);
+        try {
+            var res = await apiCall('/api/v1/projects/' + projectId + '/milestones/' + milestoneId, 'DELETE');
+            if (res.success) {
+                showToast('마일스톤이 삭제되었습니다.', 'success');
+                if (_msEditModal) _msEditModal.hide();
+                await _refreshMsRows(projectId);
+            }
+        } catch (e) { showToast('마일스톤 삭제에 실패했습니다.', 'error'); }
+    });
+
+    // 프로젝트 멤버 모달 닫힐 때 프로젝트 목록의 멤버 수 갱신
+    var projMembersModalEl = document.getElementById('projectMembersModal');
+    if (projMembersModalEl) {
+        projMembersModalEl.addEventListener('hidden.bs.modal', async function() {
+            var pid = _projMembersModalProjectId;
+            if (!pid) return;
+            try {
+                var res = await apiCall('/api/v1/projects/' + pid);
+                if (res.success && res.data) {
+                    var newCount = res.data.memberCount != null ? res.data.memberCount : 0;
+                    var row = document.querySelector('#projects-table tr[data-project-id="' + pid + '"]');
+                    if (row) {
+                        var link = row.querySelector('a[onclick*="showProjectMembersModal"]');
+                        if (link) link.textContent = newCount + '명';
+                    }
+                }
+            } catch (e) { /* ignore */ }
+        });
+    }
+});
 
 async function loadProjects() {
     // 목록 뷰 표시, 상세 뷰 숨김
@@ -4246,10 +4364,10 @@ async function loadProjectMilestones() {
                 + '<input type="number" class="form-control form-control-sm" value="' + (ms.days != null ? ms.days : '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'days\', this.value ? parseInt(this.value) : null)" style="width:60px;" min="1" placeholder="' + (msCalcDays != null ? msCalcDays : '') + '">'
                 + (ms.days == null && msCalcDays != null ? '<small class="text-muted text-nowrap">' + msCalcDays + 'd</small>' : '')
                 + '</div></td>';
-            // 시작일 / 종료일: QA 유형이면 날짜 입력 대신 "-" 표시
+            // 시작일 / 종료일: QA 유형이면 계산된 날짜를 읽기 전용으로 표시
             if (ms.type === 'QA') {
-                html += '<td class="text-muted" style="font-size:0.8rem;">-</td>';
-                html += '<td class="text-muted" style="font-size:0.8rem;">-</td>';
+                html += '<td style="font-size:0.8rem;">' + (ms.startDate ? formatDateShort(ms.startDate) + ' <small class="text-muted">' + formatDayOnly(ms.startDate) + '</small>' : '-') + '</td>';
+                html += '<td style="font-size:0.8rem;">' + (ms.endDate ? formatDateShort(ms.endDate) + ' <small class="text-muted">' + formatDayOnly(ms.endDate) + '</small>' : '-') + '</td>';
             } else {
                 html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.startDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'startDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.startDate) + '</small></div></td>';
                 html += '<td><div class="d-flex align-items-center gap-1"><input type="date" class="form-control form-control-sm" value="' + (ms.endDate || '') + '" onchange="updateProjectMilestone(' + ms.id + ', \'endDate\', this.value)" style="width:140px;"><small class="text-muted text-nowrap">' + formatDayOnly(ms.endDate) + '</small></div></td>';
@@ -7220,11 +7338,11 @@ async function showJiraSpaceImportModal() {
     execBtn.disabled = false;
     execBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
     document.getElementById('jira-space-project-key').value = '';
-    document.getElementById('jira-space-created-after').value = '';
-    document.getElementById('jira-space-status-todo').checked = true;
+    document.getElementById('jira-space-updated-after').value = '';
+    document.getElementById('jira-space-status-todo').checked = false;
     document.getElementById('jira-space-status-inprogress').checked = false;
     document.getElementById('jira-space-status-done').checked = false;
-    document.getElementById('jira-space-status-all').checked = false;
+    document.getElementById('jira-space-status-all').checked = true;
 
     // 프로젝트 목록
     try {
@@ -7245,10 +7363,10 @@ async function startJiraSpacePreview() {
     var isEpic = document.getElementById('jira-space-source-epic').checked;
     var projectKey = document.getElementById('jira-space-project-key').value.trim();
     var epicKey = document.getElementById('jira-space-epic-key').value.trim();
-    var createdAfter = document.getElementById('jira-space-created-after').value;
+    var updatedAfter = document.getElementById('jira-space-updated-after').value;
     if (!isEpic && !projectKey) { showToast('Jira 프로젝트 키를 입력하세요.', 'warning'); return; }
     if (isEpic && !epicKey) { showToast('Epic 키를 입력하세요.', 'warning'); return; }
-    if (!createdAfter) { showToast('생성일자 필터를 입력하세요.', 'warning'); return; }
+    if (!updatedAfter) { showToast('수정일자 필터를 입력하세요.', 'warning'); return; }
 
     var statusFilter = [];
     if (!document.getElementById('jira-space-status-all').checked) {
@@ -7260,7 +7378,7 @@ async function startJiraSpacePreview() {
 
     try {
         var body = {
-            createdAfter: createdAfter,
+            updatedAfter: updatedAfter,
             statusFilter: statusFilter.length > 0 ? statusFilter : null
         };
         if (isEpic) body.jiraEpicKey = epicKey;
@@ -7350,7 +7468,7 @@ async function executeJiraSpaceImport() {
     var isEpic = document.getElementById('jira-space-source-epic').checked;
     var projectKey = document.getElementById('jira-space-project-key').value.trim();
     var epicKey = document.getElementById('jira-space-epic-key').value.trim();
-    var createdAfter = document.getElementById('jira-space-created-after').value;
+    var updatedAfter = document.getElementById('jira-space-updated-after').value;
     var defaultProjVal = document.getElementById('jira-space-default-project').value;
     var defaultProjectId = defaultProjVal ? parseInt(defaultProjVal) : null;
 
@@ -7373,7 +7491,7 @@ async function executeJiraSpaceImport() {
 
     try {
         var importBody = {
-            createdAfter: createdAfter,
+            updatedAfter: updatedAfter,
             statusFilter: statusFilter.length > 0 ? statusFilter : null,
             defaultProjectId: defaultProjectId,
             selectedKeys: selectedKeys,
@@ -7431,7 +7549,7 @@ function toggleJiraImportSource() {
 async function showJiraImportModal(projectId) {
     if (!projectId) return;
     jiraImportProjectId = projectId;
-    jiraPreviewCreatedAfter = null;
+    jiraPreviewUpdatedAfter = null;
     jiraPreviewStatusFilter = [];
     jiraPreviewBoardId = null;
 
@@ -7445,13 +7563,13 @@ async function showJiraImportModal(projectId) {
     execBtn.style.display = 'none';
     execBtn.disabled = false;
     execBtn.innerHTML = '<i class="bi bi-cloud-download"></i> 가져오기 실행';
-    document.getElementById('jira-filter-created-after').value = '';
+    document.getElementById('jira-filter-updated-after').value = '';
 
-    // 상태 필터 초기화: "To Do"만 체크
-    document.getElementById('jira-filter-status-todo').checked = true;
+    // 상태 필터 초기화: "전체" 체크
+    document.getElementById('jira-filter-status-todo').checked = false;
     document.getElementById('jira-filter-status-inprogress').checked = false;
     document.getElementById('jira-filter-status-done').checked = false;
-    document.getElementById('jira-filter-status-all').checked = false;
+    document.getElementById('jira-filter-status-all').checked = true;
 
     // 프로젝트 목록 로드 + 현재 프로젝트의 Board ID / Epic Key 기본값 세팅
     var currentBoardId = '';
@@ -7539,17 +7657,17 @@ async function startJiraPreview() {
     if (!jiraImportProjectId) return;
 
     // 필터 값 읽기
-    var createdAfterVal = document.getElementById('jira-filter-created-after').value;
+    var updatedAfterVal = document.getElementById('jira-filter-updated-after').value;
 
-    // 생성일자 필수 검증
-    if (!createdAfterVal) {
+    // 수정일자 필수 검증
+    if (!updatedAfterVal) {
         document.getElementById('jira-import-error-msg').style.display = '';
-        document.getElementById('jira-import-error-msg').textContent = '생성일자를 입력해주세요.';
+        document.getElementById('jira-import-error-msg').textContent = '수정일자를 입력해주세요.';
         return;
     }
     document.getElementById('jira-import-error-msg').style.display = 'none';
 
-    jiraPreviewCreatedAfter = createdAfterVal || null;
+    jiraPreviewUpdatedAfter = updatedAfterVal || null;
 
     // 상태 필터 값 읽기
     var statusFilter = [];
@@ -7594,7 +7712,7 @@ async function startJiraPreview() {
 
     try {
         var body = {};
-        if (jiraPreviewCreatedAfter) body.createdAfter = jiraPreviewCreatedAfter;
+        if (jiraPreviewUpdatedAfter) body.updatedAfter = jiraPreviewUpdatedAfter;
         if (jiraPreviewStatusFilter && jiraPreviewStatusFilter.length > 0) body.statusFilter = jiraPreviewStatusFilter;
         if (isEpicMode) body.jiraEpicKey = epicKeyVal;
         else if (boardIdVal) body.jiraBoardId = boardIdVal;
@@ -7689,8 +7807,8 @@ async function executeJiraImport() {
 
     try {
         var importBody = {};
-        if (jiraPreviewCreatedAfter) {
-            importBody.createdAfter = jiraPreviewCreatedAfter;
+        if (jiraPreviewUpdatedAfter) {
+            importBody.updatedAfter = jiraPreviewUpdatedAfter;
         }
         if (jiraPreviewStatusFilter && jiraPreviewStatusFilter.length > 0) {
             importBody.statusFilter = jiraPreviewStatusFilter;

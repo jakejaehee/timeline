@@ -82,7 +82,7 @@ public class JiraImportService {
         String boardId = resolveBoardId(
                 (request != null) ? request.getJiraBoardId() : null, project);
 
-        LocalDate createdAfter = (request != null) ? request.getCreatedAfter() : null;
+        LocalDate updatedAfter = (request != null) ? request.getUpdatedAfter() : null;
         List<String> statusFilter = (request != null) ? request.getStatusFilter() : null;
 
         // Story Points 필드 ID 동적 탐지
@@ -92,7 +92,7 @@ public class JiraImportService {
         // Jira 이슈 수집
         List<JiraDto.JiraIssue> issues = jiraApiClient.fetchAllBoardIssues(
                 config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                boardId, createdAfter, statusFilter, storyPointsFieldId);
+                boardId, updatedAfter, statusFilter, storyPointsFieldId);
 
         // 기존 태스크 jiraKey 맵 조회
         Map<String, Task> existingTaskMap = buildExistingTaskMap(projectId);
@@ -126,6 +126,7 @@ public class JiraImportService {
                     .jiraAssignee(issue.getAssigneeDisplayName())
                     .mappedAssigneeId(mappedMember != null ? mappedMember.getId() : null)
                     .mappedAssigneeName(mappedMember != null ? mappedMember.getName() : null)
+                    .storyPoints(issue.getStoryPoints())
                     .action(action)
                     .existingProjectId(existing != null && existing.getProject() != null ? existing.getProject().getId() : null)
                     .build());
@@ -158,11 +159,11 @@ public class JiraImportService {
         if (epicKey != null && !epicKey.isBlank()) {
             issues = jiraApiClient.fetchIssuesByEpicKey(
                     config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                    epicKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+                    epicKey, request.getUpdatedAfter(), request.getStatusFilter(), storyPointsFieldId);
         } else {
             issues = jiraApiClient.fetchIssuesByProjectKey(
                     config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                    projectKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+                    projectKey, request.getUpdatedAfter(), request.getStatusFilter(), storyPointsFieldId);
         }
 
         MemberMaps memberMaps = buildMemberMaps();
@@ -195,6 +196,7 @@ public class JiraImportService {
                     .jiraAssignee(issue.getAssigneeDisplayName())
                     .mappedAssigneeId(mappedMember != null ? mappedMember.getId() : null)
                     .mappedAssigneeName(mappedMember != null ? mappedMember.getName() : null)
+                    .storyPoints(issue.getStoryPoints())
                     .action(action)
                     .existingProjectId(existing != null && existing.getProject() != null ? existing.getProject().getId() : null)
                     .build());
@@ -231,11 +233,11 @@ public class JiraImportService {
         if (epicKey != null && !epicKey.isBlank()) {
             issues = jiraApiClient.fetchIssuesByEpicKey(
                     config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                    epicKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+                    epicKey, request.getUpdatedAfter(), request.getStatusFilter(), storyPointsFieldId);
         } else {
             issues = jiraApiClient.fetchIssuesByProjectKey(
                     config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                    projectKey, request.getCreatedAfter(), request.getStatusFilter(), storyPointsFieldId);
+                    projectKey, request.getUpdatedAfter(), request.getStatusFilter(), storyPointsFieldId);
         }
 
         List<String> selectedKeys = request.getSelectedKeys();
@@ -367,7 +369,7 @@ public class JiraImportService {
         String boardId = resolveBoardId(
                 (request != null) ? request.getJiraBoardId() : null, project);
 
-        LocalDate createdAfter = (request != null) ? request.getCreatedAfter() : null;
+        LocalDate updatedAfter = (request != null) ? request.getUpdatedAfter() : null;
         List<String> statusFilter = (request != null) ? request.getStatusFilter() : null;
         List<String> selectedKeys = (request != null) ? request.getSelectedKeys() : null;
         Map<String, Long> issueProjectMap = (request != null) ? request.getIssueProjectMap() : null;
@@ -381,7 +383,7 @@ public class JiraImportService {
         // Jira 이슈 수집
         List<JiraDto.JiraIssue> issues = jiraApiClient.fetchAllBoardIssues(
                 config.getBaseUrl(), config.getEmail(), config.getApiToken(),
-                boardId, createdAfter, statusFilter, storyPointsFieldId);
+                boardId, updatedAfter, statusFilter, storyPointsFieldId);
 
         // 프로젝트 캐시 (이슈별 프로젝트 지정 시)
         Map<Long, Project> projectCache = new HashMap<>();

@@ -4357,7 +4357,7 @@ async function loadProjectMilestones() {
             var typeOpts = _milestoneTypeOptions.replace('value="' + (ms.type || '') + '"', 'value="' + (ms.type || '') + '" selected');
             html += '<td><select class="form-select form-select-sm" onchange="updateProjectMilestone(' + ms.id + ', \'type\', this.value)" style="width:110px; font-size:0.8rem;">' + typeOpts + '</select></td>';
             // 이름
-            html += '<td><input type="text" class="form-control form-control-sm" value="' + escapeHtml(ms.name) + '" onchange="updateProjectMilestone(' + ms.id + ', \'name\', this.value)" style="width:200px;"></td>';
+            html += '<td><input type="text" class="form-control form-control-sm" value="' + escapeHtml(ms.name) + '" onchange="updateProjectMilestone(' + ms.id + ', \'name\', this.value)" style="width:300px;"></td>';
             // 일수: DB에 days가 있으면 그 값(편집 가능), 없으면 시작~종료 working days 자동 계산 표시
             var msCalcDays = (ms.startDate && ms.endDate) ? calcWorkingDays(ms.startDate, ms.endDate) : null;
             html += '<td><div class="d-flex align-items-center gap-1">'

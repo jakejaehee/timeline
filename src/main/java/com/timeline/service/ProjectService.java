@@ -39,6 +39,7 @@ public class ProjectService {
     private final TaskDependencyRepository taskDependencyRepository;
     private final TaskLinkRepository taskLinkRepository;
     private final ProjectLinkRepository projectLinkRepository;
+    private final ProjectNoteRepository projectNoteRepository;
     private final ProjectMilestoneRepository projectMilestoneRepository;
     private final BusinessDayCalculator bizDayCalc;
     private final HolidayService holidayService;
@@ -51,6 +52,13 @@ public class ProjectService {
      * - 멤버 수를 일괄 조회하여 N+1 쿼리 방지
      */
     public List<ProjectDto.Response> getAllProjects() {
+        // 메모 수를 한 번에 조회 (N+1 방지)
+        Map<Long, Long> noteCountMap = projectNoteRepository.countByProjectIdGrouped().stream()
+                .collect(Collectors.toMap(
+                        row -> (Long) row[0],
+                        row -> (Long) row[1]
+                ));
+
         // 멤버 수를 한 번에 조회 (N+1 방지)
         Map<Long, Long> memberCountMap = projectMemberRepository.countByProjectIdGrouped().stream()
                 .collect(Collectors.toMap(
@@ -115,7 +123,9 @@ public class ProjectService {
                     List<java.util.Map<String, Object>> beMembers = beMembersMap.getOrDefault(project.getId(), java.util.List.of());
                     List<SquadDto.Response> squads = squadsMap.getOrDefault(project.getId(), java.util.List.of());
                     List<java.util.Map<String, Object>> allMembersList = allMembersMap.getOrDefault(project.getId(), java.util.List.of());
-                    return ProjectDto.Response.from(project, memberCount, expectedEndDate, totalManDays, beCount, estimatedDays, beMembers, squads, allMembersList);
+                    var response = ProjectDto.Response.from(project, memberCount, expectedEndDate, totalManDays, beCount, estimatedDays, beMembers, squads, allMembersList);
+                    response.setNoteCount(noteCountMap.getOrDefault(project.getId(), 0L).intValue());
+                    return response;
                 })
                 .collect(Collectors.toList());
     }
@@ -226,6 +236,7 @@ public class ProjectService {
         projectSquadRepository.deleteByProjectId(id);
         projectMilestoneRepository.deleteByProjectId(id);
         projectLinkRepository.deleteByProjectId(id);
+        projectNoteRepository.deleteByProjectId(id);
         projectRepository.delete(project);
         log.info("프로젝트 삭제 완료: id={}, name={}", id, project.getName());
     }

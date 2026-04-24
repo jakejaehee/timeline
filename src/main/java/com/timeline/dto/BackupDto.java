@@ -31,6 +31,7 @@ public class BackupDto {
         private List<ProjectMemberRow> projectMembers;
         private List<ProjectSquadRow> projectSquads;
         private List<ProjectLinkRow> projectLinks;
+        private List<ProjectNoteRow> projectNotes;
         private List<HolidayRow> holidays;
         private List<TaskRow> tasks;
         private List<TaskLinkRow> taskLinks;
@@ -129,6 +130,15 @@ public class BackupDto {
         private String url;
         private String label;
         private LocalDateTime createdAt;
+    }
+
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class ProjectNoteRow {
+        private Long id;
+        private Long projectId;
+        private String content;
+        private LocalDateTime createdAt;
+        private LocalDateTime updatedAt;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor

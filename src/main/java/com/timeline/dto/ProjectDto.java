@@ -67,6 +67,7 @@ public class ProjectDto {
         private Boolean ktlo;
         private List<MemberDto.Response> members;
         private List<SquadDto.Response> squads;
+        private Integer noteCount;
 
         public static Response from(Project project) {
             return Response.builder()

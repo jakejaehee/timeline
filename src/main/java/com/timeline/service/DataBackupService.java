@@ -33,6 +33,7 @@ public class DataBackupService {
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectSquadRepository projectSquadRepository;
     private final ProjectLinkRepository projectLinkRepository;
+    private final ProjectNoteRepository projectNoteRepository;
     private final HolidayRepository holidayRepository;
     private final TaskRepository taskRepository;
     private final TaskLinkRepository taskLinkRepository;
@@ -62,6 +63,7 @@ public class DataBackupService {
                 .projectMembers(projectMemberRepository.findAll().stream().map(this::toProjectMemberRow).collect(Collectors.toList()))
                 .projectSquads(projectSquadRepository.findAll().stream().map(this::toProjectSquadRow).collect(Collectors.toList()))
                 .projectLinks(projectLinkRepository.findAll().stream().map(this::toProjectLinkRow).collect(Collectors.toList()))
+                .projectNotes(projectNoteRepository.findAll().stream().map(this::toProjectNoteRow).collect(Collectors.toList()))
                 .holidays(holidayRepository.findAll().stream().map(this::toHolidayRow).collect(Collectors.toList()))
                 .tasks(taskRepository.findAll().stream().map(this::toTaskRow).collect(Collectors.toList()))
                 .taskLinks(taskLinkRepository.findAll().stream().map(this::toTaskLinkRow).collect(Collectors.toList()))
@@ -105,6 +107,7 @@ public class DataBackupService {
         totalRows += insertProjectMembers(safe(snapshot.getProjectMembers())); totalTables++;
         totalRows += insertProjectSquads(safe(snapshot.getProjectSquads())); totalTables++;
         totalRows += insertProjectLinks(safe(snapshot.getProjectLinks())); totalTables++;
+        totalRows += insertProjectNotes(safe(snapshot.getProjectNotes())); totalTables++;
         totalRows += insertTasks(safe(snapshot.getTasks())); totalTables++;
         totalRows += insertTaskLinks(safe(snapshot.getTaskLinks())); totalTables++;
         totalRows += insertTaskDependencies(safe(snapshot.getTaskDependencies())); totalTables++;
@@ -148,6 +151,7 @@ public class DataBackupService {
         taskLinkRepository.deleteAllInBatch();
         taskRepository.deleteAllInBatch();
         projectLinkRepository.deleteAllInBatch();
+        projectNoteRepository.deleteAllInBatch();
         projectMilestoneRepository.deleteAllInBatch();
         projectMemberRepository.deleteAllInBatch();
         projectSquadRepository.deleteAllInBatch();
@@ -283,6 +287,16 @@ public class DataBackupService {
         return rows.size();
     }
 
+    private int insertProjectNotes(List<BackupDto.ProjectNoteRow> rows) {
+        for (var r : rows) {
+            em.createNativeQuery("INSERT INTO project_note (id, project_id, content, created_at, updated_at) VALUES (:id, :projectId, :content, :createdAt, :updatedAt)")
+                    .setParameter("id", r.getId()).setParameter("projectId", r.getProjectId())
+                    .setParameter("content", r.getContent()).setParameter("createdAt", r.getCreatedAt())
+                    .setParameter("updatedAt", r.getUpdatedAt()).executeUpdate();
+        }
+        return rows.size();
+    }
+
     private int insertHolidays(List<BackupDto.HolidayRow> rows) {
         for (var r : rows) {
             em.createNativeQuery("INSERT INTO holiday (id, date, name, type, created_at, updated_at) VALUES (:id, :date, :name, :type, :createdAt, :updatedAt)")
@@ -367,7 +381,7 @@ public class DataBackupService {
     private void resetSequences() {
         String[] tables = {
                 "member", "squad", "squad_member", "project", "project_milestone",
-                "project_member", "project_squad", "project_link", "holiday",
+                "project_member", "project_squad", "project_link", "project_note", "holiday",
                 "task", "task_link", "task_dependency", "member_leave",
                 "jira_config", "google_drive_config"
         };
@@ -434,6 +448,11 @@ public class DataBackupService {
     private BackupDto.ProjectLinkRow toProjectLinkRow(ProjectLink pl) {
         return BackupDto.ProjectLinkRow.builder().id(pl.getId()).projectId(pl.getProject().getId())
                 .url(pl.getUrl()).label(pl.getLabel()).createdAt(pl.getCreatedAt()).build();
+    }
+
+    private BackupDto.ProjectNoteRow toProjectNoteRow(ProjectNote pn) {
+        return BackupDto.ProjectNoteRow.builder().id(pn.getId()).projectId(pn.getProject().getId())
+                .content(pn.getContent()).createdAt(pn.getCreatedAt()).updatedAt(pn.getUpdatedAt()).build();
     }
 
     private BackupDto.HolidayRow toHolidayRow(Holiday h) {

@@ -1410,7 +1410,7 @@ function renderProjectsTable(projects) {
     var filtered = applyProjectListStatusFilter(projects);
 
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="14" class="text-center text-muted">해당 상태의 프로젝트가 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="17" class="text-center text-muted">해당 상태의 프로젝트가 없습니다.</td></tr>';
         updateProjSortIcons();
         return;
     }
@@ -1449,7 +1449,16 @@ function renderProjectsTable(projects) {
         html += '<td class="proj-drag-handle" style="cursor:grab; text-align:center; color:#adb5bd; padding:4px;"><i class="bi bi-grip-vertical"></i></td>';
         var descTooltip = p.description ? ' data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-custom-class="tooltip-left-align" title="' + escapeHtml(p.description).replace(/\n/g, '<br>') + '"' : '';
         html += '<td class="text-center" style="padding:4px;"><button class="btn btn-sm p-0 border-0 text-info" onclick="showProjectLinksPopup(' + p.id + ', this, event)" title="링크"><i class="bi bi-link-45deg"></i></button></td>';
+        var noteCountVal = p.noteCount || 0;
+        var noteBadge = noteCountVal > 0 ? '<span class="badge bg-warning text-dark" style="font-size:0.6rem; position:absolute; top:-4px; right:-6px; padding:1px 3px; line-height:1;">' + noteCountVal + '</span>' : '';
+        html += '<td class="text-center" style="padding:4px;"><button class="btn btn-sm p-0 border-0 text-warning position-relative" onclick="showProjectNotesPopup(' + p.id + ', this, event)" title="메모"><i class="bi bi-chat-left-text"></i>' + noteBadge + '</button></td>';
         html += '<td class="cursor-pointer" onclick="showProjectDetail(' + p.id + ')"' + descTooltip + '><strong>' + escapeHtml(p.name) + '</strong></td>';
+        var mdVal = p.totalManDays != null && p.totalManDays > 0 ? p.totalManDays : '-';
+        html += '<td style="font-size:0.85rem; text-align:center;">' + mdVal + '</td>';
+        var estDays = p.estimatedDays != null && p.estimatedDays > 0 ? p.estimatedDays : '-';
+        html += '<td style="font-size:0.85rem; text-align:center;">' + estDays + '</td>';
+        html += '<td>' + formatDateShort(p.startDate) + '</td>';
+        html += '<td>' + formatDateShort(p.endDate) + '</td>';
         var squadNames = (p.squads && p.squads.length > 0) ? p.squads.map(function(s) { return escapeHtml(s.name); }).join(', ') : '-';
         html += '<td style="font-size:0.8rem;">' + squadNames + '</td>';
         var memberTooltip = '';
@@ -1457,12 +1466,6 @@ function renderProjectsTable(projects) {
             memberTooltip = ' data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-html="true" title="' + p.allMembers.map(function(m) { return escapeHtml(m.name) + '(' + m.role + ')'; }).join(', ') + '"';
         }
         html += '<td' + memberTooltip + '><a href="javascript:void(0)" onclick="event.stopPropagation(); showProjectMembersModal(' + p.id + ', \'' + escapeJsString(escapeHtml(p.name)) + '\')" style="text-decoration:none;">' + memberCount + '명</a></td>';
-        var mdVal = p.totalManDays != null && p.totalManDays > 0 ? p.totalManDays : '-';
-        html += '<td style="font-size:0.85rem; text-align:center;">' + mdVal + '</td>';
-        var estDays = p.estimatedDays != null && p.estimatedDays > 0 ? p.estimatedDays : '-';
-        html += '<td style="font-size:0.85rem; text-align:center;">' + estDays + '</td>';
-        html += '<td>' + formatDateShort(p.startDate) + '</td>';
-        html += '<td>' + formatDateShort(p.endDate) + '</td>';
         html += '<td style="font-size:0.8rem;">' + escapeHtml(p.pplName || '-') + '</td>';
         html += '<td style="font-size:0.8rem;">' + escapeHtml(p.quarter || '-') + '</td>';
         html += '<td>' + statusBadge(p.status) + '</td>';
@@ -1612,9 +1615,9 @@ async function toggleProjectMilestones(projectId, btn) {
             return;
         }
         // 역순으로 insert (after이므로 마지막 것이 가장 위에)
-        // 헤더 순서: [체크] [토글] [드래그] [링크] | 프로젝트명 | 멤버 | BE | MD | 소요일 | 시작일 | 론치일 | PPL | 분기 | 유형 | 상태 | 지연 | 액션
-        // 마일스톤:  [빈4칸]                       | 유형+이름  | -   | -  | -  | 일수   | 시작일 | 종료일 | [나머지 pad]
-        var msPadCols = colCount - 11; // 11 = 4(빈) + 이름 + 멤버 + BE + MD + 소요일 + 시작일 + 론치일
+        // 헤더 순서: [체크] [토글] [드래그] [링크] [메모] | 프로젝트명 | MD | 소요일 | 시작일 | 론치일 | 스쿼드 | 멤버 | PPL | 분기 | 상태 | 지연 | 액션
+        // 마일스톤:  [빈5칸]                              | 유형+이름  | 일수 | 시작일 | 종료일 | [나머지 pad]
+        var msPadCols = colCount - 11; // 11 = 5(빈) + 이름 + 2(빈) + 소요일 + 시작일 + 종료일
         for (var i = milestones.length - 1; i >= 0; i--) {
             var ms = milestones[i];
             var msRow = document.createElement('tr');
@@ -1634,9 +1637,9 @@ async function toggleProjectMilestones(projectId, btn) {
             // 시작일 / 종료일 표시
             var startDisplay = ms.startDate ? formatDateShort(ms.startDate) + ' <small class="text-muted">' + formatDayOnly(ms.startDate) + '</small>' : '-';
             var endDisplay = ms.endDate ? formatDateShort(ms.endDate) + ' <small class="text-muted">' + formatDayOnly(ms.endDate) + '</small>' : '-';
-            msRow.innerHTML = '<td></td><td></td><td></td><td></td>'
+            msRow.innerHTML = '<td></td><td></td><td></td><td></td><td></td>'
                 + '<td style="padding-left:8px;">' + nameLink + '</td>'
-                + '<td></td><td></td><td></td>'
+                + '<td></td><td></td>'
                 + '<td style="text-align:center;">' + msEstDays + '</td>'
                 + '<td>' + startDisplay + '</td>'
                 + '<td>' + endDisplay + '</td>'
@@ -2666,6 +2669,8 @@ async function deleteProjectLink(projectId, linkId) {
 
 async function showProjectLinksPopup(projectId, btn, event) {
     event.stopPropagation();
+    var existingNotes = document.querySelector('.project-notes-popover');
+    if (existingNotes) existingNotes.remove();
     var existing = document.querySelector('.project-links-popover');
     if (existing) {
         var isSameBtn = existing._triggerBtn === btn;
@@ -2775,6 +2780,137 @@ async function deleteLinksPopupLink(btn, linkId) {
     var projectId = popover._projectId;
     await apiCall('/api/v1/projects/' + projectId + '/links/' + linkId, 'DELETE');
     await renderLinksPopoverContent(popover);
+}
+
+// ---- 프로젝트 메모 ----
+
+function formatNoteDateTime(dateStr) {
+    if (!dateStr) return '-';
+    var d = new Date(dateStr);
+    var mm = String(d.getMonth() + 1).padStart(2, '0');
+    var dd = String(d.getDate()).padStart(2, '0');
+    var hh = String(d.getHours()).padStart(2, '0');
+    var mi = String(d.getMinutes()).padStart(2, '0');
+    return mm + '/' + dd + ' ' + hh + ':' + mi;
+}
+
+async function showProjectNotesPopup(projectId, btn, event) {
+    event.stopPropagation();
+    var existingLinks = document.querySelector('.project-links-popover');
+    if (existingLinks) existingLinks.remove();
+
+    var existing = document.querySelector('.project-notes-popover');
+    if (existing) {
+        var isSameBtn = existing._triggerBtn === btn;
+        existing.remove();
+        if (isSameBtn) return;
+    }
+
+    var popover = document.createElement('div');
+    popover.className = 'project-notes-popover';
+    popover.style.cssText = 'position:absolute; z-index:1050; background:#fff; border:1px solid #dee2e6; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); min-width:480px; max-width:560px; font-size:0.85rem;';
+    popover._triggerBtn = btn;
+    popover._projectId = projectId;
+    popover.innerHTML = '<div class="text-center text-muted p-2">로딩 중...</div>';
+    document.body.appendChild(popover);
+
+    var rect = btn.getBoundingClientRect();
+    popover.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+    popover.style.left = (rect.left + window.scrollX - 200) + 'px';
+
+    await renderNotesPopoverContent(popover);
+}
+
+async function renderNotesPopoverContent(popover) {
+    var projectId = popover._projectId;
+    var res = await apiCall('/api/v1/projects/' + projectId + '/notes');
+    var notes = (res.success && res.data) ? res.data : [];
+
+    var html = '<div class="p-2 border-bottom bg-light d-flex align-items-center" style="border-radius:6px 6px 0 0;">';
+    html += '<strong class="me-auto">메모</strong>';
+    html += '<button class="btn btn-sm p-0 border-0 text-primary" onclick="event.stopPropagation(); toggleNotesPopupAddForm(this)" title="추가"><i class="bi bi-plus-lg"></i></button>';
+    html += '</div>';
+
+    html += '<div class="notes-popup-add-form p-2 border-bottom" style="display:none;">';
+    html += '<textarea class="form-control form-control-sm mb-1 notes-popup-content" placeholder="메모 내용을 입력하세요..." rows="5" maxlength="2000" style="font-size:0.8rem;"></textarea>';
+    html += '<button class="btn btn-primary btn-sm w-100" style="font-size:0.8rem;" onclick="event.stopPropagation(); saveNotesPopupNote(this)">추가</button>';
+    html += '</div>';
+
+    html += '<div class="notes-popup-list" style="max-height:400px; overflow-y:auto;">';
+    if (notes.length === 0) {
+        html += '<div class="text-center text-muted p-2">메모가 없습니다.</div>';
+    } else {
+        notes.forEach(function(n) {
+            var dateStr = n.updatedAt ? formatNoteDateTime(n.updatedAt) : formatNoteDateTime(n.createdAt);
+            html += '<div class="px-2 py-1 border-bottom notes-popup-item" data-note-id="' + n.id + '">';
+            html += '<div class="d-flex align-items-start">';
+            html += '<div class="flex-grow-1" style="font-size:0.82rem; white-space:pre-wrap; word-break:break-word;">' + escapeHtml(n.content) + '</div>';
+            html += '<div class="d-flex ms-1" style="gap:2px; flex-shrink:0;">';
+            html += '<button class="btn btn-sm p-0 border-0 text-secondary" onclick="event.stopPropagation(); editNotesPopupNote(this,' + n.id + ')" title="수정"><i class="bi bi-pencil" style="font-size:0.7rem;"></i></button>';
+            html += '<button class="btn btn-sm p-0 border-0 text-danger" onclick="event.stopPropagation(); deleteNotesPopupNote(this,' + n.id + ')" title="삭제"><i class="bi bi-x-lg" style="font-size:0.7rem;"></i></button>';
+            html += '</div>';
+            html += '</div>';
+            html += '<div class="text-muted" style="font-size:0.7rem;">' + dateStr + '</div>';
+            html += '</div>';
+        });
+    }
+    html += '</div>';
+    popover.innerHTML = html;
+}
+
+function toggleNotesPopupAddForm(btn) {
+    var popover = btn.closest('.project-notes-popover');
+    var form = popover.querySelector('.notes-popup-add-form');
+    form.style.display = form.style.display === 'none' ? '' : 'none';
+    if (form.style.display !== 'none') {
+        popover._editNoteId = null;
+        var textarea = form.querySelector('.notes-popup-content');
+        textarea.value = '';
+        var saveBtn = form.querySelector('.btn-primary');
+        saveBtn.textContent = '추가';
+        textarea.focus();
+    }
+}
+
+async function saveNotesPopupNote(btn) {
+    var popover = btn.closest('.project-notes-popover');
+    var content = popover.querySelector('.notes-popup-content').value.trim();
+    if (!content) { showToast('메모 내용을 입력하세요.', 'warning'); return; }
+    var projectId = popover._projectId;
+    var editId = popover._editNoteId;
+
+    if (editId) {
+        await apiCall('/api/v1/projects/' + projectId + '/notes/' + editId, 'PUT', { content: content });
+        popover._editNoteId = null;
+    } else {
+        await apiCall('/api/v1/projects/' + projectId + '/notes', 'POST', { content: content });
+    }
+    await renderNotesPopoverContent(popover);
+    loadProjects();
+}
+
+function editNotesPopupNote(btn, noteId) {
+    var popover = btn.closest('.project-notes-popover');
+    var item = btn.closest('.notes-popup-item');
+    var contentDiv = item.querySelector('.flex-grow-1');
+    var currentContent = contentDiv.textContent;
+
+    var form = popover.querySelector('.notes-popup-add-form');
+    form.style.display = '';
+    var textarea = popover.querySelector('.notes-popup-content');
+    textarea.value = currentContent;
+    popover._editNoteId = noteId;
+    var saveBtn = form.querySelector('.btn-primary');
+    saveBtn.textContent = '수정';
+    textarea.focus();
+}
+
+async function deleteNotesPopupNote(btn, noteId) {
+    var popover = btn.closest('.project-notes-popover');
+    var projectId = popover._projectId;
+    await apiCall('/api/v1/projects/' + projectId + '/notes/' + noteId, 'DELETE');
+    await renderNotesPopoverContent(popover);
+    loadProjects();
 }
 
 // ---- 프로젝트 멤버 ----

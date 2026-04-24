@@ -1,7 +1,9 @@
 package com.timeline.controller;
 
 import com.timeline.domain.entity.ProjectLink;
+import com.timeline.domain.entity.ProjectNote;
 import com.timeline.domain.repository.ProjectLinkRepository;
+import com.timeline.domain.repository.ProjectNoteRepository;
 import com.timeline.domain.repository.ProjectRepository;
 import com.timeline.dto.ProjectDto;
 import com.timeline.service.ProjectService;
@@ -26,6 +28,7 @@ public class ProjectController {
 
     private final ProjectRepository projectRepository;
     private final ProjectLinkRepository projectLinkRepository;
+    private final ProjectNoteRepository projectNoteRepository;
 
     private final ProjectService projectService;
     private final ScheduleCalculationService scheduleCalculationService;
@@ -240,5 +243,63 @@ public class ProjectController {
                                                 @PathVariable Long linkId) {
         projectLinkRepository.deleteById(linkId);
         return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    // ---- 프로젝트 메모 ----
+
+    @GetMapping("/{id}/notes")
+    public ResponseEntity<?> getProjectNotes(@PathVariable Long id) {
+        var notes = projectNoteRepository.findByProjectIdOrderByCreatedAtDesc(id);
+        var data = notes.stream().map(n -> {
+            var map = new java.util.LinkedHashMap<String, Object>();
+            map.put("id", n.getId());
+            map.put("content", n.getContent());
+            map.put("createdAt", n.getCreatedAt());
+            map.put("updatedAt", n.getUpdatedAt() != null ? n.getUpdatedAt() : n.getCreatedAt());
+            return map;
+        }).toList();
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    @PostMapping("/{id}/notes")
+    public ResponseEntity<?> addProjectNote(@PathVariable Long id,
+                                             @RequestBody Map<String, String> body) {
+        var content = validateNoteContent(body.get("content"));
+        var project = projectRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("프로젝트를 찾을 수 없습니다."));
+        var note = ProjectNote.builder()
+                .project(project)
+                .content(content)
+                .build();
+        projectNoteRepository.save(note);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @PutMapping("/{id}/notes/{noteId}")
+    public ResponseEntity<?> updateProjectNote(@PathVariable Long id,
+                                                @PathVariable Long noteId,
+                                                @RequestBody Map<String, String> body) {
+        var note = projectNoteRepository.findById(noteId)
+                .orElseThrow(() -> new EntityNotFoundException("메모를 찾을 수 없습니다."));
+        note.setContent(validateNoteContent(body.get("content")));
+        projectNoteRepository.save(note);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @DeleteMapping("/{id}/notes/{noteId}")
+    public ResponseEntity<?> deleteProjectNote(@PathVariable Long id,
+                                                @PathVariable Long noteId) {
+        projectNoteRepository.deleteById(noteId);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    private String validateNoteContent(String content) {
+        if (content == null || content.isBlank()) {
+            throw new IllegalArgumentException("메모 내용을 입력하세요.");
+        }
+        if (content.length() > 2000) {
+            throw new IllegalArgumentException("메모는 2000자를 초과할 수 없습니다.");
+        }
+        return content;
     }
 }

@@ -41,6 +41,8 @@ public class DataBackupService {
     private final MemberLeaveRepository memberLeaveRepository;
     private final JiraConfigRepository jiraConfigRepository;
     private final GoogleDriveConfigRepository googleDriveConfigRepository;
+    private final SidebarLinkRepository sidebarLinkRepository;
+    private final SidebarMemoRepository sidebarMemoRepository;
 
     @PersistenceContext
     private EntityManager em;
@@ -71,6 +73,8 @@ public class DataBackupService {
                 .memberLeaves(memberLeaveRepository.findAll().stream().map(this::toMemberLeaveRow).collect(Collectors.toList()))
                 .jiraConfigs(jiraConfigRepository.findAll().stream().map(this::toJiraConfigRow).collect(Collectors.toList()))
                 .googleDriveConfigs(googleDriveConfigRepository.findAll().stream().map(this::toGoogleDriveConfigRow).collect(Collectors.toList()))
+                .sidebarLinks(sidebarLinkRepository.findAll().stream().map(this::toSidebarLinkRow).collect(Collectors.toList()))
+                .sidebarMemos(sidebarMemoRepository.findAll().stream().map(this::toSidebarMemoRow).collect(Collectors.toList()))
                 .build();
 
         log.info("데이터 Export 완료: members={}, projects={}, tasks={}",
@@ -114,6 +118,8 @@ public class DataBackupService {
         totalRows += insertMemberLeaves(safe(snapshot.getMemberLeaves())); totalTables++;
         totalRows += insertJiraConfigs(safe(snapshot.getJiraConfigs())); totalTables++;
         totalRows += insertGoogleDriveConfigs(safe(snapshot.getGoogleDriveConfigs())); totalTables++;
+        totalRows += insertSidebarLinks(safe(snapshot.getSidebarLinks())); totalTables++;
+        totalRows += insertSidebarMemos(safe(snapshot.getSidebarMemos())); totalTables++;
 
         em.flush();
         em.clear();
@@ -161,6 +167,8 @@ public class DataBackupService {
         squadRepository.deleteAllInBatch();
         holidayRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();
+        sidebarLinkRepository.deleteAllInBatch();
+        sidebarMemoRepository.deleteAllInBatch();
         jiraConfigRepository.deleteAllInBatch();
         googleDriveConfigRepository.deleteAllInBatch();
         em.flush();
@@ -383,7 +391,7 @@ public class DataBackupService {
                 "member", "squad", "squad_member", "project", "project_milestone",
                 "project_member", "project_squad", "project_link", "project_note", "holiday",
                 "task", "task_link", "task_dependency", "member_leave",
-                "jira_config", "google_drive_config"
+                "jira_config", "google_drive_config", "sidebar_link", "sidebar_memo"
         };
         for (String table : tables) {
             try {
@@ -502,6 +510,39 @@ public class DataBackupService {
         return BackupDto.GoogleDriveConfigRow.builder().id(gc.getId()).clientId(gc.getClientId())
                 .clientSecret(gc.getClientSecret()).refreshToken(gc.getRefreshToken()).folderId(gc.getFolderId())
                 .createdAt(gc.getCreatedAt()).updatedAt(gc.getUpdatedAt()).build();
+    }
+
+    private BackupDto.SidebarMemoRow toSidebarMemoRow(SidebarMemo sm) {
+        return BackupDto.SidebarMemoRow.builder().id(sm.getId())
+                .content(sm.getContent()).createdAt(sm.getCreatedAt()).updatedAt(sm.getUpdatedAt()).build();
+    }
+
+    private BackupDto.SidebarLinkRow toSidebarLinkRow(SidebarLink sl) {
+        return BackupDto.SidebarLinkRow.builder().id(sl.getId()).label(sl.getLabel())
+                .url(sl.getUrl()).icon(sl.getIcon()).sortOrder(sl.getSortOrder())
+                .createdAt(sl.getCreatedAt()).updatedAt(sl.getUpdatedAt()).build();
+    }
+
+    private int insertSidebarLinks(List<BackupDto.SidebarLinkRow> rows) {
+        for (var r : rows) {
+            em.createNativeQuery("INSERT INTO sidebar_link (id, label, url, icon, sort_order, created_at, updated_at) VALUES (:id, :label, :url, :icon, :sortOrder, :createdAt, :updatedAt)")
+                    .setParameter("id", r.getId()).setParameter("label", r.getLabel())
+                    .setParameter("url", r.getUrl()).setParameter("icon", r.getIcon())
+                    .setParameter("sortOrder", r.getSortOrder())
+                    .setParameter("createdAt", r.getCreatedAt()).setParameter("updatedAt", r.getUpdatedAt())
+                    .executeUpdate();
+        }
+        return rows.size();
+    }
+
+    private int insertSidebarMemos(List<BackupDto.SidebarMemoRow> rows) {
+        for (var r : rows) {
+            em.createNativeQuery("INSERT INTO sidebar_memo (id, content, created_at, updated_at) VALUES (:id, :content, :createdAt, :updatedAt)")
+                    .setParameter("id", r.getId()).setParameter("content", r.getContent())
+                    .setParameter("createdAt", r.getCreatedAt()).setParameter("updatedAt", r.getUpdatedAt())
+                    .executeUpdate();
+        }
+        return rows.size();
     }
 
     private <T> List<T> safe(List<T> list) {

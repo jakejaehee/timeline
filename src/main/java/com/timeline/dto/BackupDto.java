@@ -39,6 +39,8 @@ public class BackupDto {
         private List<MemberLeaveRow> memberLeaves;
         private List<JiraConfigRow> jiraConfigs;
         private List<GoogleDriveConfigRow> googleDriveConfigs;
+        private List<SidebarLinkRow> sidebarLinks;
+        private List<SidebarMemoRow> sidebarMemos;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
@@ -218,6 +220,25 @@ public class BackupDto {
         private String clientSecret;
         private String refreshToken;
         private String folderId;
+        private LocalDateTime createdAt;
+        private LocalDateTime updatedAt;
+    }
+
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class SidebarLinkRow {
+        private Long id;
+        private String label;
+        private String url;
+        private String icon;
+        private Integer sortOrder;
+        private LocalDateTime createdAt;
+        private LocalDateTime updatedAt;
+    }
+
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class SidebarMemoRow {
+        private Long id;
+        private String content;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
     }

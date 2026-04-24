@@ -1046,6 +1046,29 @@ body.sidebar-collapsed #main-content {
     color: #6c757d;
 }
 
+/* ---- 사이드바 커스텀 링크 ---- */
+.sidebar-custom-link:hover {
+    color: #fff !important;
+    background-color: rgba(255,255,255,0.08);
+}
+#sidebar.collapsed .sidebar-custom-link {
+    padding: 10px 0 !important;
+    justify-content: center;
+}
+
+/* ---- 사이드바 메모 ---- */
+.sidebar-memo-btn:hover {
+    color: #fff !important;
+    background-color: rgba(255,255,255,0.08);
+}
+#sidebar.collapsed .sidebar-memo-btn {
+    padding: 10px 0 !important;
+    justify-content: center;
+}
+#sidebar.collapsed #sidebar-memo-area {
+    padding: 8px 0 !important;
+}
+
 /* ---- flatpickr 비활성 날짜 스타일 ---- */
 .flatpickr-day.flatpickr-disabled,
 .flatpickr-day.flatpickr-disabled:hover {

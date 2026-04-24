@@ -2829,6 +2829,7 @@ async function renderNotesPopoverContent(popover) {
     var html = '<div class="p-2 border-bottom bg-light d-flex align-items-center" style="border-radius:6px 6px 0 0;">';
     html += '<strong class="me-auto">메모</strong>';
     html += '<button class="btn btn-sm p-0 border-0 text-primary" onclick="event.stopPropagation(); toggleNotesPopupAddForm(this)" title="추가"><i class="bi bi-plus-lg"></i></button>';
+    html += '<button class="btn btn-sm p-0 border-0 text-secondary ms-1" onclick="event.stopPropagation(); this.closest(\'.project-notes-popover\').remove()" title="닫기"><i class="bi bi-x-lg"></i></button>';
     html += '</div>';
 
     html += '<div class="notes-popup-add-form p-2 border-bottom" style="display:none;">';
@@ -8437,6 +8438,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 case '#settings-jira':
                     loadJiraConfig();
                     break;
+                case '#settings-sidebar-links':
+                    loadSidebarLinksSettings();
+                    break;
             }
         });
     }
@@ -8447,6 +8451,9 @@ document.addEventListener('DOMContentLoaded', function() {
             updateWarningBadges(res.data);
         }
     }).catch(function() {});
+
+    // 사이드바 커스텀 링크 로드
+    loadSidebarLinks();
 
     // Jira 설정 로드 (cachedJiraBaseUrl 초기화 - 태스크 링크 렌더링용)
     apiCall('/api/v1/jira/config').then(function(res) {
@@ -8673,4 +8680,267 @@ function renderScheduleCalcResult(data) {
             customClass: 'be-warning-tooltip'
         });
     });
+}
+
+// ========================================
+// 사이드바 커스텀 링크
+// ========================================
+
+async function loadSidebarLinks() {
+    var container = document.getElementById('sidebar-custom-links');
+    if (!container) return;
+    try {
+        var res = await apiCall('/api/v1/sidebar-links');
+        var links = (res.success && res.data) ? res.data : [];
+        if (links.length === 0) {
+            container.innerHTML = '';
+            container.style.display = 'none';
+            return;
+        }
+        container.style.display = '';
+        var html = '';
+        links.forEach(function(l) {
+            var iconClass = l.icon || 'bi-link-45deg';
+            html += '<a href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer" class="nav-link sidebar-custom-link" title="' + escapeHtml(l.label) + '" style="padding:8px 15px; color:#adb5bd; text-decoration:none; display:flex; align-items:center; margin:1px 8px; border-radius:6px; font-size:0.9rem; transition:all 0.2s;">';
+            html += '<i class="bi ' + escapeHtml(iconClass) + '"></i>';
+            html += '<span class="sidebar-label"> ' + escapeHtml(l.label) + '</span>';
+            html += '</a>';
+        });
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = '';
+    }
+}
+
+async function loadSidebarLinksSettings() {
+    var tbody = document.getElementById('sidebar-links-table');
+    if (!tbody) return;
+    try {
+        var res = await apiCall('/api/v1/sidebar-links');
+        var links = (res.success && res.data) ? res.data : [];
+        if (links.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">등록된 링크가 없습니다.</td></tr>';
+            return;
+        }
+        var html = '';
+        links.forEach(function(l, idx) {
+            html += '<tr>';
+            html += '<td class="text-center">';
+            if (idx > 0) html += '<button class="btn btn-sm p-0 border-0 text-muted" onclick="moveSidebarLink(' + l.id + ', \'up\')" title="위로"><i class="bi bi-chevron-up"></i></button>';
+            if (idx < links.length - 1) html += '<button class="btn btn-sm p-0 border-0 text-muted" onclick="moveSidebarLink(' + l.id + ', \'down\')" title="아래로"><i class="bi bi-chevron-down"></i></button>';
+            html += '</td>';
+            html += '<td>' + escapeHtml(l.label) + '</td>';
+            html += '<td><a href="' + escapeHtml(l.url) + '" target="_blank" class="text-truncate d-inline-block" style="max-width:300px;">' + escapeHtml(l.url) + '</a></td>';
+            html += '<td>' + (l.icon ? '<i class="bi ' + escapeHtml(l.icon) + '"></i> ' + escapeHtml(l.icon) : '<span class="text-muted">기본</span>') + '</td>';
+            html += '<td class="text-center">';
+            html += '<div class="action-buttons">';
+            html += '<button class="btn btn-outline-primary btn-sm" onclick="showSidebarLinkModal(' + l.id + ')" title="수정"><i class="bi bi-pencil"></i></button>';
+            html += '<button class="btn btn-outline-danger btn-sm" onclick="deleteSidebarLink(' + l.id + ')" title="삭제"><i class="bi bi-trash"></i></button>';
+            html += '</div>';
+            html += '</td>';
+            html += '</tr>';
+        });
+        tbody.innerHTML = html;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">로드 실패</td></tr>';
+    }
+}
+
+var _sidebarLinkModal = null;
+
+function showSidebarLinkModal(linkId) {
+    if (!_sidebarLinkModal) {
+        _sidebarLinkModal = new bootstrap.Modal(document.getElementById('sidebarLinkModal'));
+    }
+    document.getElementById('sidebar-link-id').value = linkId || '';
+    document.getElementById('sidebar-link-label').value = '';
+    document.getElementById('sidebar-link-url').value = '';
+    document.getElementById('sidebar-link-icon').value = '';
+    document.getElementById('sidebarLinkModalTitle').textContent = linkId ? '링크 수정' : '링크 추가';
+
+    if (linkId) {
+        apiCall('/api/v1/sidebar-links').then(function(res) {
+            if (res.success && res.data) {
+                var link = res.data.find(function(l) { return l.id === linkId; });
+                if (link) {
+                    document.getElementById('sidebar-link-label').value = link.label;
+                    document.getElementById('sidebar-link-url').value = link.url;
+                    document.getElementById('sidebar-link-icon').value = link.icon || '';
+                }
+            }
+        });
+    }
+    _sidebarLinkModal.show();
+}
+
+async function saveSidebarLink() {
+    var id = document.getElementById('sidebar-link-id').value;
+    var label = document.getElementById('sidebar-link-label').value.trim();
+    var url = document.getElementById('sidebar-link-url').value.trim();
+    var icon = document.getElementById('sidebar-link-icon').value.trim();
+
+    if (!label) { showToast('이름을 입력하세요.', 'warning'); return; }
+    if (!url) { showToast('URL을 입력하세요.', 'warning'); return; }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
+
+    var body = { label: label, url: url };
+    if (icon) body.icon = icon;
+
+    var res;
+    if (id) {
+        res = await apiCall('/api/v1/sidebar-links/' + id, 'PUT', body);
+    } else {
+        res = await apiCall('/api/v1/sidebar-links', 'POST', body);
+    }
+    if (res.success) {
+        _sidebarLinkModal.hide();
+        showToast('저장되었습니다.', 'success');
+        loadSidebarLinksSettings();
+        loadSidebarLinks();
+    } else {
+        showToast(res.message || '저장 실패', 'error');
+    }
+}
+
+async function deleteSidebarLink(id) {
+    if (!confirm('이 링크를 삭제하시겠습니까?')) return;
+    var res = await apiCall('/api/v1/sidebar-links/' + id, 'DELETE');
+    if (res.success) {
+        showToast('삭제되었습니다.', 'success');
+        loadSidebarLinksSettings();
+        loadSidebarLinks();
+    }
+}
+
+async function moveSidebarLink(id, direction) {
+    var res = await apiCall('/api/v1/sidebar-links');
+    if (!res.success || !res.data) return;
+    var links = res.data;
+    var idx = links.findIndex(function(l) { return l.id === id; });
+    if (idx < 0) return;
+    var swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= links.length) return;
+
+    await apiCall('/api/v1/sidebar-links/' + links[idx].id + '/sort-order', 'PATCH', { sortOrder: links[swapIdx].sortOrder });
+    await apiCall('/api/v1/sidebar-links/' + links[swapIdx].id + '/sort-order', 'PATCH', { sortOrder: links[idx].sortOrder });
+    loadSidebarLinksSettings();
+    loadSidebarLinks();
+}
+
+// ---- 사이드바 메모 ----
+
+function toggleSidebarMemosPopup(btn, event) {
+    event.stopPropagation();
+    event.preventDefault();
+    
+    var existing = document.querySelector('.sidebar-memos-popover');
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    var popover = document.createElement('div');
+    popover.className = 'sidebar-memos-popover';
+    popover.style.cssText = 'position:fixed; z-index:1050; background:#fff; border:1px solid #dee2e6; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); width:480px; font-size:0.85rem;';
+    popover.innerHTML = '<div class="text-center text-muted p-2">로딩 중...</div>';
+    document.body.appendChild(popover);
+
+    // 사이드바 오른쪽에 위치
+    var sidebar = document.getElementById('sidebar');
+    var sidebarWidth = sidebar.offsetWidth;
+    var rect = btn.getBoundingClientRect();
+    popover.style.left = sidebarWidth + 'px';
+    popover.style.bottom = '10px';
+
+    renderSidebarMemosContent(popover);
+}
+
+async function renderSidebarMemosContent(popover) {
+    var res = await apiCall('/api/v1/sidebar-memos');
+    var memos = (res.success && res.data) ? res.data : [];
+
+    var html = '<div class="p-2 border-bottom bg-light d-flex align-items-center" style="border-radius:6px 6px 0 0;">';
+    html += '<strong class="me-auto">메모</strong>';
+    html += '<button class="btn btn-sm p-0 border-0 text-primary" onclick="event.stopPropagation(); toggleSidebarMemoAddForm(this)" title="추가"><i class="bi bi-plus-lg"></i></button>';
+    html += '<button class="btn btn-sm p-0 border-0 text-secondary ms-1" onclick="event.stopPropagation(); this.closest(\'.sidebar-memos-popover\').remove()" title="닫기"><i class="bi bi-x-lg"></i></button>';
+    html += '</div>';
+
+    html += '<div class="sidebar-memo-add-form p-2 border-bottom" style="display:none;">';
+    html += '<textarea class="form-control form-control-sm mb-1 sidebar-memo-content" placeholder="메모 내용을 입력하세요..." rows="5" maxlength="2000" style="font-size:0.8rem;"></textarea>';
+    html += '<button class="btn btn-primary btn-sm w-100" style="font-size:0.8rem;" onclick="event.stopPropagation(); saveSidebarMemo(this)">추가</button>';
+    html += '</div>';
+
+    html += '<div class="sidebar-memo-list" style="max-height:400px; overflow-y:auto;">';
+    if (memos.length === 0) {
+        html += '<div class="text-center text-muted p-2">메모가 없습니다.</div>';
+    } else {
+        memos.forEach(function(m) {
+            var dateStr = m.updatedAt ? formatNoteDateTime(m.updatedAt) : formatNoteDateTime(m.createdAt);
+            html += '<div class="px-2 py-1 border-bottom sidebar-memo-item" data-memo-id="' + m.id + '">';
+            html += '<div class="d-flex align-items-start">';
+            html += '<div class="flex-grow-1" style="font-size:0.82rem; white-space:pre-wrap; word-break:break-word;">' + escapeHtml(m.content) + '</div>';
+            html += '<div class="d-flex ms-1" style="gap:2px; flex-shrink:0;">';
+            html += '<button class="btn btn-sm p-0 border-0 text-secondary" onclick="event.stopPropagation(); editSidebarMemo(this,' + m.id + ')" title="수정"><i class="bi bi-pencil" style="font-size:0.7rem;"></i></button>';
+            html += '<button class="btn btn-sm p-0 border-0 text-danger" onclick="event.stopPropagation(); deleteSidebarMemo(this,' + m.id + ')" title="삭제"><i class="bi bi-x-lg" style="font-size:0.7rem;"></i></button>';
+            html += '</div>';
+            html += '</div>';
+            html += '<div class="text-muted" style="font-size:0.7rem;">' + dateStr + '</div>';
+            html += '</div>';
+        });
+    }
+    html += '</div>';
+    popover.innerHTML = html;
+}
+
+function toggleSidebarMemoAddForm(btn) {
+    var popover = btn.closest('.sidebar-memos-popover');
+    var form = popover.querySelector('.sidebar-memo-add-form');
+    form.style.display = form.style.display === 'none' ? '' : 'none';
+    if (form.style.display !== 'none') {
+        popover._editMemoId = null;
+        var textarea = form.querySelector('.sidebar-memo-content');
+        textarea.value = '';
+        var saveBtn = form.querySelector('.btn-primary');
+        saveBtn.textContent = '추가';
+        textarea.focus();
+    }
+}
+
+async function saveSidebarMemo(btn) {
+    var popover = btn.closest('.sidebar-memos-popover');
+    var content = popover.querySelector('.sidebar-memo-content').value.trim();
+    if (!content) { showToast('메모 내용을 입력하세요.', 'warning'); return; }
+    var editId = popover._editMemoId;
+
+    if (editId) {
+        await apiCall('/api/v1/sidebar-memos/' + editId, 'PUT', { content: content });
+        popover._editMemoId = null;
+    } else {
+        await apiCall('/api/v1/sidebar-memos', 'POST', { content: content });
+    }
+    await renderSidebarMemosContent(popover);
+}
+
+function editSidebarMemo(btn, memoId) {
+    var popover = btn.closest('.sidebar-memos-popover');
+    var item = btn.closest('.sidebar-memo-item');
+    var contentDiv = item.querySelector('.flex-grow-1');
+    var currentContent = contentDiv.textContent;
+
+    var form = popover.querySelector('.sidebar-memo-add-form');
+    form.style.display = '';
+    var textarea = popover.querySelector('.sidebar-memo-content');
+    textarea.value = currentContent;
+    popover._editMemoId = memoId;
+    var saveBtn = form.querySelector('.btn-primary');
+    saveBtn.textContent = '수정';
+    textarea.focus();
+}
+
+async function deleteSidebarMemo(btn, memoId) {
+    var popover = btn.closest('.sidebar-memos-popover');
+    await apiCall('/api/v1/sidebar-memos/' + memoId, 'DELETE');
+    await renderSidebarMemosContent(popover);
 }
